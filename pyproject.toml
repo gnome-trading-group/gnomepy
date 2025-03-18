@@ -1,0 +1,29 @@
+[project]
+name = "gnomepy"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "mprey",email = "masonprey7@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "requests (>=2.32.3,<3.0.0)",
+    "boto3 (>=1.36.18,<2.0.0)",
+    "zstd (>=1.5.6.1,<2.0.0.0)",
+    "zstandard (>=0.23.0,<0.24.0)",
+    "bitstring (>=4.3.0,<5.0.0)",
+    "lxml (>=5.3.1,<6.0.0)",
+    "numpy (>=2.2.4,<3.0.0)",
+    "pytz (>=2025.1,<2026.0)",
+    "pandas (>=2.2.3,<3.0.0)",
+    "importlib-resources (>=6.5.2,<7.0.0)"
+]
+include = [
+    "gnomepy/data/sbe/*.xml"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
