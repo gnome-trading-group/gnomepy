@@ -8,7 +8,7 @@ import pandas as pd
 from gnomepy.data.common import DataStore
 from gnomepy.data.types import SchemaType
 
-_KEY_REGEX = re.compile("[0-9]/[0-9]/([0-9]+)_([0-9]+)/*")
+_KEY_REGEX = re.compile("[0-9]/[0-9]/([0-9]+)/*")
 
 class MarketDataClient:
     def __init__(
@@ -27,7 +27,7 @@ class MarketDataClient:
             listing_id: int,
             start_datetime: datetime.datetime | pd.Timestamp,
             end_datetime: datetime.datetime | pd.Timestamp,
-            schema_type: SchemaType = SchemaType.MBO,
+            schema_type: SchemaType
     ) -> DataStore:
         total = self._get_raw_history(exchange_id, listing_id, start_datetime, end_datetime)
         return DataStore.from_bytes(total, schema_type)
@@ -63,9 +63,8 @@ class MarketDataClient:
                 key = obj['Key']
                 parsed = _KEY_REGEX.match(key)
                 if parsed is not None:
-                    date = parsed.group(1)
-                    hour = parsed.group(2)
-                    parsed_dt = datetime.datetime.strptime(f"{date} {hour}", "%Y%m%d %H")
+                    date_hour = parsed.group(1)
+                    parsed_dt = datetime.datetime.strptime(f"{date_hour}", "%Y%m%d%H")
                     if start_datetime <= parsed_dt <= end_datetime:
                         keys.append(key)
 
