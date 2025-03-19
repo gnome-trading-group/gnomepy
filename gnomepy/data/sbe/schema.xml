@@ -72,6 +72,7 @@
         <field name="timestampEvent" id="3" type="timestamp" />
         <field name="timestampSent" id="4" type="timestamp" />
         <field name="timestampRecv" id="5" type="timestamp" />
+        <field name="orderId" id="6" type="uint64" />
 
         <field name="price" id="7" type="price" />
         <field name="size" id="8" type="size" />
