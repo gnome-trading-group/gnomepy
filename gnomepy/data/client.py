@@ -43,7 +43,6 @@ class MarketDataClient:
         total = b''
         for key in keys:
             response = self.s3.get_object(Bucket=self.bucket, Key=key)
-            print(response)
             total += response["Body"].read()
         return total
 
