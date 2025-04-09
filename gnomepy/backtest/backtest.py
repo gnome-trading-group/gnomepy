@@ -21,8 +21,13 @@ class Backtest:
     def _fetch_data(self) -> pd.DataFrame:
         return self.client.get_data(**self.client_data_params)
 
-    def run(self) -> pd.DataFrame:
-        return self.strategy.execute(self.data)
+    def run(self, data_type: str = 'pandas') -> pd.DataFrame | np.ndarray:
+        if data_type == 'pandas':
+            return self.strategy.execute(self.data.to_df())
+        elif data_type == 'numpy':
+            return self.strategy.execute(self.data.to_ndarray())
+        else:
+            raise ValueError("data_type must be either 'pandas' or 'numpy'")
 
     def get_strategy(self) -> Strategy:
         return self.strategy
