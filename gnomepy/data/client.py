@@ -8,12 +8,12 @@ import pandas as pd
 from gnomepy.data.common import DataStore
 from gnomepy.data.types import SchemaType
 
-_KEY_REGEX = re.compile("[0-9]/[0-9]/([0-9]+)/*")
+_KEY_REGEX = re.compile("^\\d+/\\d+/(\\d{10})/([^/]+)/([^/]+)\\.zst$")
 
 class MarketDataClient:
     def __init__(
             self,
-            bucket: str = "market-data-collector",
+            bucket: str = "market-data-consolidated-dev",
             aws_profile_name: Optional[str] = None,
     ):
         session = boto3.session.Session(profile_name=aws_profile_name)
@@ -24,22 +24,23 @@ class MarketDataClient:
             self,
             *,
             exchange_id: int,
-            listing_id: int,
+            security_id: int,
             start_datetime: datetime.datetime | pd.Timestamp,
             end_datetime: datetime.datetime | pd.Timestamp,
-            schema_type: SchemaType
+            schema_type: SchemaType,
     ) -> DataStore:
-        total = self._get_raw_history(exchange_id, listing_id, start_datetime, end_datetime)
+        total = self._get_raw_history(exchange_id, security_id, start_datetime, end_datetime, schema_type)
         return DataStore.from_bytes(total, schema_type)
 
     def _get_raw_history(
             self,
             exchange_id: int,
-            listing_id: int,
+            security_id: int,
             start_datetime: datetime.datetime | pd.Timestamp,
             end_datetime: datetime.datetime | pd.Timestamp,
+            schema_type: SchemaType,
     ) -> bytes:
-        keys = self._get_available_keys(exchange_id, listing_id, start_datetime, end_datetime)
+        keys = self._get_available_keys(exchange_id, security_id, start_datetime, end_datetime, schema_type)
         total = b''
         for key in keys:
             response = self.s3.get_object(Bucket=self.bucket, Key=key)
@@ -49,11 +50,12 @@ class MarketDataClient:
     def _get_available_keys(
             self,
             exchange_id: int,
-            listing_id: int,
+            security_id: int,
             start_datetime: datetime.datetime | pd.Timestamp,
             end_datetime: datetime.datetime | pd.Timestamp,
+            schema_type: SchemaType,
     ):
-        prefix = f"{exchange_id}/{listing_id}/"
+        prefix = f"{exchange_id}/{security_id}/"
         paginator = self.s3.get_paginator('list_objects_v2')
         pages = paginator.paginate(Bucket=self.bucket, Prefix=prefix)
 
@@ -64,8 +66,9 @@ class MarketDataClient:
                 parsed = _KEY_REGEX.match(key)
                 if parsed is not None:
                     date_hour = parsed.group(1)
+                    schema = parsed.group(2)
                     parsed_dt = datetime.datetime.strptime(f"{date_hour}", "%Y%m%d%H")
-                    if start_datetime <= parsed_dt <= end_datetime:
+                    if schema == schema_type and start_datetime <= parsed_dt <= end_datetime:
                         keys.append(key)
 
         return keys
