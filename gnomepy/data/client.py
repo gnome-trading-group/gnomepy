@@ -29,7 +29,9 @@ class MarketDataClient:
             end_datetime: datetime.datetime | pd.Timestamp,
             schema_type: SchemaType,
     ) -> DataStore:
+        print(exchange_id, security_id, start_datetime, end_datetime, schema_type)
         total = self._get_raw_history(exchange_id, security_id, start_datetime, end_datetime, schema_type)
+        print(total)
         return DataStore.from_bytes(total, schema_type)
 
     def _get_raw_history(
@@ -56,11 +58,15 @@ class MarketDataClient:
             schema_type: SchemaType,
     ):
         prefix = f"{exchange_id}/{security_id}/"
+        print(f"Searching with prefix: {prefix}")
         paginator = self.s3.get_paginator('list_objects_v2')
         pages = paginator.paginate(Bucket=self.bucket, Prefix=prefix)
 
         keys = []
         for page in pages:
+            if 'Contents' not in page:
+                print(f"No objects found with prefix {prefix}")
+                continue
             for obj in page['Contents']:
                 key = obj['Key']
                 parsed = _KEY_REGEX.match(key)
@@ -68,7 +74,9 @@ class MarketDataClient:
                     date_hour = parsed.group(1)
                     schema = parsed.group(2)
                     parsed_dt = datetime.datetime.strptime(f"{date_hour}", "%Y%m%d%H")
+                    print(f"Found key: {key}, schema: {schema}, datetime: {parsed_dt}")
                     if schema == schema_type and start_datetime <= parsed_dt <= end_datetime:
                         keys.append(key)
 
+        print(f"Found {len(keys)} matching keys")
         return keys
