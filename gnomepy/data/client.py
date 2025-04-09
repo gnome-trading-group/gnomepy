@@ -8,7 +8,7 @@ import pandas as pd
 from gnomepy.data.common import DataStore
 from gnomepy.data.types import SchemaType
 
-_KEY_REGEX = re.compile("^\\d+/\\d+/(\\d{10})/([^/]+)/([^/]+)\\.zst$")
+_KEY_REGEX = re.compile("^\\d+/\\d+/(\\d{10})/([^/]+)\\.zst$")
 
 class MarketDataClient:
     def __init__(
@@ -56,15 +56,11 @@ class MarketDataClient:
             schema_type: SchemaType,
     ):
         prefix = f"{exchange_id}/{security_id}/"
-        # print(f"Searching with prefix: {prefix}")
         paginator = self.s3.get_paginator('list_objects_v2')
         pages = paginator.paginate(Bucket=self.bucket, Prefix=prefix)
 
         keys = []
         for page in pages:
-            if 'Contents' not in page:
-                # print(f"No objects found with prefix {prefix}")
-                continue
             for obj in page['Contents']:
                 key = obj['Key']
                 parsed = _KEY_REGEX.match(key)
@@ -72,9 +68,7 @@ class MarketDataClient:
                     date_hour = parsed.group(1)
                     schema = parsed.group(2)
                     parsed_dt = datetime.datetime.strptime(f"{date_hour}", "%Y%m%d%H")
-                    # print(f"Found key: {key}, schema: {schema}, datetime: {parsed_dt}")
                     if schema == schema_type and start_datetime <= parsed_dt <= end_datetime:
                         keys.append(key)
 
-        print(f"Found {len(keys)} matching keys")
         return keys
