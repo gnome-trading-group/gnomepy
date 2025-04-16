@@ -54,5 +54,13 @@ global_signals = {
     "rolling_mean_10": SimpleSignal(
         name='rolling_mean_10',
         pd_expression="data.rolling(window=10).mean()",
+    ),
+    "rolling_mean_100": SimpleSignal(
+        name='rolling_mean_100',
+        pd_expression="data.rolling(window=100).mean()",
+    ),
+        "rolling_mean_500": SimpleSignal(
+        name='rolling_mean_500',
+        pd_expression="data.rolling(window=500).mean()",
     )
 }
