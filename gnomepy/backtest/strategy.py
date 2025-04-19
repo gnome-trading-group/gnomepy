@@ -153,6 +153,3 @@ class Strategy:
         total_cash = self.starting_cash + cash
 
         return data, total_cash, position
-
-        # # This currently just returns signals
-        # return computed_data

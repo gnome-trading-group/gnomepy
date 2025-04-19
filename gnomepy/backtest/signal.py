@@ -30,11 +30,42 @@ class SimpleSignal(Signal):
             raise TypeError("Data must be a pandas DataFrame or a numpy ndarray")
 
 class CompoundSignal(Signal):
-    def __init__(self, name: str, operations: list[Signal]):
+    def __init__(self, name: str, signals: list[tuple[Signal, str]], pd_expression: str = None):
         super().__init__(name)
-        self.operations = operations
+        self.signals = signals
+        self.pd_expression = pd_expression if pd_expression is not None else ''
 
-global_signals = {
+    def generate_signal(self, data: pd.DataFrame, columns: dict) -> pd.DataFrame:
+
+        if isinstance(data, pd.DataFrame):
+
+            result = data.copy()
+            
+            # First generate simple signals
+            for signal, dummy_column in self.signals:
+                if columns[dummy_column] in data.columns:
+                    new_column_name = f"{columns[dummy_column]}_{signal.name}"
+                    result[new_column_name] = signal.generate_signal(data, [columns[dummy_column]])[new_column_name]
+                else:
+                    raise ValueError(f"Column '{columns[dummy_column]}' is not in the DataFrame")
+            
+            # Now generate expression
+            if self.pd_expression:
+                expression = self.pd_expression
+                for key, value in columns.items():
+                    expression = expression.replace(key, f"'{value}'")
+
+                result[f"{self.name}"] = eval(expression)
+                
+            return result
+        
+        ## TODO: Implement this
+        elif isinstance(data, np.ndarray):
+            return eval(self.np_expression)
+        else:
+            raise TypeError("Data must be a pandas DataFrame or a numpy ndarray")
+
+global_simple_signals = {
     "rolling_mean_30": SimpleSignal(
         name='rolling_mean_30',
         pd_expression="data.rolling(window=30).mean()",
@@ -59,8 +90,31 @@ global_signals = {
         name='rolling_mean_100',
         pd_expression="data.rolling(window=100).mean()",
     ),
-        "rolling_mean_500": SimpleSignal(
+    "rolling_mean_500": SimpleSignal(
         name='rolling_mean_500',
         pd_expression="data.rolling(window=500).mean()",
+    ),
+    "rolling_mean_5000": SimpleSignal(
+        name='rolling_mean_5000',
+        pd_expression="data.rolling(window=5000).mean()",
+    ),
+    "rolling_mean_50000": SimpleSignal(
+        name='rolling_mean_50000',
+        pd_expression="data.rolling(window=50000).mean()",
+    ),
+    "rolling_mean_500_shifted": SimpleSignal(
+        name='rolling_mean_500_shifted',
+        pd_expression="data.rolling(window=500).mean().shift(-1)",
+    )
+}
+
+globabl_compound_signals = {
+    "single_ticker_rolling_mean_500_delta": CompoundSignal(
+        name='single_ticker_rolling_mean_500_delta',
+        signals=[
+            (global_simple_signals['rolling_mean_500'], 'column0'),
+            (global_simple_signals['rolling_mean_500_shifted'], 'column1')
+        ],
+        pd_expression="data[column0].rolling(window=500).mean() - data[column1].rolling(window=500).mean().shift(-1)",
     )
 }

@@ -28,10 +28,19 @@ def bid_ask_spread_narrowing(data: pd.DataFrame, spread_threshold: float = 0.01)
     spread = data['askPrice0'].values - data['bidPrice0'].values
     return np.where(spread < spread_threshold, 1, np.where(spread > spread_threshold, -1, 0))
 
-def bidPrice0_rolling_mean_50_over_500(data: pd.DataFrame, percentage_threshold: float = 0.001):
+def bidPrice0_rolling_mean_50_over_500(data: pd.DataFrame, percentage_threshold: float = 0.005):
     difference = (data['bidPrice0_rolling_mean_50'].values - data['bidPrice0_rolling_mean_500'].values) / data['bidPrice0_rolling_mean_500'].values
     return np.where(difference > percentage_threshold, -1, 
                     np.where(difference < -percentage_threshold, 1, 0))
+
+def single_ticker_rolling_mean_500_delta(data: pd.DataFrame, percentage_threshold: float = 0.005):
+    cur_500_delta = (data['bidPrice0'].rolling(window=50000).mean() - data['bidPrice0'].rolling(window=50000).mean().shift(-1)).values
+    last_500_delta = (data['bidPrice0'].rolling(window=50000).mean().shift(-1) - data['bidPrice0'].rolling(window=50000).mean().shift(-2)).values
+
+    return np.where((last_500_delta > 0) & (cur_500_delta <= 0), -1, 
+                    np.where((last_500_delta < 0) & (cur_500_delta >= 0), 1, 0))
+
+
 
 global_actions = {
     "bidPrice0_rolling_mean_10_under_100": Action(
@@ -61,5 +70,13 @@ global_actions = {
             {"signal_name": "rolling_mean_500", "columns": ["bidPrice0"]}
         ],
         action_function=bidPrice0_rolling_mean_50_over_500
+    ),
+    "single_ticker_rolling_mean_500_delta": Action(
+        name="single_ticker_rolling_mean_500_delta",
+        required_signals=[
+            {"signal_name": "rolling_mean_5000", "columns": ["bidPrice0"]},
+            {"signal_name": "rolling_mean_50000", "columns": ["bidPrice0"]},
+        ],
+        action_function=single_ticker_rolling_mean_500_delta
     )
 }
