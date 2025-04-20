@@ -3,9 +3,8 @@ import pandas as pd
 import numpy as np
 
 class Action:
-    def __init__(self, name: str, required_signals: list[dict], action_function: Callable):
+    def __init__(self, name: str, action_function: Callable):
         self.name = name
-        self.required_signals = required_signals
         self.action_function = action_function
 
     def apply(self, data: pd.DataFrame | np.ndarray) -> pd.DataFrame | np.ndarray:
@@ -16,67 +15,54 @@ class Action:
             data = np.column_stack((data, action_column))
         return data
 
-def bidPrice0_rolling_mean_10_under_100(data: pd.DataFrame):
-    return np.where(data['bidPrice0_rolling_mean_10'].values < data['bidPrice0_rolling_mean_100'].values, 1, 
-                    np.where(data['bidPrice0_rolling_mean_10'].values > data['bidPrice0_rolling_mean_100'].values, -1, 0))
-
-def askPrice0_rolling_std_20_above_threshold(data: pd.DataFrame, threshold: float = 0.35):
-    return np.where(data['askPrice0_rolling_std_20'].values > threshold, 1, 
-                    np.where(data['askPrice0_rolling_std_20'].values < threshold, -1, 0))
-
-def bid_ask_spread_narrowing(data: pd.DataFrame, spread_threshold: float = 0.01):
-    spread = data['askPrice0'].values - data['bidPrice0'].values
-    return np.where(spread < spread_threshold, 1, np.where(spread > spread_threshold, -1, 0))
-
-def bidPrice0_rolling_mean_50_over_500(data: pd.DataFrame, percentage_threshold: float = 0.005):
-    difference = (data['bidPrice0_rolling_mean_50'].values - data['bidPrice0_rolling_mean_500'].values) / data['bidPrice0_rolling_mean_500'].values
-    return np.where(difference > percentage_threshold, -1, 
-                    np.where(difference < -percentage_threshold, 1, 0))
-
 def single_ticker_rolling_mean_500_delta(data: pd.DataFrame, percentage_threshold: float = 0.005):
     cur_500_delta = (data['bidPrice0'].rolling(window=50000).mean() - data['bidPrice0'].rolling(window=50000).mean().shift(-1)).values
     last_500_delta = (data['bidPrice0'].rolling(window=50000).mean().shift(-1) - data['bidPrice0'].rolling(window=50000).mean().shift(-2)).values
 
-    return np.where((last_500_delta > 0) & (cur_500_delta <= 0), -1, 
-                    np.where((last_500_delta < 0) & (cur_500_delta >= 0), 1, 0))
+    return np.where((last_500_delta > percentage_threshold) & (cur_500_delta <= percentage_threshold), -1, 
+                    np.where((last_500_delta < -percentage_threshold) & (cur_500_delta >= -percentage_threshold), 1, 0))
 
+def single_ticker_rolling_exp_mean_delta_alpha_0001(data: pd.DataFrame):
+    last_ewm = data['bidPrice0'].ewm(alpha=.0001, min_periods=1000).mean().shift(-100)
+    cur_ewm = data['bidPrice0'].ewm(alpha=.0001, min_periods=1000).mean()
+    cur_exp_delta = (data['bidPrice0'].ewm(alpha=.0001, min_periods=1000).mean() - data['bidPrice0'].ewm(alpha=.0001, min_periods=1000).mean().shift(-1)).values
+    last_exp_delta = (data['bidPrice0'].ewm(alpha=.0001, min_periods=1000).mean().shift(-1) - data['bidPrice0'].ewm(alpha=.0001, min_periods=1000).mean().shift(-2)).values
 
+    return np.where((cur_exp_delta > 0) & (last_exp_delta < 0) & (cur_ewm < last_ewm), 1, np.where((cur_exp_delta < 0) & (last_exp_delta > 0) & (cur_ewm > last_ewm), -1, 0))
+
+def single_ticker_rolling_exp_mean_delta_alpha_00001(data: pd.DataFrame):
+    last_ewm = data['bidPrice0'].ewm(alpha=.00001, min_periods=1000).mean().shift(-100)
+    cur_ewm = data['bidPrice0'].ewm(alpha=.00001, min_periods=1000).mean()
+    cur_exp_delta = (data['bidPrice0'].ewm(alpha=.00001, min_periods=1000).mean() - data['bidPrice0'].ewm(alpha=.00001, min_periods=1000).mean().shift(-1)).values
+    last_exp_delta = (data['bidPrice0'].ewm(alpha=.00001, min_periods=1000).mean().shift(-1) - data['bidPrice0'].ewm(alpha=.00001, min_periods=1000).mean().shift(-2)).values
+
+    return np.where((cur_exp_delta > 0) & (last_exp_delta < 0) & (cur_ewm < last_ewm), 1, np.where((cur_exp_delta < 0) & (last_exp_delta > 0) & (cur_ewm > last_ewm), -1, 0))
+
+def single_ticker_moving_average_crossover(data: pd.DataFrame, short_window: int = 50, long_window: int = 200, percentage_threshold: float = 0.005):
+    short_mavg = data['bidPrice0'].rolling(window=short_window).mean()
+    long_mavg = data['bidPrice0'].rolling(window=long_window).mean()
+    mavg_diff = short_mavg - long_mavg
+
+    return np.where(mavg_diff > percentage_threshold, 1, 
+                    np.where(mavg_diff < -percentage_threshold * 2, -1,  # Reduce sell frequency by requiring a larger negative threshold
+                             np.where((short_mavg.shift(1) <= long_mavg.shift(1)) & (short_mavg > long_mavg), 1, 
+                                      np.where((short_mavg.shift(1) >= long_mavg.shift(1)) & (short_mavg < long_mavg), -1, 0))))
 
 global_actions = {
-    "bidPrice0_rolling_mean_10_under_100": Action(
-        name="bidPrice0_rolling_mean_10_under_100",
-        required_signals=[
-            {"signal_name": "rolling_mean_10", "columns": ["bidPrice0"]},
-            {"signal_name": "rolling_mean_100", "columns": ["bidPrice0"]}
-        ],
-        action_function=bidPrice0_rolling_mean_10_under_100
-    ),
-    "askPrice0_rolling_std_20_above_threshold": Action(
-        name="askPrice0_rolling_std_20_above_threshold",
-        required_signals=[
-            {"signal_name": "rolling_std_20", "columns": ["askPrice0"]}
-        ],
-        action_function=askPrice0_rolling_std_20_above_threshold
-    ),
-    "bid_ask_spread_narrowing": Action(
-        name="bid_ask_spread_narrowing",
-        required_signals=[],
-        action_function=bid_ask_spread_narrowing
-    ),
-    "bidPrice0_rolling_mean_50_over_500": Action(
-        name="bidPrice0_rolling_mean_50_over_500",
-        required_signals=[
-            {"signal_name": "rolling_mean_50", "columns": ["bidPrice0"]},
-            {"signal_name": "rolling_mean_500", "columns": ["bidPrice0"]}
-        ],
-        action_function=bidPrice0_rolling_mean_50_over_500
-    ),
     "single_ticker_rolling_mean_500_delta": Action(
         name="single_ticker_rolling_mean_500_delta",
-        required_signals=[
-            {"signal_name": "rolling_mean_5000", "columns": ["bidPrice0"]},
-            {"signal_name": "rolling_mean_50000", "columns": ["bidPrice0"]},
-        ],
         action_function=single_ticker_rolling_mean_500_delta
+    ),
+    "single_ticker_rolling_exp_mean_delta_alpha_00001": Action(
+        name="single_ticker_rolling_exp_mean_delta_alpha_00001",
+        action_function=single_ticker_rolling_exp_mean_delta_alpha_00001
+    ),
+    "single_ticker_rolling_exp_mean_delta_alpha_0001": Action(
+        name="single_ticker_rolling_exp_mean_delta_alpha_0001",
+        action_function=single_ticker_rolling_exp_mean_delta_alpha_0001
+    ),
+    "single_ticker_moving_average_crossover": Action(
+        name="single_ticker_moving_average_crossover",
+        action_function=single_ticker_moving_average_crossover
     )
 }

@@ -1,33 +1,17 @@
 from gnomepy.data.types import *
-from gnomepy.backtest.signal import *
+from gnomepy.backtest.archive.signal import *
 from gnomepy.backtest.action import *
 import pandas as pd
 import numpy as np
 
 class Strategy:
-    def __init__(self, name: str, signals: list[tuple[Signal, list[str]]], action: Action, minimum_ticker_cycle: int, starting_cash: float):
+    def __init__(self, name: str, action: Action, minimum_ticker_cycle: int, starting_cash: float):
         self.name = name
-        self.signals = signals
         self.action = action
         self.minimum_ticker_cycle = minimum_ticker_cycle
         self.submit_order_buffer = 3
         self.fill_order_buffer = 3
         self.starting_cash = starting_cash
-        
-    def compute_signals(self, data: pd.DataFrame | np.ndarray) -> pd.DataFrame | np.ndarray:
-        if isinstance(data, pd.DataFrame):
-            for signal in self.signals:                
-                if isinstance(signal['signal'], SimpleSignal):
-                    data = signal['signal'].generate_signal(data=data, columns=signal['columns'])
-                
-                # TODO: We need to figure out how we are dealing with compound signals here
-                elif isinstance(signal['signal'], CompoundSignal):
-                    pass
-
-        elif isinstance(data, np.ndarray):
-            for signal in self.signals:
-                exec(f"data = {signal.np_expression}")
-        return data
     
     def assess_trades(self, data: pd.DataFrame | np.ndarray):
 
@@ -41,7 +25,7 @@ class Strategy:
             data[f"{self.action.name}_action"] * -data[f"askPrice0"],
             np.where(
                 data[f"{self.action.name}_action"] == -1,
-                data[f"{self.action.name}_action"] * data[f"bidPrice0"],
+                data[f"{self.action.name}_action"] * -data[f"bidPrice0"],
                 0  # If action is neither buy nor sell, cash is 0
             )
         )
@@ -111,9 +95,9 @@ class Strategy:
         #     data.at[index, f"{self.action.name}_equity_position"] = equity_position
         ############################# Implement guardrails on cash and equity
 
-        # Calculate PnL
-        data[f"{self.action.name}_cash_balance"] = self.starting_cash
-        data[f"{self.action.name}_equity_position"] = 0
+        # # Calculate PnL
+        # data[f"{self.action.name}_cash_balance"] = self.starting_cash
+        # data[f"{self.action.name}_equity_position"] = 0
 
         # Calculate cash_balance and equity_position for each row
         data[f"{self.action.name}_cash_balance"] = self.starting_cash + data[f"{self.action.name}_cash_action"].cumsum()
@@ -126,12 +110,12 @@ class Strategy:
         # If the sum is positive, sell all positions at bidPrice0
         if total_positions > 0:
             data.loc[data.index[-1], f"{self.action.name}_equity_position"] = -total_positions
-            data.loc[data.index[-1], f"{self.action.name}_cash_balance"] = total_positions * data.loc[data.index[-1], f"bidPrice0"]
+            data.loc[data.index[-1], f"{self.action.name}_cash_balance"] = data.loc[data.index[-1], f"{self.action.name}_cash_balance"] + total_positions * data.loc[data.index[-1], f"bidPrice0"]
 
         # If the sum is negative, buy out the position at askPrice0, then sell at bidPrice0
         elif total_positions < 0:
-            data.loc[data.index[-1], f"{self.action.name}_equity_position"] = -total_positions
-            data.loc[data.index[-1], f"{self.action.name}_cash_balance"] = total_positions * data.loc[data.index[-1], f"askPrice0"] + total_positions * data.loc[data.index[-1], f"bidPrice0"]
+            data.loc[data.index[-1], f"{self.action.name}_equity_position"] = total_positions
+            data.loc[data.index[-1], f"{self.action.name}_cash_balance"] = data.loc[data.index[-1], f"{self.action.name}_cash_balance"] + total_positions * data.loc[data.index[-1], f"bidPrice0"]
 
         return data, data[f"{self.action.name}_cash_balance"].sum(), data[f"{self.action.name}_equity_position"].sum()
 
@@ -139,9 +123,6 @@ class Strategy:
 
         # First add cash to data
         data['cash'] = self.starting_cash
-
-        # Compute Signals
-        data = self.compute_signals(data)
 
         #  Apply the actual action function for the chosen strategy
         data = self.action.apply(data)
@@ -152,4 +133,4 @@ class Strategy:
         # Adjust cash with starting cash
         total_cash = self.starting_cash + cash
 
-        return data, total_cash, position
+        return (data, total_cash, position)
