@@ -72,7 +72,7 @@ def get_coint_baskets(
     for i in range(rank):
         eigvec = result.evec[:, i]
         max_val = np.max(np.abs(eigvec))
-        trim_indices = np.where(np.abs(eigvec) < 0.10 * max_val)[0]
+        trim_indices = np.where(np.abs(eigvec) < 0.05 * max_val)[0]
         trimmed_columns = [col for idx, col in enumerate(columns) if idx not in trim_indices]
         if len(trim_indices) > 0 and len(trimmed_columns) >= min_basket_size:
             # Recurse on trimmed basket
@@ -424,22 +424,79 @@ def run_backtest_for_basket(
         enter_zscore=enter_zscore,
         exit_zscore=exit_zscore
     )
-    print(f"Complete backtest of basket: {basket}")
-    return basket, history_df, trade_log
+    print(f"Complete backtest of basket: {basket} with params: "
+          f"beta_refresh_freq={beta_refresh_freq}, spread_window={spread_window}, "
+          f"cash_start={cash_start}, notional={notional}, trade_freq={trade_freq}, "
+          f"execution_delay={execution_delay}, enter_zscore={enter_zscore}, exit_zscore={exit_zscore}")
+    import random
+    # Return a dict of parameters for easier tracking
+    # unique_id = f"{basket}_{random.randint(100000, 999999)}"
+    unique_id = f"{basket}_{beta_refresh_freq}_{trade_freq}_{spread_window}_{execution_delay}"
+    params = {
+        "id": unique_id,
+        "basket": basket,
+        "beta_refresh_freq": beta_refresh_freq,
+        "spread_window": spread_window,
+        "cash_start": cash_start,
+        "notional": notional,
+        "trade_freq": trade_freq,
+        "execution_delay": execution_delay,
+        "enter_zscore": enter_zscore,
+        "exit_zscore": exit_zscore
+    }
+    return params, history_df, trade_log
+
+import itertools
 
 def main(
     baskets,
     data,
-    beta_refresh_freq=1000,
-    spread_window=100,
-    cash_start=10000,
-    notional=100,
-    trade_freq=1,
-    execution_delay=0,
-    enter_zscore=2.0,
-    exit_zscore=0.3,
+    beta_refresh_freq=[1000],
+    spread_window=[100],
+    cash_start=[10000],
+    notional=[100],
+    trade_freq=[1],
+    execution_delay=[0],
+    enter_zscore=[2.0],
+    exit_zscore=[0.3],
     use_multiprocessing=True
 ):
+    """
+    Run backtests for all combinations of parameter values.
+
+    Parameters
+    ----------
+    baskets : list of tuple[str, ...]
+        List of baskets to test.
+    data : pd.DataFrame
+        DataFrame with price data.
+    beta_refresh_freq, spread_window, cash_start, notional, trade_freq, execution_delay, enter_zscore, exit_zscore :
+        Each should be a list of values to try.
+    use_multiprocessing : bool
+        Whether to use multiprocessing.
+
+    Returns
+    -------
+    results : list
+        List of (params_dict, history_df, trade_log) tuples for each parameter combination.
+    """
+
+    # Ensure all parameters are lists
+    param_lists = [
+        baskets,
+        beta_refresh_freq,
+        spread_window,
+        cash_start,
+        notional,
+        trade_freq,
+        execution_delay,
+        enter_zscore,
+        exit_zscore
+    ]
+
+    # Generate all combinations
+    combos = list(itertools.product(*param_lists))
+
     args = [
         (
             basket,
@@ -453,14 +510,15 @@ def main(
             enter_zscore,
             exit_zscore
         )
-        for basket in baskets
+        for (basket, beta_refresh_freq, spread_window, cash_start, notional, trade_freq, execution_delay, enter_zscore, exit_zscore) in combos
     ]
+
     if use_multiprocessing:
         with mp.Pool(processes=mp.cpu_count()) as pool:
             results = pool.starmap(run_backtest_for_basket, args)
     else:
         results = [run_backtest_for_basket(*arg) for arg in args]
-    
+
     return results
 
 if __name__ == "__main__":
