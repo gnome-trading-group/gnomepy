@@ -102,7 +102,9 @@ def vectorized_cointegrated_basket_backtest(
     trade_freq: int,
     execution_delay: int,
     enter_zscore: float = 2.0,
-    exit_zscore: float = 0.3
+    exit_zscore: float = 0.3,
+    stop_loss_delta: float = 0.0,
+    retest_cointegration: bool = False
 ):
     """
     Vectorized backtest for cointegrated basket trading.
@@ -129,6 +131,11 @@ def vectorized_cointegrated_basket_backtest(
         Z-score threshold to enter a trade (default: 2.0).
     exit_zscore : float, optional
         Z-score threshold to exit a trade (default: 0.3).
+    stop_loss_delta : float, optional
+        Additional z-score distance for stop loss exit (default: 0.0).
+    retest_cointegration : bool, optional
+        If True, only trade when a cointegrating relationship is detected at each beta refresh.
+        If False, continue trading even if no cointegration is detected (default: False).
     """
 
     # Prepare price columns
@@ -154,10 +161,11 @@ def vectorized_cointegrated_basket_backtest(
     # Precompute rolling windows for spread mean/std
     price_matrix = data_sub[price_cols].values
 
-    # Precompute beta vectors at each refresh point
+    # Precompute beta vectors and number of cointegrating relationships at each refresh point
     beta_vectors_list = []
     beta_indices = []
     beta_dates = []
+    num_coints_list = []
     for idx in range(beta_refresh_freq, N, beta_refresh_freq):
         coin_basket_matrix = price_matrix[idx-beta_refresh_freq:idx]
         johansen_result = coint_johansen(coin_basket_matrix, det_order=0, k_ar_diff=1)
@@ -165,25 +173,40 @@ def vectorized_cointegrated_basket_backtest(
         cv_95 = johansen_result.cvt[:, 1]
         num_coints = np.sum(trace_stats > cv_95)
         if num_coints == 0:
-            # fallback: use first vector
-            num_coints = 1
-        beta_vectors_list.append(johansen_result.evec[:, :num_coints])
+            # No cointegrating relationship found, mark as None if retest_cointegration == True
+            if retest_cointegration:
+                beta_vectors_list.append(None)
+            
+            # If retest_cointegration == False, then we trade regardless
+            else:
+                num_coints = 1
+                beta_vectors_list.append(johansen_result.evec[:, :num_coints])
+
+        else:
+            beta_vectors_list.append(johansen_result.evec[:, :num_coints])
+
+        num_coints_list.append(num_coints)
+
         beta_indices.append(idx)
         beta_dates.append(date_col[idx])
 
-    # Assign beta vector and last refresh date for each row
+    # Assign beta vector, last refresh date, and num_coints for each row
     beta_vectors_per_row = []
     last_beta_refresh_date_per_row = []
+    num_coints_per_row = []
     current_beta = None
     current_beta_refresh_date = None
+    current_num_coints = 0
     beta_ptr = 0
     for i in range(N):
         if beta_ptr < len(beta_indices) and i >= beta_indices[beta_ptr]:
             current_beta = beta_vectors_list[beta_ptr]
             current_beta_refresh_date = beta_dates[beta_ptr]
+            current_num_coints = num_coints_list[beta_ptr]
             beta_ptr += 1
         beta_vectors_per_row.append(current_beta)
         last_beta_refresh_date_per_row.append(current_beta_refresh_date)
+        num_coints_per_row.append(current_num_coints)
 
     # Vectorized spread calculation (using most recent beta)
     spreads = np.full(N, np.nan)
@@ -195,7 +218,9 @@ def vectorized_cointegrated_basket_backtest(
 
     for i in range(N):
         beta_vecs = beta_vectors_per_row[i]
-        if beta_vecs is not None:
+        num_coints = num_coints_per_row[i]
+        # Only compute spread/zscore if there is at least one cointegrating relationship
+        if beta_vecs is not None and num_coints > 0:
             beta = beta_vecs[:, 0]
             norm_beta = beta / np.linalg.norm(beta)
             normalized_betas[i] = norm_beta
@@ -209,6 +234,7 @@ def vectorized_cointegrated_basket_backtest(
                 spread_means[i] = window_spreads.mean()
                 spread_stds[i] = window_spreads.std()
                 z_scores[i] = (spreads[i] - spread_means[i]) / spread_stds[i]
+        # If no cointegration, leave as NaN (do not trade)
 
     # Prepare execution price vectors
     ask_matrix = data_sub[ask_cols].values
@@ -231,6 +257,7 @@ def vectorized_cointegrated_basket_backtest(
         'spread_mean': spread_means,
         'spread_std': spread_stds,
         'z_score': z_scores,
+        'num_coints': num_coints_per_row,
     }
     # Add each price column to history_df
     for j, col in enumerate(price_cols):
@@ -248,10 +275,16 @@ def vectorized_cointegrated_basket_backtest(
 
     # Track ticks between enters and exits
     ticks_since_entry = None  # None means not in a position
+    extends_since_entry = None  # None means not in a position
 
+    # stop_loss_delta is now an explicit argument
+
+    last_beta_vector = None
     for i in range(N):
         z = z_scores[i]
-        if np.isnan(z):
+        num_coints = num_coints_per_row[i]
+        # Only trade if there is at least one cointegrating relationship
+        if np.isnan(z) or num_coints == 0:
             cash_vec.append(cash_vec[-1])
             position_history.append(position.copy())
             continue
@@ -259,11 +292,26 @@ def vectorized_cointegrated_basket_backtest(
         notional_beta = notional_betas[i]
         price_vector = price_vectors[i]
 
+        # Check for beta vector refresh
+        beta_refresh = False
+        if i == 0:
+            last_beta_vector = last_beta_refresh_date_per_row[i]
+        else:
+            if last_beta_refresh_date_per_row[i] != last_beta_vector:
+                beta_refresh = True
+                last_beta_vector = last_beta_refresh_date_per_row[i]
+
         # Compute before/after position value in cash (dot product)
         before_position_value = position @ price_vector
 
-        # Exit long
-        if z > -exit_zscore and long:
+        # --- Stop Loss Logic ---
+        action = None
+        before_position = None
+        after_position = None
+        after_cash = None
+        
+        # Exit long position (stop loss, normal exit, or beta refresh)
+        if long and (z > enter_zscore + stop_loss_delta or z > -exit_zscore or beta_refresh):
             ticks_since_entry += 1
             before_position = position.copy()
             before_cash = cash
@@ -274,24 +322,17 @@ def vectorized_cointegrated_basket_backtest(
             after_position = position.copy()
             after_position_value = position @ price_vector
             long = False
-            trade_log.append({
-                'step': i,
-                'timestampEvent': date_col[i],
-                'last_beta_vector_refresh': last_beta_refresh_date_per_row[i],
-                'action': 'exit_long',
-                'before_cash': before_cash,
-                'after_cash': after_cash,
-                'price_vector': price_vector.copy(),
-                'before_position': before_position,
-                'after_position': after_position,
-                'before_position_value': before_position_value,
-                'after_position_value': after_position_value,
-                'z_score': z,
-                'ticks_since_entry': ticks_since_entry
-            })
-            ticks_since_entry = None  # Reset after exit
-        # Exit short
-        elif z < exit_zscore and short:
+            
+            # Determine exit reason
+            if z > enter_zscore + stop_loss_delta:
+                action = 'stop_loss_exit_long'
+            elif beta_refresh:
+                action = 'beta_refresh_exit_long'
+            else:
+                action = 'exit_long'
+            
+        # Exit short position (stop loss, normal exit, or beta refresh)
+        elif short and (z < -enter_zscore - stop_loss_delta or z < exit_zscore or beta_refresh):
             ticks_since_entry += 1
             before_position = position.copy()
             before_cash = cash
@@ -302,92 +343,99 @@ def vectorized_cointegrated_basket_backtest(
             after_position = position.copy()
             after_position_value = position @ price_vector
             short = False
-            trade_log.append({
-                'step': i,
-                'timestampEvent': date_col[i],
-                'last_beta_vector_refresh': last_beta_refresh_date_per_row[i],
-                'action': 'exit_short',
-                'before_cash': before_cash,
-                'after_cash': after_cash,
-                'price_vector': price_vector.copy(),
-                'before_position': before_position,
-                'after_position': after_position,
-                'before_position_value': before_position_value,
-                'after_position_value': after_position_value,
-                'z_score': z,
-                'ticks_since_entry': ticks_since_entry
-            })
-            ticks_since_entry = None  # Reset after exit
-        # Enter/extend long
+            
+            # Determine exit reason
+            if z < -enter_zscore - stop_loss_delta:
+                action = 'stop_loss_exit_short'
+            elif beta_refresh:
+                action = 'beta_refresh_exit_short'
+            else:
+                action = 'exit_short'
+                
+
+        # Enter/extend long (but not if stop loss would be triggered)
         elif z < -enter_zscore:
-            before_position = position.copy()
-            before_cash = cash
-            before_position_value = position @ price_vector
-            delta_position = notional_beta / price_vector
-            position = position + delta_position
-            after_position = position.copy()
-            after_position_value = position @ price_vector
-            cash = cash - delta_position @ price_vector
-            after_cash = cash
-            action = 'extend_long' if long else 'enter_long'
-            trade_log.append({
-                'step': i,
-                'timestampEvent': date_col[i],
-                'last_beta_vector_refresh': last_beta_refresh_date_per_row[i],
-                'action': action,
-                'before_cash': before_cash,
-                'after_cash': after_cash,
-                'price_vector': price_vector.copy(),
-                'before_position': before_position,
-                'after_position': after_position,
-                'before_position_value': before_position_value,
-                'after_position_value': after_position_value,
-                'z_score': z,
-                'ticks_since_entry': ticks_since_entry if long else 0
-            })
-            if long:
-                if ticks_since_entry is not None:
+            # Only extend/enter if not past stop loss threshold
+            if z > enter_zscore + stop_loss_delta:
+                # Do not extend/enter, treat as no trade (should not happen, but for safety)
+                if (long or short) and ticks_since_entry is not None:
                     ticks_since_entry += 1
             else:
-                long = True
-                ticks_since_entry = 0  # Start counting after entry
-        # Enter/extend short
+                before_position = position.copy()
+                before_cash = cash
+                before_position_value = position @ price_vector
+                delta_position = notional_beta / price_vector
+                position = position + delta_position
+                after_position = position.copy()
+                after_position_value = position @ price_vector
+                cash = cash - delta_position @ price_vector
+                after_cash = cash
+                action = 'extend_long' if long else 'enter_long'
+
+                if long:
+                    if ticks_since_entry is not None:
+                        ticks_since_entry += 1
+                        extends_since_entry += 1
+                else:
+                    long = True
+                    ticks_since_entry = 0  # Start counting after entry
+                    extends_since_entry = 0  # Start counting after entry
+
+        # Enter/extend short (but not if stop loss would be triggered)
         elif z > enter_zscore:
-            before_position = position.copy()
-            before_cash = cash
-            before_position_value = position @ price_vector
-            delta_position = -notional_beta / price_vector
-            position = position + delta_position
-            after_position = position.copy()
-            after_position_value = position @ price_vector
-            cash = cash - delta_position @ price_vector
-            after_cash = cash
-            action = 'extend_short' if short else 'enter_short'
-            trade_log.append({
-                'step': i,
-                'timestampEvent': date_col[i],
-                'last_beta_vector_refresh': last_beta_refresh_date_per_row[i],
-                'action': action,
-                'before_cash': before_cash,
-                'after_cash': after_cash,
-                'price_vector': price_vector.copy(),
-                'before_position': before_position,
-                'after_position': after_position,
-                'before_position_value': before_position_value,
-                'after_position_value': after_position_value,
-                'z_score': z,
-                'ticks_since_entry': ticks_since_entry if short else 0
-            })
-            if short:
-                if ticks_since_entry is not None:
+            # Only extend/enter if not past stop loss threshold
+            if z < -enter_zscore - stop_loss_delta:
+                # Do not extend/enter, treat as no trade (should not happen, but for safety)
+                if (long or short) and ticks_since_entry is not None:
                     ticks_since_entry += 1
             else:
-                short = True
-                ticks_since_entry = 0  # Start counting after entry
+                before_position = position.copy()
+                before_cash = cash
+                before_position_value = position @ price_vector
+                delta_position = -notional_beta / price_vector
+                position = position + delta_position
+                after_position = position.copy()
+                after_position_value = position @ price_vector
+                cash = cash - delta_position @ price_vector
+                after_cash = cash
+                action = 'extend_short' if short else 'enter_short'
+
+                if short:
+                    if ticks_since_entry is not None:
+                        ticks_since_entry += 1
+                        extends_since_entry += 1
+                else:
+                    short = True
+                    ticks_since_entry = 0  # Start counting after entry
+                    extends_since_entry = 0  # Start counting after entry
+
         else:
             # No trade
             if (long or short) and ticks_since_entry is not None:
                 ticks_since_entry += 1
+
+        # Log trade if action was taken
+        if action is not None:
+            trade_log.append({
+                'step': i,
+                'timestampEvent': date_col[i],
+                'last_beta_vector_refresh': last_beta_refresh_date_per_row[i],
+                'action': action,
+                'before_cash': before_cash,
+                'after_cash': after_cash,
+                'price_vector': price_vector.copy(),
+                'before_position': before_position,
+                'after_position': after_position,
+                'before_position_value': before_position_value,
+                'after_position_value': after_position_value,
+                'z_score': z,
+                'ticks_since_entry': ticks_since_entry if ticks_since_entry is not None else 0,
+                'extends_since_entry': extends_since_entry if extends_since_entry is not None else 0
+            })
+
+            if 'exit' in action:
+                ticks_since_entry = None  # Reset after exit
+                extends_since_entry = None  # Reset after exit
 
         cash_vec.append(cash)
         position_history.append(position.copy())
@@ -410,7 +458,9 @@ def run_backtest_for_basket(
     trade_freq,
     execution_delay,
     enter_zscore,
-    exit_zscore
+    exit_zscore,
+    stop_loss_delta=None,
+    retest_cointegration=False
 ):
     history_df, trade_log = vectorized_cointegrated_basket_backtest(
         data=data,
@@ -422,16 +472,29 @@ def run_backtest_for_basket(
         trade_freq=trade_freq,
         execution_delay=execution_delay,
         enter_zscore=enter_zscore,
-        exit_zscore=exit_zscore
+        exit_zscore=exit_zscore,
+        stop_loss_delta=stop_loss_delta,
+        retest_cointegration=retest_cointegration
     )
     print(f"Complete backtest of basket: {basket} with params: "
           f"beta_refresh_freq={beta_refresh_freq}, spread_window={spread_window}, "
           f"cash_start={cash_start}, notional={notional}, trade_freq={trade_freq}, "
-          f"execution_delay={execution_delay}, enter_zscore={enter_zscore}, exit_zscore={exit_zscore}")
+          f"execution_delay={execution_delay}, enter_zscore={enter_zscore}, exit_zscore={exit_zscore}, "
+          f"stop_loss_delta={stop_loss_delta}, retest_cointegration={retest_cointegration}")
     import random
-    # Return a dict of parameters for easier tracking
-    # unique_id = f"{basket}_{random.randint(100000, 999999)}"
-    unique_id = f"{basket}_{beta_refresh_freq}_{trade_freq}_{spread_window}_{execution_delay}"
+    unique_id = (
+        f"{basket}_"
+        f"beta_refresh_freq={beta_refresh_freq}_"
+        f"spread_window={spread_window}_"
+        f"cash_start={cash_start}_"
+        f"notional={notional}_"
+        f"trade_freq={trade_freq}_"
+        f"execution_delay={execution_delay}_"
+        f"enter_zscore={enter_zscore}_"
+        f"exit_zscore={exit_zscore}_"
+        f"stop_loss_delta={stop_loss_delta}_"
+        f"retest_cointegration={retest_cointegration}"
+    )
     params = {
         "id": unique_id,
         "basket": basket,
@@ -442,7 +505,9 @@ def run_backtest_for_basket(
         "trade_freq": trade_freq,
         "execution_delay": execution_delay,
         "enter_zscore": enter_zscore,
-        "exit_zscore": exit_zscore
+        "exit_zscore": exit_zscore,
+        "stop_loss_delta": stop_loss_delta,
+        "retest_cointegration": retest_cointegration
     }
     return params, history_df, trade_log
 
@@ -459,6 +524,8 @@ def main(
     execution_delay=[0],
     enter_zscore=[2.0],
     exit_zscore=[0.3],
+    stop_loss_delta=[0],
+    retest_cointegration=[False],
     use_multiprocessing=True
 ):
     """
@@ -470,7 +537,7 @@ def main(
         List of baskets to test.
     data : pd.DataFrame
         DataFrame with price data.
-    beta_refresh_freq, spread_window, cash_start, notional, trade_freq, execution_delay, enter_zscore, exit_zscore :
+    beta_refresh_freq, spread_window, cash_start, notional, trade_freq, execution_delay, enter_zscore, exit_zscore, stop_loss_delta, retest_cointegration :
         Each should be a list of values to try.
     use_multiprocessing : bool
         Whether to use multiprocessing.
@@ -491,7 +558,9 @@ def main(
         trade_freq,
         execution_delay,
         enter_zscore,
-        exit_zscore
+        exit_zscore,
+        stop_loss_delta,
+        retest_cointegration
     ]
 
     # Generate all combinations
@@ -508,9 +577,11 @@ def main(
             trade_freq,
             execution_delay,
             enter_zscore,
-            exit_zscore
+            exit_zscore,
+            stop_loss_delta,
+            retest_cointegration
         )
-        for (basket, beta_refresh_freq, spread_window, cash_start, notional, trade_freq, execution_delay, enter_zscore, exit_zscore) in combos
+        for (basket, beta_refresh_freq, spread_window, cash_start, notional, trade_freq, execution_delay, enter_zscore, exit_zscore, stop_loss_delta, retest_cointegration) in combos
     ]
 
     if use_multiprocessing:
