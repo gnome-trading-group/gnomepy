@@ -104,7 +104,9 @@ def vectorized_cointegrated_basket_backtest(
     enter_zscore: float = 2.0,
     exit_zscore: float = 0.3,
     stop_loss_delta: float = 0.0,
-    retest_cointegration: bool = False
+    retest_cointegration: bool = False,
+    use_extends: bool = True,
+    use_lob: bool = True
 ):
     """
     Vectorized backtest for cointegrated basket trading.
@@ -136,6 +138,10 @@ def vectorized_cointegrated_basket_backtest(
     retest_cointegration : bool, optional
         If True, only trade when a cointegrating relationship is detected at each beta refresh.
         If False, continue trading even if no cointegration is detected (default: False).
+    use_extends : bool, optional
+        If True, allows extending positions based on z-score. If False, only allows enter/exit (default: True).
+    use_lob : bool, optional
+        If True, uses order book imbalance for trade signals (default: True).
     """
 
     # Prepare price columns
@@ -146,6 +152,10 @@ def vectorized_cointegrated_basket_backtest(
     # If basket is ('bidPrice0_random_normal', ...) then ask is 'askPrice0_random_normal', etc.
     ask_cols = [col.replace('bidPrice0', 'askPrice0') if 'bidPrice0' in col else col.replace('bid', 'ask') for col in price_cols]
     bid_cols = [col.replace('askPrice0', 'bidPrice0') if 'askPrice0' in col else col.replace('ask', 'bid') for col in price_cols]
+
+    # Get order book imbalance columns if use_lob is True
+    if use_lob:
+        imb_cols = [col.replace('bidPrice0', 'order_book_balance').replace('bid', 'order_book_balance') for col in price_cols]
 
     # Only use every trade_freq-th row
     data_sub = data.iloc[::trade_freq].copy()
@@ -160,6 +170,10 @@ def vectorized_cointegrated_basket_backtest(
 
     # Precompute rolling windows for spread mean/std
     price_matrix = data_sub[price_cols].values
+    
+    # Get imbalance matrix if use_lob is True
+    if use_lob:
+        imb_matrix = data_sub[imb_cols].values
 
     # Precompute beta vectors and number of cointegrating relationships at each refresh point
     beta_vectors_list = []
@@ -244,7 +258,6 @@ def vectorized_cointegrated_basket_backtest(
     exec_indices = np.clip(np.arange(N) + execution_delay, 0, N-1)
     ask_exec = ask_matrix[exec_indices]
     bid_exec = bid_matrix[exec_indices]
-
     # For each row, choose price vector based on notional_beta sign
     price_vectors = np.where(notional_betas > 0, ask_exec, bid_exec)
 
@@ -292,6 +305,17 @@ def vectorized_cointegrated_basket_backtest(
         notional_beta = notional_betas[i]
         price_vector = price_vectors[i]
 
+        # Get imbalance if using LOB
+        if use_lob:
+            # Get imbalance for each security
+            imb_vec = imb_matrix[i]
+            # Check if imbalance aligns with beta direction for each security
+            valid_lob = np.where(notional_beta > 0, imb_vec > 0.3, imb_vec < -0.3)
+            # Only proceed if all securities have valid LOB signals
+            lob_signal = np.all(valid_lob)
+        else:
+            lob_signal = True
+
         # Check for beta vector refresh
         beta_refresh = False
         if i == 0:
@@ -309,6 +333,7 @@ def vectorized_cointegrated_basket_backtest(
         before_position = None
         after_position = None
         after_cash = None
+        scaled_notional = None
         
         # Exit long position (stop loss, normal exit, or beta refresh)
         if long and (z > enter_zscore + stop_loss_delta or z > -exit_zscore or beta_refresh):
@@ -352,62 +377,79 @@ def vectorized_cointegrated_basket_backtest(
             else:
                 action = 'exit_short'
                 
-
         # Enter/extend long (but not if stop loss would be triggered)
-        elif z < -enter_zscore:
+        elif z < -enter_zscore and (not use_lob or (use_lob and lob_signal)):
             # Only extend/enter if not past stop loss threshold
             if z > enter_zscore + stop_loss_delta:
                 # Do not extend/enter, treat as no trade (should not happen, but for safety)
                 if (long or short) and ticks_since_entry is not None:
                     ticks_since_entry += 1
             else:
-                before_position = position.copy()
-                before_cash = cash
-                before_position_value = position @ price_vector
-                delta_position = notional_beta / price_vector
-                position = position + delta_position
-                after_position = position.copy()
-                after_position_value = position @ price_vector
-                cash = cash - delta_position @ price_vector
-                after_cash = cash
-                action = 'extend_long' if long else 'enter_long'
+                # Skip if already in position and extends not allowed
+                if not (long and not use_extends):  # Changed to allow continuing execution
+                    before_position = position.copy()
+                    before_cash = cash
+                    before_position_value = position @ price_vector
+                    # Scale notional based on z-score magnitude
+                    z_scale = min(abs(z / enter_zscore), 3.0)  # Cap at 3x
+                    scaled_notional_beta = notional_beta * z_scale
+                    scaled_notional = notional * z_scale
+                    delta_position = scaled_notional_beta / price_vector
+                    position = position + delta_position
+                    after_position = position.copy()
+                    after_position_value = position @ price_vector
+                    cash = cash - delta_position @ price_vector
+                    after_cash = cash
+                    action = 'extend_long' if long else 'enter_long'
 
-                if long:
-                    if ticks_since_entry is not None:
-                        ticks_since_entry += 1
-                        extends_since_entry += 1
-                else:
-                    long = True
-                    ticks_since_entry = 0  # Start counting after entry
-                    extends_since_entry = 0  # Start counting after entry
+                    if long:
+                        if ticks_since_entry is not None:
+                            ticks_since_entry += 1
+                            extends_since_entry += 1
+                    else:
+                        long = True
+                        ticks_since_entry = 0  # Start counting after entry
+                        extends_since_entry = 0  # Start counting after entry
+
+                if (long or short) and ticks_since_entry is not None:
+                    ticks_since_entry += 1
 
         # Enter/extend short (but not if stop loss would be triggered)
-        elif z > enter_zscore:
+        elif z > enter_zscore and (not use_lob or (use_lob and lob_signal)):
             # Only extend/enter if not past stop loss threshold
             if z < -enter_zscore - stop_loss_delta:
                 # Do not extend/enter, treat as no trade (should not happen, but for safety)
                 if (long or short) and ticks_since_entry is not None:
                     ticks_since_entry += 1
             else:
-                before_position = position.copy()
-                before_cash = cash
-                before_position_value = position @ price_vector
-                delta_position = -notional_beta / price_vector
-                position = position + delta_position
-                after_position = position.copy()
-                after_position_value = position @ price_vector
-                cash = cash - delta_position @ price_vector
-                after_cash = cash
-                action = 'extend_short' if short else 'enter_short'
+                # Skip if already in position and extends not allowed
+                if not (short and not use_extends):  # Changed to allow continuing execution
+                    before_position = position.copy()
+                    before_cash = cash
+                    before_position_value = position @ price_vector
+                    # Scale notional based on z-score magnitude
+                    z_scale = min(abs(z / enter_zscore), 3.0)  # Cap at 3x
+                    scaled_notional_beta = -notional_beta * z_scale
+                    scaled_notional = notional * z_scale
+                    delta_position = scaled_notional_beta / price_vector
+                    position = position + delta_position
+                    after_position = position.copy()
+                    after_position_value = position @ price_vector
+                    cash = cash - delta_position @ price_vector
+                    after_cash = cash
+                    action = 'extend_short' if short else 'enter_short'
 
-                if short:
-                    if ticks_since_entry is not None:
-                        ticks_since_entry += 1
-                        extends_since_entry += 1
-                else:
-                    short = True
-                    ticks_since_entry = 0  # Start counting after entry
-                    extends_since_entry = 0  # Start counting after entry
+                    if short:
+                        if ticks_since_entry is not None:
+                            ticks_since_entry += 1
+                            extends_since_entry += 1
+                    else:
+                        short = True
+                        ticks_since_entry = 0  # Start counting after entry
+                        extends_since_entry = 0  # Start counting after entry
+
+                if (long or short) and ticks_since_entry is not None:
+                    ticks_since_entry += 1
 
         else:
             # No trade
@@ -430,7 +472,8 @@ def vectorized_cointegrated_basket_backtest(
                 'after_position_value': after_position_value,
                 'z_score': z,
                 'ticks_since_entry': ticks_since_entry if ticks_since_entry is not None else 0,
-                'extends_since_entry': extends_since_entry if extends_since_entry is not None else 0
+                'extends_since_entry': extends_since_entry if extends_since_entry is not None else 0,
+                'scaled_notional': scaled_notional
             })
 
             if 'exit' in action:
@@ -460,7 +503,9 @@ def run_backtest_for_basket(
     enter_zscore,
     exit_zscore,
     stop_loss_delta=None,
-    retest_cointegration=False
+    retest_cointegration=False,
+    use_extends=True,
+    use_lob=True
 ):
     history_df, trade_log = vectorized_cointegrated_basket_backtest(
         data=data,
@@ -474,13 +519,16 @@ def run_backtest_for_basket(
         enter_zscore=enter_zscore,
         exit_zscore=exit_zscore,
         stop_loss_delta=stop_loss_delta,
-        retest_cointegration=retest_cointegration
+        retest_cointegration=retest_cointegration,
+        use_extends=use_extends,
+        use_lob=use_lob
     )
     print(f"Complete backtest of basket: {basket} with params: "
           f"beta_refresh_freq={beta_refresh_freq}, spread_window={spread_window}, "
           f"cash_start={cash_start}, notional={notional}, trade_freq={trade_freq}, "
           f"execution_delay={execution_delay}, enter_zscore={enter_zscore}, exit_zscore={exit_zscore}, "
-          f"stop_loss_delta={stop_loss_delta}, retest_cointegration={retest_cointegration}")
+          f"stop_loss_delta={stop_loss_delta}, retest_cointegration={retest_cointegration}, "
+          f"use_extends={use_extends}, use_lob={use_lob}")
     import random
     unique_id = (
         f"{basket}_"
@@ -493,7 +541,9 @@ def run_backtest_for_basket(
         f"enter_zscore={enter_zscore}_"
         f"exit_zscore={exit_zscore}_"
         f"stop_loss_delta={stop_loss_delta}_"
-        f"retest_cointegration={retest_cointegration}"
+        f"retest_cointegration={retest_cointegration}_"
+        f"use_extends={use_extends}_"
+        f"use_lob={use_lob}"
     )
     params = {
         "id": unique_id,
@@ -507,7 +557,9 @@ def run_backtest_for_basket(
         "enter_zscore": enter_zscore,
         "exit_zscore": exit_zscore,
         "stop_loss_delta": stop_loss_delta,
-        "retest_cointegration": retest_cointegration
+        "retest_cointegration": retest_cointegration,
+        "use_extends": use_extends,
+        "use_lob": use_lob
     }
     return params, history_df, trade_log
 
@@ -526,6 +578,8 @@ def main(
     exit_zscore=[0.3],
     stop_loss_delta=[0],
     retest_cointegration=[False],
+    use_extends=[True],
+    use_lob=[True],
     use_multiprocessing=True
 ):
     """
@@ -537,7 +591,7 @@ def main(
         List of baskets to test.
     data : pd.DataFrame
         DataFrame with price data.
-    beta_refresh_freq, spread_window, cash_start, notional, trade_freq, execution_delay, enter_zscore, exit_zscore, stop_loss_delta, retest_cointegration :
+    beta_refresh_freq, spread_window, cash_start, notional, trade_freq, execution_delay, enter_zscore, exit_zscore, stop_loss_delta, retest_cointegration, use_extends, use_lob :
         Each should be a list of values to try.
     use_multiprocessing : bool
         Whether to use multiprocessing.
@@ -560,7 +614,9 @@ def main(
         enter_zscore,
         exit_zscore,
         stop_loss_delta,
-        retest_cointegration
+        retest_cointegration,
+        use_extends,
+        use_lob
     ]
 
     # Generate all combinations
@@ -579,13 +635,15 @@ def main(
             enter_zscore,
             exit_zscore,
             stop_loss_delta,
-            retest_cointegration
+            retest_cointegration,
+            use_extends,
+            use_lob
         )
-        for (basket, beta_refresh_freq, spread_window, cash_start, notional, trade_freq, execution_delay, enter_zscore, exit_zscore, stop_loss_delta, retest_cointegration) in combos
+        for (basket, beta_refresh_freq, spread_window, cash_start, notional, trade_freq, execution_delay, enter_zscore, exit_zscore, stop_loss_delta, retest_cointegration, use_extends, use_lob) in combos
     ]
 
     if use_multiprocessing:
-        with mp.Pool(processes=mp.cpu_count()) as pool:
+        with mp.Pool(processes=4) as pool:
             results = pool.starmap(run_backtest_for_basket, args)
     else:
         results = [run_backtest_for_basket(*arg) for arg in args]
