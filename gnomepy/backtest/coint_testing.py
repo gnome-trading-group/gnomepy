@@ -310,7 +310,7 @@ def vectorized_cointegrated_basket_backtest(
             # Get imbalance for each security
             imb_vec = imb_matrix[i]
             # Check if imbalance aligns with beta direction for each security
-            valid_lob = np.where(notional_beta > 0, imb_vec > 0.3, imb_vec < -0.3)
+            valid_lob = np.where(notional_beta > 0, imb_vec > 0.1, imb_vec < -0.1)
             # Only proceed if all securities have valid LOB signals
             lob_signal = np.all(valid_lob)
         else:
@@ -523,12 +523,12 @@ def run_backtest_for_basket(
         use_extends=use_extends,
         use_lob=use_lob
     )
-    print(f"Complete backtest of basket: {basket} with params: "
-          f"beta_refresh_freq={beta_refresh_freq}, spread_window={spread_window}, "
-          f"cash_start={cash_start}, notional={notional}, trade_freq={trade_freq}, "
-          f"execution_delay={execution_delay}, enter_zscore={enter_zscore}, exit_zscore={exit_zscore}, "
-          f"stop_loss_delta={stop_loss_delta}, retest_cointegration={retest_cointegration}, "
-          f"use_extends={use_extends}, use_lob={use_lob}")
+    # print(f"Complete backtest of basket: {basket} with params: "
+    #       f"beta_refresh_freq={beta_refresh_freq}, spread_window={spread_window}, "
+    #       f"cash_start={cash_start}, notional={notional}, trade_freq={trade_freq}, "
+    #       f"execution_delay={execution_delay}, enter_zscore={enter_zscore}, exit_zscore={exit_zscore}, "
+    #       f"stop_loss_delta={stop_loss_delta}, retest_cointegration={retest_cointegration}, "
+    #       f"use_extends={use_extends}, use_lob={use_lob}")
     import random
     unique_id = (
         f"{basket}_"
@@ -601,6 +601,7 @@ def main(
     results : list
         List of (params_dict, history_df, trade_log) tuples for each parameter combination.
     """
+    from tqdm import tqdm
 
     # Ensure all parameters are lists
     param_lists = [
@@ -621,6 +622,8 @@ def main(
 
     # Generate all combinations
     combos = list(itertools.product(*param_lists))
+    total_combos = len(combos)
+    print(f"Running {total_combos} parameter combinations...")
 
     args = [
         (
@@ -644,9 +647,11 @@ def main(
 
     if use_multiprocessing:
         with mp.Pool(processes=4) as pool:
-            results = pool.starmap(run_backtest_for_basket, args)
+            results = list(tqdm(pool.imap(lambda x: run_backtest_for_basket(*x), args), total=total_combos))
     else:
-        results = [run_backtest_for_basket(*arg) for arg in args]
+        results = []
+        for arg in tqdm(args, total=total_combos):
+            results.append(run_backtest_for_basket(*arg))
 
     return results
 
