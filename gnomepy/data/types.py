@@ -2,11 +2,105 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import IntFlag, StrEnum
 from typing import Type
-
 from gnomepy.data.sbe import DecodedMessage
+from enum import Enum
 
 FIXED_PRICE_SCALE = 1e9
 FIXED_SIZE_SCALE = 1e6
+
+@dataclass
+class Listing:
+    """A class representing a security listing on an exchange.
+    
+    Attributes:
+        exchange_id (int): The exchange identifier where the security is listed
+        security_id (int): The security identifier
+    """
+    exchange_id: int
+    security_id: int
+    
+    def __hash__(self) -> int:
+        """Make the Listing object hashable for use as dictionary keys."""
+        return hash((self.exchange_id, self.security_id))
+    
+    def __eq__(self, other) -> bool:
+        """Define equality for Listing objects."""
+        if not isinstance(other, Listing):
+            return False
+        return (self.exchange_id, self.security_id) == (other.exchange_id, other.security_id)
+    
+    def __str__(self) -> str:
+        """String representation: exchange_id_security_id."""
+        return f"{self.exchange_id}_{self.security_id}"
+
+class Action(Enum):
+    BUY = "BUY"
+    SELL = "SELL" 
+    NEUTRAL = "NEUTRAL"
+
+class Status(Enum):
+    OPEN = "OPEN" 
+    FILLED = "FILLED"
+
+class OrderType(Enum):
+    MARKET = "MARKET" 
+    LIMIT = "LIMIT"
+    # TODO: stop or stop loss or something else here
+
+class Order:
+    listing: Listing
+    size: float
+    status: Status
+    type: OrderType
+    action: Action
+    price: float
+    cash_size: float
+
+    def __init__(self, listing: Listing, size: float, status: Status, type: OrderType, 
+                 action: Action, price: float, cash_size: float):
+        self.listing = listing
+        self.size = size
+        self.status = status
+        self.type = type
+        self.action = action
+        self.price = price
+        self.cash_size = cash_size
+
+class Signal:
+    """A class representing a trading signal for a security listing.
+    
+    Attributes:
+        listing (Listing): The security listing the signal is for
+        action (Action): The trading action - BUY, SELL, or NEUTRAL
+        confidence (float): Confidence multiplier >= 1.0 indicating signal strength
+    """
+    listing: Listing
+    action: Action
+    confidence: float
+
+    def __init__(self, listing: Listing, action: Action, confidence: float):
+        self.listing = listing
+        self.action = action
+        self.confidence = confidence
+    
+    def __post_init__(self):
+        """Validate confidence is >= 1.0."""
+        if self.confidence < 1.0:
+            raise ValueError("Confidence multiplier must be >= 1.0")
+        
+class BasketSignal:
+    """A class representing a lsit of signals for strategies that must trade baskets at specified proportions.
+    
+    Attributes:
+        signals (list[Signal]): The list of signals 
+        proportions (list[float]): The list of proportions to trade each signal
+    """
+    signals: list[Signal]
+    proportions: list[float]
+    
+    def __init__(self, signals: list[Signal], proportions: list[float]):
+        self.signals = signals
+        self.proportions = proportions
 
 class SchemaType(StrEnum):
     MBO = "mbo"
