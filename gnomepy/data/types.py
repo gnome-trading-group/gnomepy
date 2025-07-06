@@ -55,9 +55,11 @@ class Order:
     action: Action
     price: float
     cash_size: float
+    timestampOpened: int
+    timestampClosed: int
 
     def __init__(self, listing: Listing, size: float, status: Status, type: OrderType, 
-                 action: Action, price: float, cash_size: float):
+                 action: Action, price: float, cash_size: float, timestampOpened: int = None):
         self.listing = listing
         self.size = size
         self.status = status
@@ -65,42 +67,28 @@ class Order:
         self.action = action
         self.price = price
         self.cash_size = cash_size
-
-class Signal:
-    """A class representing a trading signal for a security listing.
-    
-    Attributes:
-        listing (Listing): The security listing the signal is for
-        action (Action): The trading action - BUY, SELL, or NEUTRAL
-        confidence (float): Confidence multiplier >= 1.0 indicating signal strength
-    """
-    listing: Listing
-    action: Action
-    confidence: float
-
-    def __init__(self, listing: Listing, action: Action, confidence: float):
-        self.listing = listing
-        self.action = action
-        self.confidence = confidence
-    
-    def __post_init__(self):
-        """Validate confidence is >= 1.0."""
-        if self.confidence < 1.0:
-            raise ValueError("Confidence multiplier must be >= 1.0")
+        self.timestampOpened = timestampOpened
+        self.timestampClosed = None
         
-class BasketSignal:
-    """A class representing a lsit of signals for strategies that must trade baskets at specified proportions.
+    def close(self, timestampClosed: int):
+        """Update the timestampClosed and status when order is closed"""
+        self.timestampClosed = timestampClosed
+        self.status = Status.FILLED
+
+class SignalType(StrEnum):
+    """A class representing the type of signal being generated.
     
-    Attributes:
-        signals (list[Signal]): The list of signals 
-        proportions (list[float]): The list of proportions to trade each signal
+    Values:
+        ENTER_NEGATIVE_MEAN_REVERSION: Signal to enter a negative mean reversion trade
+        ENTER_POSITIVE_MEAN_REVERSION: Signal to enter a positive mean reversion trade  
+        EXIT_NEGATIVE_MEAN_REVERSION: Signal to exit a negative mean reversion trade
+        EXIT_POSITIVE_MEAN_REVERSION: Signal to exit a positive mean reversion trade
     """
-    signals: list[Signal]
-    proportions: list[float]
-    
-    def __init__(self, signals: list[Signal], proportions: list[float]):
-        self.signals = signals
-        self.proportions = proportions
+    ENTER_NEGATIVE_MEAN_REVERSION = "enter_negative_mean_reversion"
+    ENTER_POSITIVE_MEAN_REVERSION = "enter_positive_mean_reversion"
+    EXIT_NEGATIVE_MEAN_REVERSION = "exit_negative_mean_reversion" 
+    EXIT_POSITIVE_MEAN_REVERSION = "exit_positive_mean_reversion"
+
 
 class SchemaType(StrEnum):
     MBO = "mbo"
@@ -393,3 +381,4 @@ def get_schema_base(schema_type: SchemaType) -> Type[SchemaBase]:
     elif schema_type == SchemaType.OHLCV_1H:
         return OHLCV1H
     raise Exception(f"Schema type {schema_type} not implemented")
+

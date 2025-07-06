@@ -1,6 +1,6 @@
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 from gnomepy.data.types import *
-from gnomepy.data.types import Listing, SchemaType
+from gnomepy.backtest.signal import *
 import pandas as pd
 import numpy as np
 import time
@@ -24,7 +24,6 @@ class Strategy:
         pass
 
 class CointegrationStrategy(Strategy):
-
 
     def __init__(self, listings: list[Listing], data_schema_type: SchemaType = SchemaType.MBP_10,
                  trade_frequency: int = 1, beta_refresh_frequency: int = 1000,
@@ -77,15 +76,84 @@ class CointegrationStrategy(Strategy):
         self.significance_level = significance_level
         self.sig_idx = SIGNIFICANCE_LEVEL_MAP[significance_level]
 
-    def initialize_backtest(self) -> None:
+    def __str__(self):
+        """Create string representation of strategy parameters."""
+        return (
+            f"CointegrationStrategy("
+            f"listings={self.listings}, "
+            f"data_schema_type={self.data_schema_type}, "
+            f"trade_frequency={self.trade_frequency}, "
+            f"beta_refresh_frequency={self.beta_refresh_frequency}, "
+            f"spread_window={self.spread_window}, "
+            f"enter_zscore={self.enter_zscore}, "
+            f"exit_zscore={self.exit_zscore}, "
+            f"stop_loss_delta={self.stop_loss_delta}, "
+            f"retest_cointegration={self.retest_cointegration}, "
+            f"use_extends={self.use_extends}, "
+            f"use_lob={self.use_lob}, "
+            f"use_dynamic_sizing={self.use_dynamic_sizing}, "
+            f"significance_level={self.significance_level})"
+        )
+
+    def __eq__(self, other):
+        """Define equality based on parameters."""
+        if not isinstance(other, CointegrationStrategy):
+            return False
+        return (
+            self.listings == other.listings and
+            self.data_schema_type == other.data_schema_type and
+            self.trade_frequency == other.trade_frequency and
+            self.beta_refresh_frequency == other.beta_refresh_frequency and
+            self.spread_window == other.spread_window and
+            self.enter_zscore == other.enter_zscore and
+            self.exit_zscore == other.exit_zscore and
+            self.stop_loss_delta == other.stop_loss_delta and
+            self.retest_cointegration == other.retest_cointegration and
+            self.use_extends == other.use_extends and
+            self.use_lob == other.use_lob and
+            self.use_dynamic_sizing == other.use_dynamic_sizing and
+            self.significance_level == other.significance_level
+        )
+
+    def initialize_backtest(self):
         # Strategy state variables
         self.beta_vec = None
         self.norm_beta_vec = None
         self.n_coints = None
         return
 
-    def process_event(self, listing_data: dict[Listing, pd.DataFrame]) -> list[Signal | BasketSignal]:
-
+    def validate_signal(self, signal, strategy_position_state):
+        """
+        Validate if a signal is appropriate given current position state.
+        
+        Args:
+            signal: BasketSignal with strategy and signal_type
+            strategy_position_state: Current position state for this strategy
+            
+        Returns:
+            bool: True if signal should be executed
+        """
+        current_position = strategy_position_state['position_type']
+        
+        if signal.signal_type == SignalType.ENTER_POSITIVE_MEAN_REVERSION:
+            return current_position is None or current_position == SignalType.EXIT_POSITIVE_MEAN_REVERSION or current_position == SignalType.EXIT_NEGATIVE_MEAN_REVERSION  # Can enter if neutral or exited
+        elif signal.signal_type == SignalType.ENTER_NEGATIVE_MEAN_REVERSION:
+            return current_position is None or current_position == SignalType.EXIT_POSITIVE_MEAN_REVERSION or current_position == SignalType.EXIT_NEGATIVE_MEAN_REVERSION  # Can enter if neutral or exited
+        elif signal.signal_type == SignalType.EXIT_POSITIVE_MEAN_REVERSION:
+            return current_position == SignalType.ENTER_POSITIVE_MEAN_REVERSION
+        elif signal.signal_type == SignalType.EXIT_NEGATIVE_MEAN_REVERSION:
+            return current_position == SignalType.ENTER_NEGATIVE_MEAN_REVERSION
+        
+        return False
+    
+    def process_event(self, listing_data: dict[Listing, pd.DataFrame]) -> tuple[list[Signal | BasketSignal], float]:
+        """Process market data event and generate trading signals.
+        
+        Returns:
+            tuple containing:
+                - list of Signal/BasketSignal objects
+                - float latency in seconds
+        """
         # Start latency calculation
         start_time = time.time()
 
@@ -97,18 +165,22 @@ class CointegrationStrategy(Strategy):
             assert len(listing_data[listing]) == N, f"DataFrame lengths don't match: {len(listing_data[listing])} != {N}"
 
         # Determine if there's enough data to run calculations 
-        if N <= self.max_lookback:
+        if N < self.max_lookback:
+            print("Not enough data")
+            print(N, idx)
             return [], time.time() - start_time
 
         # First check if we need to update betas
         if idx % self.beta_refresh_frequency == 0:
+            print("Update beta vectors")
 
             # Create price matrix and calculate beta vectors
-            coint_price_matrix = np.column_stack([np.log(listing_data[listing].iloc[idx-self.beta_refresh_frequency:idx]['bidPrice0'].values) for listing in self.listings])
+            coint_price_matrix = np.column_stack([np.log(listing_data[listing].loc[idx-self.beta_refresh_frequency:idx+1]['bidPrice0'].values) for listing in self.listings])
             johansen_result = coint_johansen(coint_price_matrix, det_order=0, k_ar_diff=1)
             trace_stats = johansen_result.lr1
             cv = johansen_result.cvt[:, self.sig_idx]
             self.n_coints = np.sum(trace_stats > cv)
+            print("Number of coints", self.n_coints)
 
             # We tested and there is no more valid cointegration
             if self.n_coints == 0:
@@ -132,6 +204,7 @@ class CointegrationStrategy(Strategy):
                 self.beta_vec = johansen_result.evec[:, :self.n_coints]
                 self.norm_beta_vec = self.beta_vec / np.linalg.norm(self.beta_vec)
 
+            print("Updated beta vec: ", self.beta_vec)
             
             return [], time.time() - start_time
 
@@ -139,57 +212,67 @@ class CointegrationStrategy(Strategy):
         elif self.beta_vec is not None:
 
             # Create price matrix and calculate spread
-            coint_price_matrix = np.column_stack([np.log(listing_data[listing].iloc[idx-self.beta_refresh_frequency:idx]['bidPrice0'].values) for listing in self.listings])
+            coint_price_matrix = np.column_stack([np.log(listing_data[listing].loc[idx-self.beta_refresh_frequency:idx+1]['bidPrice0'].values) for listing in self.listings])
 
             # TODO:Implement LOB balance signal
 
             # Caclulate past spreads and newest one
-            window_spreads = coint_price_matrix[idx-self.spread_window-1:idx] @ self.beta_vec
+            window_spreads = coint_price_matrix @ self.beta_vec
 
             # Calculate z score of newest time stamp
-            z_score = (coint_price_matrix[idx] - window_spreads.mean()) / window_spreads.std()
+            z_score = (window_spreads[-1][0] - window_spreads[:-1].mean()) / window_spreads[:-1].std()
 
             # Turn z_score into confidence, cap at 3x
             confidence_multiplier = min(abs(z_score / self.enter_zscore), 3.0)
 
             # Positive mean reversion: b_l = [0.3, -0.4]  I'm waiting for a positive reversion. I've entered long on positive betas, so I sell positive betas on exit. I've entered short on negative betas, so I buy negative betas on exit.
             # Negative mean reversion: b_s = [-0.3, 0.4]  I'm waiting for a negative reversion. I've inverted my beta vector. I still enter long on positive betas, so I sell positive betas on exit. I still enter short on negative betas, so I buy negative betas on exit.
-
-            # Exit positive reversion 
-            if (z_score < -self.enter_zscore - self.stop_loss_delta or z_score > -self.exit_zscore):
-                
-                signals = [Signal(listing = self.listings[i], 
-                                  action=Action.SELL if self.norm_beta_vec[i] > 0 else Action.BUY,
-                                  confidence=1.0) for i in len(self.listings)]
-
-                return BasketSignal(signals=signals, proportions=self.norm_beta_vec), time.time() - start_time
-
-
-            # Exit negative reversion
-            elif (z_score > self.enter_zscore + self.stop_loss_delta or z_score < self.exit_zscore):
-                
-                signals = [Signal(listing = self.listings[i], 
-                                  action=Action.SELL if -self.norm_beta_vec[i] > 0 else Action.BUY,
-                                  confidence=1.0) for i in len(self.listings)]
-
-                return BasketSignal(signals=signals, proportions=-self.norm_beta_vec), time.time() - start_time
-            
             # Enter positive mean reversion
-            elif z_score < -self.enter_zscore: #TODO: and (not self.use_lob or (self.use_lob and lob_signal)):
+            if z_score < -self.enter_zscore: #TODO: and (not self.use_lob or (self.use_lob and lob_signal)):
+                print(f"Entering positive mean reversion trade - z_score: {z_score:.2f}")
+                
                 signals = [Signal(listing = self.listings[i], 
                                   action=Action.BUY if self.norm_beta_vec[i] > 0 else Action.SELL,
-                                  confidence=confidence_multiplier) for i in len(self.listings)]
+                                  confidence=confidence_multiplier) for i in range(len(self.listings))]
 
-                return BasketSignal(signals=signals, proportions=self.norm_beta_vec), time.time() - start_time
+                print(f"Generated entry signals with confidence {confidence_multiplier:.2f} and beta vector: {self.norm_beta_vec}")
+                return [BasketSignal(signals=signals, proportions=self.norm_beta_vec, strategy=self, signal_type=SignalType.ENTER_POSITIVE_MEAN_REVERSION)], time.time() - start_time
             
             # Enter negative mean reversion
             elif z_score > self.enter_zscore:
+                print(f"Entering negative mean reversion trade - z_score: {z_score:.2f}")
+                
                 signals = [Signal(listing = self.listings[i], 
                                   action=Action.BUY if -self.norm_beta_vec[i] > 0 else Action.SELL,
-                                  confidence=1.0) for i in len(self.listings)]
+                                  confidence=1.0) for i in range(len(self.listings))]
                 
-                return BasketSignal(signals=signals, proportions=-self.norm_beta_vec), time.time() - start_time
+                print(f"Generated entry signals with inverted beta vector: {-self.norm_beta_vec}")
+                return [BasketSignal(signals=signals, proportions=-self.norm_beta_vec, strategy=self, signal_type=SignalType.ENTER_NEGATIVE_MEAN_REVERSION)], time.time() - start_time
+
+            # Exit positive reversion 
+            elif (z_score < -self.enter_zscore - self.stop_loss_delta or z_score > -self.exit_zscore):
+                print(f"Exiting positive reversion position - z_score: {z_score:.2f}")
+                
+                signals = [Signal(listing = self.listings[i], 
+                                  action=Action.SELL if self.norm_beta_vec[i] > 0 else Action.BUY,
+                                  confidence=1.0) for i in range(len(self.listings))]
+
+                print(f"Generated exit signals with beta vector: {self.norm_beta_vec}")
+                return [BasketSignal(signals=signals, proportions=self.norm_beta_vec, strategy=self, signal_type=SignalType.EXIT_POSITIVE_MEAN_REVERSION)], time.time() - start_time
+
+            # Exit negative reversion
+            elif (z_score > self.enter_zscore + self.stop_loss_delta or z_score < self.exit_zscore):
+                print(f"Exiting negative reversion position - z_score: {z_score:.2f}")
+                
+                signals = [Signal(listing = self.listings[i], 
+                                  action=Action.SELL if -self.norm_beta_vec[i] > 0 else Action.BUY,
+                                  confidence=1.0) for i in range(len(self.listings))]
+
+                print(f"Generated exit signals with inverted beta vector: {-self.norm_beta_vec}")
+                return [BasketSignal(signals=signals, proportions=-self.norm_beta_vec, strategy=self, signal_type=SignalType.EXIT_NEGATIVE_MEAN_REVERSION)], time.time() - start_time
+
+            # Add missing return for when no trading conditions are met
+            return [], time.time() - start_time
 
         # We are not currently trading due to no more cointegration
-        else:
-            return [], time.time() - start_time
+        return [], time.time() - start_time
