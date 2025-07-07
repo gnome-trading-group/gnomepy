@@ -57,9 +57,11 @@ class Order:
     cash_size: float
     timestampOpened: int
     timestampClosed: int
+    signal: 'Signal'  # Forward reference since Signal is defined later
 
     def __init__(self, listing: Listing, size: float, status: Status, type: OrderType, 
-                 action: Action, price: float, cash_size: float, timestampOpened: int = None):
+                 action: Action, price: float, cash_size: float, timestampOpened: int = None,
+                 signal: 'Signal' = None):
         self.listing = listing
         self.size = size
         self.status = status
@@ -69,12 +71,12 @@ class Order:
         self.cash_size = cash_size
         self.timestampOpened = timestampOpened
         self.timestampClosed = None
+        self.signal = signal
         
     def close(self, timestampClosed: int):
         """Update the timestampClosed and status when order is closed"""
         self.timestampClosed = timestampClosed
         self.status = Status.FILLED
-
 class SignalType(StrEnum):
     """A class representing the type of signal being generated.
     

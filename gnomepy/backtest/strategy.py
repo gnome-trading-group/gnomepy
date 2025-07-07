@@ -166,13 +166,10 @@ class CointegrationStrategy(Strategy):
 
         # Determine if there's enough data to run calculations 
         if N < self.max_lookback:
-            print("Not enough data")
-            print(N, idx)
             return [], time.time() - start_time
 
         # First check if we need to update betas
         if idx % self.beta_refresh_frequency == 0:
-            print("Update beta vectors")
 
             # Create price matrix and calculate beta vectors
             coint_price_matrix = np.column_stack([np.log(listing_data[listing].loc[idx-self.beta_refresh_frequency:idx+1]['bidPrice0'].values) for listing in self.listings])
@@ -180,7 +177,6 @@ class CointegrationStrategy(Strategy):
             trace_stats = johansen_result.lr1
             cv = johansen_result.cvt[:, self.sig_idx]
             self.n_coints = np.sum(trace_stats > cv)
-            print("Number of coints", self.n_coints)
 
             # We tested and there is no more valid cointegration
             if self.n_coints == 0:
@@ -203,8 +199,6 @@ class CointegrationStrategy(Strategy):
 
                 self.beta_vec = johansen_result.evec[:, :self.n_coints]
                 self.norm_beta_vec = self.beta_vec / np.linalg.norm(self.beta_vec)
-
-            print("Updated beta vec: ", self.beta_vec)
             
             return [], time.time() - start_time
 
@@ -229,46 +223,34 @@ class CointegrationStrategy(Strategy):
             # Negative mean reversion: b_s = [-0.3, 0.4]  I'm waiting for a negative reversion. I've inverted my beta vector. I still enter long on positive betas, so I sell positive betas on exit. I still enter short on negative betas, so I buy negative betas on exit.
             # Enter positive mean reversion
             if z_score < -self.enter_zscore: #TODO: and (not self.use_lob or (self.use_lob and lob_signal)):
-                print(f"Entering positive mean reversion trade - z_score: {z_score:.2f}")
-                
                 signals = [Signal(listing = self.listings[i], 
                                   action=Action.BUY if self.norm_beta_vec[i] > 0 else Action.SELL,
                                   confidence=confidence_multiplier) for i in range(len(self.listings))]
 
-                print(f"Generated entry signals with confidence {confidence_multiplier:.2f} and beta vector: {self.norm_beta_vec}")
                 return [BasketSignal(signals=signals, proportions=self.norm_beta_vec, strategy=self, signal_type=SignalType.ENTER_POSITIVE_MEAN_REVERSION)], time.time() - start_time
             
             # Enter negative mean reversion
             elif z_score > self.enter_zscore:
-                print(f"Entering negative mean reversion trade - z_score: {z_score:.2f}")
-                
                 signals = [Signal(listing = self.listings[i], 
                                   action=Action.BUY if -self.norm_beta_vec[i] > 0 else Action.SELL,
                                   confidence=1.0) for i in range(len(self.listings))]
                 
-                print(f"Generated entry signals with inverted beta vector: {-self.norm_beta_vec}")
                 return [BasketSignal(signals=signals, proportions=-self.norm_beta_vec, strategy=self, signal_type=SignalType.ENTER_NEGATIVE_MEAN_REVERSION)], time.time() - start_time
 
             # Exit positive reversion 
             elif (z_score < -self.enter_zscore - self.stop_loss_delta or z_score > -self.exit_zscore):
-                print(f"Exiting positive reversion position - z_score: {z_score:.2f}")
-                
                 signals = [Signal(listing = self.listings[i], 
                                   action=Action.SELL if self.norm_beta_vec[i] > 0 else Action.BUY,
                                   confidence=1.0) for i in range(len(self.listings))]
 
-                print(f"Generated exit signals with beta vector: {self.norm_beta_vec}")
                 return [BasketSignal(signals=signals, proportions=self.norm_beta_vec, strategy=self, signal_type=SignalType.EXIT_POSITIVE_MEAN_REVERSION)], time.time() - start_time
 
             # Exit negative reversion
             elif (z_score > self.enter_zscore + self.stop_loss_delta or z_score < self.exit_zscore):
-                print(f"Exiting negative reversion position - z_score: {z_score:.2f}")
-                
                 signals = [Signal(listing = self.listings[i], 
                                   action=Action.SELL if -self.norm_beta_vec[i] > 0 else Action.BUY,
                                   confidence=1.0) for i in range(len(self.listings))]
 
-                print(f"Generated exit signals with inverted beta vector: {-self.norm_beta_vec}")
                 return [BasketSignal(signals=signals, proportions=-self.norm_beta_vec, strategy=self, signal_type=SignalType.EXIT_NEGATIVE_MEAN_REVERSION)], time.time() - start_time
 
             # Add missing return for when no trading conditions are met
