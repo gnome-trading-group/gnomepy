@@ -57,11 +57,11 @@ class Order:
     cash_size: float
     timestampOpened: int
     timestampClosed: int
-    signal: 'Signal'  # Forward reference since Signal is defined later
+    signal: 'TradeSignal'  # Forward reference since TradeSignal is defined later
 
     def __init__(self, listing: Listing, size: float, status: Status, type: OrderType, 
                  action: Action, price: float, cash_size: float, timestampOpened: int = None,
-                 signal: 'Signal' = None):
+                 signal: 'TradeSignal' = None):
         self.listing = listing
         self.size = size
         self.status = status

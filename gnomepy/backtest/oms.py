@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np 
 from gnomepy.data.types import *
 from gnomepy.backtest.strategy import *
+from gnomepy.backtest.trade_signal import TradeSignal, BasketTradeSignal
 
 
 # Order management class
@@ -27,12 +28,12 @@ class OMS:
                 'timestamp': None       # When we entered
             }
         
-    def process_signals(self, signals: list[Signal | BasketSignal], lisings_lob_data: dict[Listing, pd.DataFrame]):
+    def process_signals(self, signals: list[TradeSignal | BasketTradeSignal], lisings_lob_data: dict[Listing, pd.DataFrame]):
         """Process incoming signals and generate filled orders"""
         filled_order_log = []
 
         for signal in signals:
-            if isinstance(signal, BasketSignal):
+            if isinstance(signal, BasketTradeSignal):
                 filled_orders = self._execute_basket_signal(signal, lisings_lob_data)
                 if filled_orders:
                     for order in filled_orders:
@@ -43,13 +44,16 @@ class OMS:
             else:
                 filled_order = self._execute_single_signal(signal, lisings_lob_data)
                 if filled_order:
-                    filled_order_log.append({str(signal.strategy): filled_order})
-                    self.order_log.append({str(signal.strategy): filled_order})
-                    self._update_strategy_position(signal)
+                    # For single signals, we need to find the strategy that generated it
+                    # This is a simplified approach - in practice you might want to store the strategy with each signal
+                    strategy_hash = "single_signal"  # Placeholder
+                    filled_order_log.append({strategy_hash: filled_order})
+                    self.order_log.append({strategy_hash: filled_order})
+                    # Note: _update_strategy_position is only called for BasketTradeSignals
 
         return filled_order_log
 
-    def _execute_single_signal(self, signal: Signal, listings_lob_data: dict[Listing, pd.DataFrame]):
+    def _execute_single_signal(self, signal: TradeSignal, listings_lob_data: dict[Listing, pd.DataFrame]):
         """Execute a single signal"""
         scaled_notional = signal.confidence * self.notional
         
@@ -67,7 +71,7 @@ class OMS:
 
         return self.simulate_lob(order=order, lob_data=listings_lob_data[signal.listing])
 
-    def _execute_basket_signal(self, signal: BasketSignal, listings_lob_data: dict[Listing, pd.DataFrame]):
+    def _execute_basket_signal(self, signal: BasketTradeSignal, listings_lob_data: dict[Listing, pd.DataFrame]):
         """Execute a basket of signals"""
         if not signal.strategy.validate_signal(signal, self.strategy_positions[str(signal.strategy)]):
             return None
@@ -91,7 +95,7 @@ class OMS:
                 status=Status.OPEN,
                 action=subsignal.action,
                 price=None,
-                cash_size=scaled_notional * abs(signal.proportions[i][0]),
+                cash_size=scaled_notional * abs(signal.proportions.flatten()[i]),
                 type=OrderType.MARKET,
                 timestampOpened=listings_lob_data[subsignal.listing].iloc[-1]['timestampEvent'],
                 signal=signal
@@ -109,7 +113,7 @@ class OMS:
         else:
             return None
 
-    def _update_strategy_position(self, signal: BasketSignal):
+    def _update_strategy_position(self, signal: BasketTradeSignal):
         """Update the strategy position state after executing a signal"""
         strategy = signal.strategy
         self.strategy_positions[str(strategy)].update({
@@ -177,6 +181,16 @@ class OMS:
 
         # Get latest LOB snapshot for order simulation
         latest_lob = lob_data.iloc[-1]
+        
+        # Debug print for the first trade
+        if not hasattr(self, '_printed_lob_debug'):
+            print(f"\n=== OMS simulate_lob debug (first trade) ===")
+            print(f"Order: {order.action.value} {order.listing}")
+            print(f"LOB data shape: {lob_data.shape}")
+            print(f"Latest LOB row:")
+            print(latest_lob[['timestampEvent', 'bidPrice0', 'askPrice0', 'bidSize0', 'askSize0']])
+            print(f"Available price columns: {[col for col in lob_data.columns if 'Price' in col][:10]}")
+            self._printed_lob_debug = True
 
         # Look through order book levels until we fill the full size
         for level in range(10):  # Assuming 10 levels in the order book

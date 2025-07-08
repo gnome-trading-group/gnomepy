@@ -1,6 +1,6 @@
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 from gnomepy.data.types import *
-from gnomepy.backtest.signal import *
+from gnomepy.backtest.trade_signal import *
 import pandas as pd
 import numpy as np
 import time
@@ -16,12 +16,46 @@ class Strategy:
         self.data_schema_type = data_schema_type
         self.trade_frequency = trade_frequency
         self.max_lookback = 0
+        self.id = id(self)  # Add unique identifier
+
+    def __hash__(self):
+        return self.id
 
     def initialize_backtest(self) -> None:
         pass
 
-    def process_event(self, listing_data: dict[Listing, pd.DataFrame]) -> list[Signal | BasketSignal]:
+    def process_event(self, listing_data: dict[Listing, pd.DataFrame]) -> list[TradeSignal | BasketTradeSignal]:
         pass
+
+    def precompute_strategy_values(self, listing_data: dict[Listing, pd.DataFrame]) -> dict:
+        """Precompute strategy-dependent values for vectorized backtesting.
+        
+        This method should be overridden by subclasses to precompute any values
+        that would normally be computed during the iterative process.
+        
+        Args:
+            listing_data: Dictionary mapping Listing objects to their full historical data DataFrames
+            
+        Returns:
+            dict: Dictionary containing precomputed values needed for vectorized signal generation
+        """
+        return {}
+
+    def generate_vectorized_signals(self, listing_data: dict[Listing, pd.DataFrame], 
+                                  precomputed_values: dict) -> list[tuple[int, TradeSignal | BasketTradeSignal]]:
+        """Generate signals using precomputed values for vectorized backtesting.
+        
+        This method should be overridden by subclasses to generate signals using
+        the precomputed values from precompute_strategy_values.
+        
+        Args:
+            listing_data: Dictionary mapping Listing objects to their full historical data DataFrames
+            precomputed_values: Dictionary containing precomputed values from precompute_strategy_values
+            
+        Returns:
+            list: List of tuples containing (timestamp, TradeSignal/BasketTradeSignal objects)
+        """
+        return []
 
 class CointegrationStrategy(Strategy):
 
@@ -76,6 +110,10 @@ class CointegrationStrategy(Strategy):
         self.significance_level = significance_level
         self.sig_idx = SIGNIFICANCE_LEVEL_MAP[significance_level]
 
+        # Keep track of historical beta vectors
+        self.beta_history = []
+        self.beta_timestamps = []
+
     def __str__(self):
         """Create string representation of strategy parameters."""
         return (
@@ -115,11 +153,17 @@ class CointegrationStrategy(Strategy):
             self.significance_level == other.significance_level
         )
 
+    def __hash__(self):
+        """Make strategy hashable by using its unique ID."""
+        return self.id
+
     def initialize_backtest(self):
         # Strategy state variables
         self.beta_vec = None
         self.norm_beta_vec = None
         self.n_coints = None
+        self.beta_history = []
+        self.beta_timestamps = []
         return
 
     def validate_signal(self, signal, strategy_position_state):
@@ -145,8 +189,199 @@ class CointegrationStrategy(Strategy):
             return current_position == SignalType.ENTER_NEGATIVE_MEAN_REVERSION
         
         return False
+
+    def precompute_strategy_values(self, listing_data: dict[Listing, pd.DataFrame]) -> dict:
+        """Precompute beta vectors and other strategy values for vectorized backtesting.
+        
+        Args:
+            listing_data: Dictionary mapping Listing objects to their full historical data DataFrames
+            
+        Returns:
+            dict: Dictionary containing precomputed beta vectors, timestamps, and other values
+        """
+        # Get the length of data and create timestamp array
+        data_length = len(listing_data[self.listings[0]])
+        timestamps = listing_data[self.listings[0]]['timestampEvent'].values
+        
+        # Initialize arrays to store precomputed values
+        beta_vectors = np.full((data_length, len(self.listings)), np.nan)
+        norm_beta_vectors = np.full((data_length, len(self.listings)), np.nan)
+        n_coints_array = np.full(data_length, np.nan)
+        z_scores = np.full(data_length, np.nan)
+        
+        # Create price matrix for all data
+        price_matrix = np.column_stack([
+            np.log(listing_data[listing]['bidPrice0'].values) 
+            for listing in self.listings
+        ])
+        
+        # Precompute beta vectors at beta refresh frequency intervals
+        for i in range(self.beta_refresh_frequency, data_length, self.beta_refresh_frequency):
+                
+            # Calculate beta vectors for this window
+            window_start = max(0, i - self.beta_refresh_frequency)
+            coint_price_matrix = price_matrix[window_start:i+1]
+            
+            try:
+                johansen_result = coint_johansen(coint_price_matrix, det_order=0, k_ar_diff=1)
+                trace_stats = johansen_result.lr1
+                cv = johansen_result.cvt[:, self.sig_idx]
+                n_coints = np.sum(trace_stats > cv)
+
+                if n_coints == 0:
+                    if self.retest_cointegration:
+                        # Set beta vectors to None for this period
+                        end_idx = min(i + self.beta_refresh_frequency, data_length)
+                        beta_vectors[i:end_idx] = np.nan
+                        norm_beta_vectors[i:end_idx] = np.nan
+                        n_coints_array[i:end_idx] = 0
+                        continue
+                    else:
+                        n_coints = 1
+                        beta_vec = johansen_result.evec[:, :n_coints]
+                else:
+                    # Use first beta vector
+                    n_coints = 1
+                    beta_vec = johansen_result.evec[:, :n_coints]
+                
+                norm_beta_vec = beta_vec / np.linalg.norm(beta_vec)
+                
+                # Store values for this period
+                end_idx = min(i + self.beta_refresh_frequency, data_length)
+                beta_vectors[i:end_idx] = beta_vec.flatten()
+                norm_beta_vectors[i:end_idx] = norm_beta_vec.flatten()
+                n_coints_array[i:end_idx] = n_coints
+                
+                # Store historical beta vector and timestamp
+                self.beta_history.append(beta_vec.flatten())
+                self.beta_timestamps.append(timestamps[i])
+                
+            except Exception as e:
+                continue
+        
+        # Calculate z-scores for all timestamps where we have beta vectors
+        for i in range(self.beta_refresh_frequency, data_length):
+            if n_coints_array[i] > 0 and not np.any(np.isnan(norm_beta_vectors[i])):
+                # Calculate spread using current beta vector and spread_window
+                window_start = max(0, i - self.spread_window)
+                window_spreads = price_matrix[window_start:i+1] @ beta_vectors[i].reshape(-1, 1)
+
+                if len(window_spreads) > 1:
+                    z_score = (window_spreads[-1][0] - window_spreads[:-1].mean()) / window_spreads[:-1].std()
+                    z_scores[i] = z_score
+        
+        return {
+            'beta_vectors': beta_vectors,
+            'norm_beta_vectors': norm_beta_vectors,
+            'n_coints_array': n_coints_array,
+            'z_scores': z_scores,
+            'timestamps': timestamps,
+            'price_matrix': price_matrix,
+            'beta_history': self.beta_history,
+            'beta_timestamps': self.beta_timestamps
+        }
+
+    def generate_vectorized_signals(self, listing_data: dict[Listing, pd.DataFrame], 
+                                  precomputed_values: dict) -> list[tuple[int, TradeSignal | BasketTradeSignal]]:
+        """Generate signals using precomputed values for vectorized backtesting.
+        
+        Args:
+            listing_data: Dictionary mapping Listing objects to their full historical data DataFrames
+            precomputed_values: Dictionary containing precomputed values from precompute_strategy_values
+            
+        Returns:
+            list: List of tuples containing (timestamp, TradeSignal/BasketTradeSignal objects)
+        """
+        signals = []
+        data_length = len(listing_data[self.listings[0]])
+        
+        # Extract precomputed values
+        norm_beta_vectors = precomputed_values['norm_beta_vectors']
+        n_coints_array = precomputed_values['n_coints_array']
+        z_scores = precomputed_values['z_scores']
+        timestamps = precomputed_values['timestamps']
+                
+        # Generate signals for each timestamp
+        for i in range(self.beta_refresh_frequency, data_length):
+            # Skip if no cointegration, not at trade frequency, or at beta refresh point
+            if n_coints_array[i] == 0 or np.isnan(z_scores[i]) or i % self.beta_refresh_frequency == 0:
+                continue
+            
+            z_score = z_scores[i]
+            norm_beta_vec = norm_beta_vectors[i]
+            timestamp = timestamps[i]
+            
+            # Calculate confidence multiplier
+            confidence_multiplier = min(abs(z_score / self.enter_zscore), 3.0)
+            
+            # Generate signals based on z-score thresholds
+            if z_score < -self.enter_zscore:
+                # Enter positive mean reversion
+                signal_signals = [
+                    TradeSignal(
+                        listing=self.listings[j],
+                        action=Action.BUY if norm_beta_vec[j] > 0 else Action.SELL,
+                        confidence=confidence_multiplier
+                    ) for j in range(len(self.listings))
+                ]
+                signals.append((timestamp, BasketTradeSignal(
+                    signals=signal_signals,
+                    proportions=norm_beta_vec,
+                    strategy=self,
+                    signal_type=SignalType.ENTER_POSITIVE_MEAN_REVERSION
+                )))
+                
+            elif z_score > self.enter_zscore:
+                # Enter negative mean reversion
+                signal_signals = [
+                    TradeSignal(
+                        listing=self.listings[j],
+                        action=Action.BUY if -norm_beta_vec[j] > 0 else Action.SELL,
+                        confidence=1.0
+                    ) for j in range(len(self.listings))
+                ]
+                signals.append((timestamp, BasketTradeSignal(
+                    signals=signal_signals,
+                    proportions=-norm_beta_vec,
+                    strategy=self,
+                    signal_type=SignalType.ENTER_NEGATIVE_MEAN_REVERSION
+                )))
+                
+            elif (z_score < -self.enter_zscore - self.stop_loss_delta or z_score > -self.exit_zscore):
+                # Exit positive reversion
+                signal_signals = [
+                    TradeSignal(
+                        listing=self.listings[j],
+                        action=Action.SELL if norm_beta_vec[j] > 0 else Action.BUY,
+                        confidence=1.0
+                    ) for j in range(len(self.listings))
+                ]
+                signals.append((timestamp, BasketTradeSignal(
+                    signals=signal_signals,
+                    proportions=norm_beta_vec,
+                    strategy=self,
+                    signal_type=SignalType.EXIT_POSITIVE_MEAN_REVERSION
+                )))
+                
+            elif (z_score > self.enter_zscore + self.stop_loss_delta or z_score < self.exit_zscore):
+                # Exit negative reversion
+                signal_signals = [
+                    TradeSignal(
+                        listing=self.listings[j],
+                        action=Action.SELL if -norm_beta_vec[j] > 0 else Action.BUY,
+                        confidence=1.0
+                    ) for j in range(len(self.listings))
+                ]
+                signals.append((timestamp, BasketTradeSignal(
+                    signals=signal_signals,
+                    proportions=-norm_beta_vec,
+                    strategy=self,
+                    signal_type=SignalType.EXIT_NEGATIVE_MEAN_REVERSION
+                )))
+        
+        return signals
     
-    def process_event(self, listing_data: dict[Listing, pd.DataFrame]) -> tuple[list[Signal | BasketSignal], float]:
+    def process_event(self, listing_data: dict[Listing, pd.DataFrame]) -> tuple[list[TradeSignal | BasketTradeSignal], float]:
         """Process market data event and generate trading signals.
         
         Returns:
@@ -199,18 +434,23 @@ class CointegrationStrategy(Strategy):
 
                 self.beta_vec = johansen_result.evec[:, :self.n_coints]
                 self.norm_beta_vec = self.beta_vec / np.linalg.norm(self.beta_vec)
+
+            # Store historical beta vector and timestamp
+            if self.beta_vec is not None:
+                self.beta_history.append(self.beta_vec.flatten())
+                self.beta_timestamps.append(idx)
             
             return [], time.time() - start_time
 
         # If not, then we can consider trading
         elif self.beta_vec is not None:
 
-            # Create price matrix and calculate spread
-            coint_price_matrix = np.column_stack([np.log(listing_data[listing].loc[idx-self.beta_refresh_frequency:idx+1]['bidPrice0'].values) for listing in self.listings])
+            # Create price matrix and calculate spread using spread_window
+            coint_price_matrix = np.column_stack([np.log(listing_data[listing].loc[idx-self.spread_window:idx+1]['bidPrice0'].values) for listing in self.listings])
 
             # TODO:Implement LOB balance signal
 
-            # Caclulate past spreads and newest one
+            # Calculate past spreads and newest one using beta vector
             window_spreads = coint_price_matrix @ self.beta_vec
 
             # Calculate z score of newest time stamp
@@ -223,35 +463,35 @@ class CointegrationStrategy(Strategy):
             # Negative mean reversion: b_s = [-0.3, 0.4]  I'm waiting for a negative reversion. I've inverted my beta vector. I still enter long on positive betas, so I sell positive betas on exit. I still enter short on negative betas, so I buy negative betas on exit.
             # Enter positive mean reversion
             if z_score < -self.enter_zscore: #TODO: and (not self.use_lob or (self.use_lob and lob_signal)):
-                signals = [Signal(listing = self.listings[i], 
+                signals = [TradeSignal(listing = self.listings[i], 
                                   action=Action.BUY if self.norm_beta_vec[i] > 0 else Action.SELL,
                                   confidence=confidence_multiplier) for i in range(len(self.listings))]
 
-                return [BasketSignal(signals=signals, proportions=self.norm_beta_vec, strategy=self, signal_type=SignalType.ENTER_POSITIVE_MEAN_REVERSION)], time.time() - start_time
+                return [BasketTradeSignal(signals=signals, proportions=self.norm_beta_vec, strategy=self, signal_type=SignalType.ENTER_POSITIVE_MEAN_REVERSION)], time.time() - start_time
             
             # Enter negative mean reversion
             elif z_score > self.enter_zscore:
-                signals = [Signal(listing = self.listings[i], 
+                signals = [TradeSignal(listing = self.listings[i], 
                                   action=Action.BUY if -self.norm_beta_vec[i] > 0 else Action.SELL,
                                   confidence=1.0) for i in range(len(self.listings))]
                 
-                return [BasketSignal(signals=signals, proportions=-self.norm_beta_vec, strategy=self, signal_type=SignalType.ENTER_NEGATIVE_MEAN_REVERSION)], time.time() - start_time
+                return [BasketTradeSignal(signals=signals, proportions=-self.norm_beta_vec, strategy=self, signal_type=SignalType.ENTER_NEGATIVE_MEAN_REVERSION)], time.time() - start_time
 
             # Exit positive reversion 
             elif (z_score < -self.enter_zscore - self.stop_loss_delta or z_score > -self.exit_zscore):
-                signals = [Signal(listing = self.listings[i], 
+                signals = [TradeSignal(listing = self.listings[i], 
                                   action=Action.SELL if self.norm_beta_vec[i] > 0 else Action.BUY,
                                   confidence=1.0) for i in range(len(self.listings))]
 
-                return [BasketSignal(signals=signals, proportions=self.norm_beta_vec, strategy=self, signal_type=SignalType.EXIT_POSITIVE_MEAN_REVERSION)], time.time() - start_time
+                return [BasketTradeSignal(signals=signals, proportions=self.norm_beta_vec, strategy=self, signal_type=SignalType.EXIT_POSITIVE_MEAN_REVERSION)], time.time() - start_time
 
             # Exit negative reversion
             elif (z_score > self.enter_zscore + self.stop_loss_delta or z_score < self.exit_zscore):
-                signals = [Signal(listing = self.listings[i], 
+                signals = [TradeSignal(listing = self.listings[i], 
                                   action=Action.SELL if -self.norm_beta_vec[i] > 0 else Action.BUY,
                                   confidence=1.0) for i in range(len(self.listings))]
 
-                return [BasketSignal(signals=signals, proportions=-self.norm_beta_vec, strategy=self, signal_type=SignalType.EXIT_NEGATIVE_MEAN_REVERSION)], time.time() - start_time
+                return [BasketTradeSignal(signals=signals, proportions=-self.norm_beta_vec, strategy=self, signal_type=SignalType.EXIT_NEGATIVE_MEAN_REVERSION)], time.time() - start_time
 
             # Add missing return for when no trading conditions are met
             return [], time.time() - start_time

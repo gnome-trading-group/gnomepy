@@ -1,7 +1,6 @@
 from gnomepy.data.types import Listing, Action, SignalType
-from gnomepy.backtest.strategy import *
 
-class Signal:
+class TradeSignal:
     """A class representing a trading signal for a security listing.
     
     Attributes:
@@ -22,14 +21,14 @@ class Signal:
         if self.confidence < 1.0:
             raise ValueError("Confidence multiplier must be >= 1.0")
         
-class BasketSignal:
-    """A class representing a lsit of signals for strategies that must trade baskets at specified proportions.
+class BasketTradeSignal:
+    """A class representing a list of signals for strategies that must trade baskets at specified proportions.
     
     Attributes:
-        signals (list[Signal]): The list of signals 
+        signals (list[TradeSignal]): The list of signals 
         proportions (list[float]): The list of proportions to trade each signal
     """
-    def __init__(self, signals: list[Signal], proportions: list[float], signal_type: SignalType, strategy):
+    def __init__(self, signals: list[TradeSignal], proportions: list[float], signal_type: SignalType, strategy):
         self.signals = signals
         self.proportions = proportions
         self.strategy = strategy
