@@ -51,8 +51,8 @@ The `VectorizedBacktest` class inherits from `Backtest` and:
 ### Basic Usage
 
 ```python
-from gnomepy.backtest.backtest import VectorizedBacktest
-from gnomepy.backtest.strategy import CointegrationStrategy
+from gnomepy.research_old.backtest import VectorizedBacktest
+from gnomepy.research_old.strategy import CointegrationStrategy
 from gnomepy.data.types import Listing, SchemaType
 
 # Create strategy
@@ -63,7 +63,7 @@ strategy = CointegrationStrategy(
     beta_refresh_frequency=1000
 )
 
-# Run vectorized backtest
+# Run vectorized research_old
 backtest = VectorizedBacktest(
     client=client,
     strategies=[strategy],
@@ -77,16 +77,16 @@ metrics, history = backtest.run()
 ### Comparison with Iterative Backtest
 
 ```python
-from gnomepy.backtest.backtest import Backtest, VectorizedBacktest
+from gnomepy.research_old.backtest import Backtest, VectorizedBacktest
 import time
 
-# Run iterative backtest
+# Run iterative research_old
 start_time = time.time()
 iterative_backtest = Backtest(client, strategies, start_datetime, end_datetime)
 iterative_metrics, iterative_history = iterative_backtest.run()
 iterative_time = time.time() - start_time
 
-# Run vectorized backtest
+# Run vectorized research_old
 start_time = time.time()
 vectorized_backtest = VectorizedBacktest(client, strategies, start_datetime, end_datetime)
 vectorized_metrics, vectorized_history = vectorized_backtest.run()

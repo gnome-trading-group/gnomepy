@@ -9,9 +9,9 @@ approaches, allowing for easy comparison of performance and results.
 import datetime
 from gnomepy.data.client import MarketDataClient
 from gnomepy.data.types import Listing, SchemaType
-from gnomepy.backtest.strategy import CointegrationStrategy
-from gnomepy.backtest.backtest import Backtest, VectorizedBacktest
-from gnomepy.backtest.trade_signal import TradeSignal, BasketTradeSignal
+from gnomepy.research_old.strategy import CointegrationStrategy
+from gnomepy.research_old.backtest import Backtest, VectorizedBacktest
+from gnomepy.research_old.trade_signal import TradeSignal, BasketTradeSignal
 import time
 import numpy as np
 import pandas as pd
@@ -52,7 +52,7 @@ def run_comparison_example():
     print("=== Running Iterative Backtest ===")
     start_time = time.time()
     
-    # Run iterative backtest
+    # Run iterative research_old
     iterative_backtest = Backtest(
         client=client,
         strategies=[strategy],
@@ -63,15 +63,15 @@ def run_comparison_example():
     iterative_metrics, iterative_history = iterative_backtest.run()
     iterative_time = time.time() - start_time
     
-    print(f"Iterative backtest completed in {iterative_time:.2f} seconds")
-    print("Iterative backtest metrics:")
+    print(f"Iterative research_old completed in {iterative_time:.2f} seconds")
+    print("Iterative research_old metrics:")
     print(iterative_metrics)
     print()
     
     print("=== Running Vectorized Backtest ===")
     start_time = time.time()
     
-    # Run vectorized backtest
+    # Run vectorized research_old
     vectorized_backtest = VectorizedBacktest(
         client=client,
         strategies=[strategy],
@@ -82,8 +82,8 @@ def run_comparison_example():
     vectorized_metrics, vectorized_history = vectorized_backtest.run()
     vectorized_time = time.time() - start_time
     
-    print(f"Vectorized backtest completed in {vectorized_time:.2f} seconds")
-    print("Vectorized backtest metrics:")
+    print(f"Vectorized research_old completed in {vectorized_time:.2f} seconds")
+    print("Vectorized research_old metrics:")
     print(vectorized_metrics)
     print()
     
@@ -148,7 +148,7 @@ def run_comparison_example():
         print(f"Signals with matching properties: {matching_signals}")
         print(f"Signals with different properties: {len(matched_signals) - matching_signals}")
 
-    # Get beta vectors from each backtest
+    # Get beta vectors from each research_old
     # Get beta history from each strategy
     iterative_betas = []
     for strategy in iterative_backtest.strategies:
@@ -213,7 +213,7 @@ def run_comparison_example():
                 print(f"\nMatched timestamps: {len(comparison_df)} out of {len(iter_df)} iterative and {len(vec_df)} vectorized")
 
 def run_vectorized_only_example():
-    """Run only the vectorized backtest for quick testing."""
+    """Run only the vectorized research_old for quick testing."""
     
     # Initialize market data client
     client = MarketDataClient(bucket="gnome-market-data-prod", aws_profile_name="AWSAdministratorAccess-241533121172")
@@ -248,7 +248,7 @@ def run_vectorized_only_example():
     print("=== Running Vectorized Backtest ===")
     start_time = time.time()
     
-    # Run vectorized backtest
+    # Run vectorized research_old
     vectorized_backtest = VectorizedBacktest(
         client=client,
         strategies=[strategy],
@@ -259,7 +259,7 @@ def run_vectorized_only_example():
     metrics, history = vectorized_backtest.run()
     total_time = time.time() - start_time
     
-    print(f"Vectorized backtest completed in {total_time:.2f} seconds")
+    print(f"Vectorized research_old completed in {total_time:.2f} seconds")
     print("Metrics:")
     print(metrics)
     

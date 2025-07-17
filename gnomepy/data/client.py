@@ -32,6 +32,17 @@ class MarketDataClient:
         total = self._get_raw_history(exchange_id, security_id, start_datetime, end_datetime, schema_type)
         return DataStore.from_bytes(total, schema_type)
 
+    def has_available_data(
+            self,
+            *,
+            exchange_id: int,
+            security_id: int,
+            start_datetime: datetime.datetime | pd.Timestamp,
+            end_datetime: datetime.datetime | pd.Timestamp,
+            schema_type: SchemaType,
+    ) -> bool:
+        raise NotImplementedError
+
     def _get_raw_history(
             self,
             exchange_id: int,

@@ -9,8 +9,8 @@ import numpy as np
 import pandas as pd
 from gnomepy.data.client import MarketDataClient
 from gnomepy.data.types import Listing, SchemaType
-from gnomepy.backtest.strategy import CointegrationStrategy
-from gnomepy.backtest.backtest import Backtest, VectorizedBacktest
+from gnomepy.research_old.strategy import CointegrationStrategy
+from gnomepy.research_old.backtest import Backtest, VectorizedBacktest
 
 def comprehensive_analysis():
     """Comprehensive analysis of iterative vs vectorized backtesting differences."""
@@ -62,7 +62,7 @@ def comprehensive_analysis():
     print("="*60)
     
     # Run both backtests to get their data
-    print("Running iterative backtest...")
+    print("Running iterative research_old...")
     iterative_backtest = Backtest(
         client=client,
         strategies=[strategy],
@@ -91,7 +91,7 @@ def comprehensive_analysis():
         significance_level=0.05
     )
     
-    print("Running vectorized backtest...")
+    print("Running vectorized research_old...")
     vectorized_backtest = VectorizedBacktest(
         client=client,
         strategies=[strategy_vec],
@@ -242,10 +242,10 @@ def comprehensive_analysis():
     print("="*60)
     
     # Run both backtests to completion
-    print("Running iterative backtest to completion...")
+    print("Running iterative research_old to completion...")
     iterative_metrics, iterative_history = iterative_backtest.run()
     
-    print("Running vectorized backtest to completion...")
+    print("Running vectorized research_old to completion...")
     vectorized_metrics, vectorized_history = vectorized_backtest.run()
     
     # Compare signal histories

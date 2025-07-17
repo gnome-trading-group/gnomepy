@@ -1,9 +1,9 @@
 from gnomepy.data.client import MarketDataClient
 from gnomepy.data.types import SchemaType
-from gnomepy.backtest.archive.strategy_old import Strategy
-from gnomepy.backtest.strategy import *
-from gnomepy.backtest.oms import *
-from gnomepy.backtest.trade_signal import TradeSignal, BasketTradeSignal
+from gnomepy.research_old.archive.strategy_old import Strategy
+from gnomepy.research_old.strategy import *
+from gnomepy.research_old.oms import *
+from gnomepy.research_old.trade_signal import TradeSignal, BasketTradeSignal
 import pandas as pd
 import numpy as np
 import datetime
@@ -16,21 +16,21 @@ class Backtest:
 
     Attributes:
         client (MarketDataClient): Client for fetching market data
-        strategies (Strategy): Trading strategies to backtest
-        start_datetime (datetime): Start time for backtest period
-        end_datetime (datetime): End time for backtest period
+        strategies (Strategy): Trading strategies to research_old
+        start_datetime (datetime): Start time for research_old period
+        end_datetime (datetime): End time for research_old period
         listing_data (dict): Historical market data for each listing
         signal_history (list): History of signals with their timestamps
     """
 
     def __init__(self, client: MarketDataClient, strategies: Strategy, start_datetime: datetime.datetime, end_datetime: datetime.datetime):
-        """Initialize the backtest.
+        """Initialize the research_old.
 
         Args:
             client (MarketDataClient): Client for fetching market data
-            strategies (Strategy): Trading strategies to backtest
-            start_datetime (datetime): Start time for backtest period
-            end_datetime (datetime): End time for backtest period
+            strategies (Strategy): Trading strategies to research_old
+            start_datetime (datetime): Start time for research_old period
+            end_datetime (datetime): End time for research_old period
         """
         self.client = client
         self.strategies = strategies
@@ -95,7 +95,7 @@ class Backtest:
         return metrics, history
 
     def run(self, data_type: str = 'pandas') -> List[Union[pd.DataFrame, np.ndarray]]:
-        """Run the backtest simulation.
+        """Run the research_old simulation.
 
         Processes historical data through the strategies and order management system,
         tracking orders and performance metrics.
@@ -153,21 +153,21 @@ class Backtest:
 
 
 class VectorizedBacktest(Backtest):
-    """A vectorized version of the backtest that precomputes strategy values for faster execution.
+    """A vectorized version of the research_old that precomputes strategy values for faster execution.
     
-    This class reuses most of the existing backtest infrastructure but precomputes
+    This class reuses most of the existing research_old infrastructure but precomputes
     strategy-dependent values (like beta vectors for cointegration strategies) to
     avoid recalculating them at each tick.
     """
 
     def __init__(self, client: MarketDataClient, strategies: Strategy, start_datetime: datetime.datetime, end_datetime: datetime.datetime):
-        """Initialize the vectorized backtest.
+        """Initialize the vectorized research_old.
         
         Args:
             client (MarketDataClient): Client for fetching market data
-            strategies (Strategy): Trading strategies to backtest
-            start_datetime (datetime): Start time for backtest period
-            end_datetime (datetime): End time for backtest period
+            strategies (Strategy): Trading strategies to research_old
+            start_datetime (datetime): Start time for research_old period
+            end_datetime (datetime): End time for research_old period
         """
         super().__init__(client, strategies, start_datetime, end_datetime)
         self.precomputed_values = {}
@@ -188,7 +188,7 @@ class VectorizedBacktest(Backtest):
             self.precomputed_values[strategy_hash] = strategy.precompute_strategy_values(self.sampled_listing_data)
 
     def run(self, data_type: str = 'pandas') -> List[Union[pd.DataFrame, np.ndarray]]:
-        """Run the vectorized backtest simulation.
+        """Run the vectorized research_old simulation.
         
         This method precomputes strategy values and generates all signals at once,
         then processes them through the OMS in chronological order.
@@ -248,7 +248,7 @@ class VectorizedBacktest(Backtest):
                     
                     # Get a window of data around this timestamp for the strategy
                     if strategy:
-                        # Use the same window logic as iterative backtest
+                        # Use the same window logic as iterative research_old
                         sampled_idx = idx // strategy.trade_frequency
                         if sampled_idx >= strategy.max_lookback:
                             window_start = max(0, sampled_idx - strategy.max_lookback)

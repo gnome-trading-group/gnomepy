@@ -3,93 +3,61 @@ from dataclasses import dataclass
 from enum import IntFlag, StrEnum
 from typing import Type
 from gnomepy.data.sbe import DecodedMessage
-from enum import Enum
 
 FIXED_PRICE_SCALE = 1e9
 FIXED_SIZE_SCALE = 1e6
 
+class OrderType(StrEnum):
+    LIMIT = "LIMIT"
+    MARKET = "MARKET"
+
+class TimeInForce(StrEnum):
+    GTC = "GOOD_TILL_CANCELLED"
+    GTX = "GOOD_TILL_CROSSING"
+    IOC = "IMMEDIATE_OR_CANCELED"
+    FOK = "FILL_OR_KILL"
+
+class ExecType(StrEnum):
+    NEW = "NEW"
+    CANCEL = "CANCEL"
+    FILL = "FILL"
+    PARTIAL_FILL = "PARTIAL_FILL"
+    REJECT = "REJECT"
+    CANCEL_REJECT = "CANCEL_REJECT"
+    EXPIRE = "EXPIRE"
+
+class OrderStatus(StrEnum):
+    NEW = "NEW"
+    PARTIALLY_FILLED = "PARTIALLY_FILLED"
+    FILLED = "FILLED"
+    CANCELED = "CANCELED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+
 @dataclass
-class Listing:
-    """A class representing a security listing on an exchange.
-    
-    Attributes:
-        exchange_id (int): The exchange identifier where the security is listed
-        security_id (int): The security identifier
-    """
+class Order:
     exchange_id: int
     security_id: int
-    
-    def __hash__(self) -> int:
-        """Make the Listing object hashable for use as dictionary keys."""
-        return hash((self.exchange_id, self.security_id))
-    
-    def __eq__(self, other) -> bool:
-        """Define equality for Listing objects."""
-        if not isinstance(other, Listing):
-            return False
-        return (self.exchange_id, self.security_id) == (other.exchange_id, other.security_id)
-    
-    def __str__(self) -> str:
-        """String representation: exchange_id_security_id."""
-        return f"{self.exchange_id}_{self.security_id}"
+    client_oid: str | None
+    price: int
+    size: int
+    side: str
+    order_type: OrderType
+    time_in_force: TimeInForce
 
-class Action(Enum):
-    BUY = "BUY"
-    SELL = "SELL" 
-    NEUTRAL = "NEUTRAL"
-
-class Status(Enum):
-    OPEN = "OPEN" 
-    FILLED = "FILLED"
-
-class OrderType(Enum):
-    MARKET = "MARKET" 
-    LIMIT = "LIMIT"
-    # TODO: stop or stop loss or something else here
-
-class Order:
-    listing: Listing
-    size: float
-    status: Status
-    type: OrderType
-    action: Action
-    price: float
-    cash_size: float
-    timestampOpened: int
-    timestampClosed: int
-    signal: 'TradeSignal'  # Forward reference since TradeSignal is defined later
-
-    def __init__(self, listing: Listing, size: float, status: Status, type: OrderType, 
-                 action: Action, price: float, cash_size: float, timestampOpened: int = None,
-                 signal: 'TradeSignal' = None):
-        self.listing = listing
-        self.size = size
-        self.status = status
-        self.type = type
-        self.action = action
-        self.price = price
-        self.cash_size = cash_size
-        self.timestampOpened = timestampOpened
-        self.timestampClosed = None
-        self.signal = signal
-        
-    def close(self, timestampClosed: int):
-        """Update the timestampClosed and status when order is closed"""
-        self.timestampClosed = timestampClosed
-        self.status = Status.FILLED
-class SignalType(StrEnum):
-    """A class representing the type of signal being generated.
-    
-    Values:
-        ENTER_NEGATIVE_MEAN_REVERSION: Signal to enter a negative mean reversion trade
-        ENTER_POSITIVE_MEAN_REVERSION: Signal to enter a positive mean reversion trade  
-        EXIT_NEGATIVE_MEAN_REVERSION: Signal to exit a negative mean reversion trade
-        EXIT_POSITIVE_MEAN_REVERSION: Signal to exit a positive mean reversion trade
-    """
-    ENTER_NEGATIVE_MEAN_REVERSION = "enter_negative_mean_reversion"
-    ENTER_POSITIVE_MEAN_REVERSION = "enter_positive_mean_reversion"
-    EXIT_NEGATIVE_MEAN_REVERSION = "exit_negative_mean_reversion" 
-    EXIT_POSITIVE_MEAN_REVERSION = "exit_positive_mean_reversion"
+@dataclass
+class OrderExecutionReport:
+    exchange_id: int
+    security_id: int
+    client_oid: str | None
+    exec_type: ExecType
+    order_status: OrderStatus
+    filled_qty: int
+    filled_price: int
+    cumulative_qty: int
+    leaves_qty: int
+    timestamp_event: int
+    timestamp_recv: int
 
 
 class SchemaType(StrEnum):
@@ -165,7 +133,7 @@ class SchemaBase(ABC):
     @classmethod
     @abstractmethod
     def from_message(cls, message: DecodedMessage):
-        raise NotImplemented
+        raise NotImplementedError
 
 class SizeMixin:
     @property
@@ -383,4 +351,3 @@ def get_schema_base(schema_type: SchemaType) -> Type[SchemaBase]:
     elif schema_type == SchemaType.OHLCV_1H:
         return OHLCV1H
     raise Exception(f"Schema type {schema_type} not implemented")
-

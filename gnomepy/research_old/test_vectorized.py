@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple test script to verify the vectorized backtest implementation.
+Simple test script to verify the vectorized research_old implementation.
 """
 
 import unittest
@@ -10,13 +10,13 @@ import datetime
 from unittest.mock import Mock, MagicMock
 
 from gnomepy.data.types import Listing, SchemaType, Action, SignalType
-from gnomepy.backtest.strategy import CointegrationStrategy
-from gnomepy.backtest.backtest import VectorizedBacktest
-from gnomepy.backtest.trade_signal import TradeSignal, BasketTradeSignal
+from gnomepy.research_old.strategy import CointegrationStrategy
+from gnomepy.research_old.backtest import VectorizedBacktest
+from gnomepy.research_old.trade_signal import TradeSignal, BasketTradeSignal
 
 
 class TestVectorizedBacktest(unittest.TestCase):
-    """Test cases for the vectorized backtest functionality."""
+    """Test cases for the vectorized research_old functionality."""
     
     def setUp(self):
         """Set up test fixtures."""

@@ -6,6 +6,8 @@ from typing import Optional
 import requests
 
 from gnomepy.config import config
+from gnomepy.registry.types import Security, Exchange, Listing
+
 
 def _to_camel_case(snake_str):
     camel_string = "".join(x.capitalize() for x in snake_str.lower().split("_"))
@@ -37,16 +39,16 @@ class RegistryClient:
             *,
             security_id: Optional[int] = None,
             symbol: Optional[str] = None,
-    ):
-        return self._get("/securities", _parse_kwarg_params(locals()))
+    ) -> list[Security]:
+        return self._get("/securities", _parse_kwarg_params(locals()), Security)
 
     def get_exchange(
             self,
             *,
             exchange_id: Optional[int] = None,
             exchange_name: Optional[str] = None,
-    ):
-        return self._get("/exchanges", _parse_kwarg_params(locals()))
+    ) -> list[Exchange]:
+        return self._get("/exchanges", _parse_kwarg_params(locals()), Exchange)
 
     def get_listing(
             self,
@@ -56,12 +58,13 @@ class RegistryClient:
             security_id: Optional[int] = None,
             exchange_security_id: Optional[str] = None,
             exchange_security_symbol: Optional[str] = None,
-    ):
-        return self._get("/listings", _parse_kwarg_params(locals()))
+    ) -> list[Listing]:
+        return self._get("/listings", _parse_kwarg_params(locals()), Listing)
 
-    def _get(self, path, params):
+    def _get(self, path, params, output_type):
         res = requests.get(self.base_url + path, params=params, headers={
             'x-api-key': self.api_key,
         })
         res.raise_for_status()
-        return res.json()
+        items = res.json()
+        return [output_type(**item) for item in items]

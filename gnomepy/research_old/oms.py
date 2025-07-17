@@ -1,8 +1,8 @@
 import pandas as pd
 import numpy as np 
 from gnomepy.data.types import *
-from gnomepy.backtest.strategy import *
-from gnomepy.backtest.trade_signal import TradeSignal, BasketTradeSignal
+from gnomepy.research_old.strategy import *
+from gnomepy.research_old.trade_signal import TradeSignal, BasketTradeSignal
 
 
 # Order management class

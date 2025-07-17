@@ -16,6 +16,7 @@
             <type name="version" primitiveType="uint16"/>
         </composite>
 
+        <!-- User-defined types -->
         <!-- Presence optional is needed so null values are generated correctly -->
         <type name="timestamp" primitiveType="uint64" nullValue="0" presence="optional" />
         <type name="price" primitiveType="int64" nullValue="-9223372036854775808" presence="optional" />
@@ -24,6 +25,8 @@
         <type name="count" primitiveType="uint32" nullValue="4294967295" presence="optional" />
         <type name="depth" primitiveType="uint8" nullValue="255" presence="optional" />
         <type name="sequence" primitiveType="uint32" nullValue="4294967295" presence="optional" />
+
+        <type name="clientOid" primitiveType="uint8" length="16" presence="optional" description="128-bit client order ID"/>
 
         <enum name="Action" encodingType="char">
             <validValue name="Add">A</validValue>
@@ -43,14 +46,15 @@
         <enum name="OrderType" encodingType="uint8">
             <validValue name="LIMIT">0</validValue>
             <validValue name="MARKET">1</validValue>
-            <validValue name="STOP_LIMIT">2</validValue>
-            <validValue name="STOP_MARKET">3</validValue>
+<!--            <validValue name="STOP_LIMIT">2</validValue>-->
+<!--            <validValue name="STOP_MARKET">3</validValue>-->
         </enum>
 
         <enum name="TimeInForce" encodingType="uint8">
             <validValue name="GOOD_TILL_CANCELED">0</validValue>
-            <validValue name="IMMEDIATE_OR_CANCELED">1</validValue>
-            <validValue name="FILL_OR_KILL">2</validValue>
+            <validValue name="GOOD_TILL_CROSSING">1</validValue>
+            <validValue name="IMMEDIATE_OR_CANCELED">2</validValue>
+            <validValue name="FILL_OR_KILL">3</validValue>
         </enum>
 
         <set name="MarketUpdateFlags" encodingType="uint8">
@@ -65,6 +69,33 @@
         <set name="OrderFlags" encodingType="uint8">
             <choice name="todo">0</choice>
         </set>
+
+        <enum name="ExecType" encodingType="uint8">
+            <validValue name="NEW">0</validValue>
+            <validValue name="CANCEL">1</validValue>
+            <validValue name="FILL">2</validValue>
+            <validValue name="PARTIAL_FILL">3</validValue>
+            <validValue name="REJECT">4</validValue>
+            <validValue name="CANCEL_REJECT">5</validValue>
+            <validValue name="EXPIRE">6</validValue>
+        </enum>
+
+        <enum name="OrderStatus" encodingType="uint8">
+            <validValue name="NEW">0</validValue>
+            <validValue name="PARTIALLY_FILLED">1</validValue>
+            <validValue name="FILLED">2</validValue>
+            <validValue name="CANCELED">3</validValue>
+            <validValue name="REJECTED">4</validValue>
+            <validValue name="EXPIRED">5</validValue>
+        </enum>
+
+        <enum name="RejectReason" encodingType="uint8">
+            <validValue name="UNKNOWN">0</validValue>
+            <validValue name="INVALID_PRICE">1</validValue>
+            <validValue name="INVALID_SIZE">2</validValue>
+            <validValue name="RISK_LIMIT_EXCEEDED">3</validValue>
+            <validValue name="EXCHANGE_REJECTED">4</validValue>
+        </enum>
     </types>
     <sbe:message name="MBO" id="1" description="mbo">
         <field name="exchangeId" id="1" type="uint16" />
@@ -279,5 +310,32 @@
         <field name="low" id="9" type="price" />
         <field name="close" id="10" type="price" />
         <field name="volume" id="12" type="volume" />
+    </sbe:message>
+    <sbe:message name="Order" id="10" description="Outgoing order submitted to an exchange">
+        <field name="exchangeId" id="1" type="uint16" />
+        <field name="securityId" id="2" type="uint32" />
+        <field name="timestampSend" id="3" type="timestamp" />
+        <field name="clientOid" id="4" type="clientOid" />
+        <field name="price" id="5" type="price" />
+        <field name="size" id="6" type="size" />
+        <field name="side" id="7" type="Side" />
+        <field name="flags" id="8" type="OrderFlags" />
+        <field name="orderType" id="9" type="OrderType" />
+        <field name="timeInForce" id="10" type="TimeInForce" />
+    </sbe:message>
+    <sbe:message name="OrderExecutionReport" id="11" description="Execution report for order updates such as ACK, FILL, CANCEL, REJECT, etc.">
+        <field name="exchangeId" id="1" type="uint16"/>
+        <field name="securityId" id="2" type="uint32"/>
+        <field name="clientOid" id="4" type="clientOid"/>
+        <field name="execType" id="6" type="ExecType"/>
+        <field name="orderStatus" id="7" type="OrderStatus"/>
+        <field name="filledQty" id="8" type="size"/>
+        <field name="fillPrice" id="9" type="price"/>
+        <field name="cumulativeQty" id="10" type="size"/>
+        <field name="leavesQty" id="11" type="size"/>
+        <field name="timestampEvent" id="12" type="timestamp"/>
+        <field name="timestampRecv" id="13" type="timestamp"/>
+        <field name="flags" id="14" type="OrderFlags" presence="optional"/>
+        <field name="rejectReason" id="15" type="RejectReason" presence="optional"/>
     </sbe:message>
 </sbe:messageSchema>

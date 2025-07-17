@@ -8,8 +8,8 @@ import numpy as np
 import pandas as pd
 from gnomepy.data.client import MarketDataClient
 from gnomepy.data.types import Listing, SchemaType
-from gnomepy.backtest.strategy import CointegrationStrategy
-from gnomepy.backtest.backtest import Backtest, VectorizedBacktest
+from gnomepy.research_old.strategy import CointegrationStrategy
+from gnomepy.research_old.backtest import Backtest, VectorizedBacktest
 
 def detailed_comparison():
     """Detailed comparison between iterative and vectorized approaches."""

@@ -1,10 +1,10 @@
-from gnomepy.backtest.backtest import *
-from gnomepy.backtest.archive.strategy_old import *
+from gnomepy.research_old.backtest import *
+from gnomepy.research_old.archive.strategy_old import *
 import matplotlib.pyplot as plt
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 import numpy as np
 import multiprocessing as mp
-from gnomepy.backtest.archive.coint_testing import *
+from gnomepy.research_old.archive.coint_testing import *
 from IPython.display import display
 import pandas as pd
 import datetime
@@ -110,21 +110,21 @@ class Strategy:
         }
 
     def process_backtest(self, history_df, trade_log, params):
-        """Process backtest results and compute summary statistics.
+        """Process research_old results and compute summary statistics.
         
         Parameters
         ----------
         history_df : pd.DataFrame
-            Historical price data used in backtest
+            Historical price data used in research_old
         trade_log : pd.DataFrame 
-            Log of all trades executed during backtest
+            Log of all trades executed during research_old
         params : dict
             Dictionary of strategy parameters
             
         Returns
         -------
         dict
-            Summary statistics of backtest performance including:
+            Summary statistics of research_old performance including:
             - Number of complete trades
             - Average profit per trade
             - Standard deviation of profits
@@ -393,16 +393,16 @@ class CointegrationStrategy(Strategy):
 
         return merged_df
 
-    # def backtest(self, notional: float, cash_start: float, 
+    # def research_old(self, notional: float, cash_start: float,
     #              start_datetime: datetime = None, end_datetime: datetime = None):
     #     """
-    #     Runs a backtest of the statistical arbitrage strategy.
+    #     Runs a research_old of the statistical arbitrage strategy.
 
     #     Args:
     #         notional (float): The base notional amount to trade with. This will be scaled based on z-score magnitude.
     #         cash_start (float): Initial cash balance to start trading with.
-    #         start_datetime (datetime, optional): Start date/time to backtest from. If None, uses earliest available data.
-    #         end_datetime (datetime, optional): End date/time to backtest until. If None, uses latest available data.
+    #         start_datetime (datetime, optional): Start date/time to research_old from. If None, uses earliest available data.
+    #         end_datetime (datetime, optional): End date/time to research_old until. If None, uses latest available data.
 
     #     Returns:
     #         tuple: A tuple containing:
@@ -770,13 +770,13 @@ class CointegrationStrategy(Strategy):
     def backtest(self, notional: float, cash_start: float, 
                  start_datetime: datetime = None, end_datetime: datetime = None):
         """
-        Runs a backtest of the statistical arbitrage strategy.
+        Runs a research_old of the statistical arbitrage strategy.
 
         Args:
             notional (float): The base notional amount to trade with. This will be scaled based on z-score magnitude.
             cash_start (float): Initial cash balance to start trading with.
-            start_datetime (datetime, optional): Start date/time to backtest from. If None, uses earliest available data.
-            end_datetime (datetime, optional): End date/time to backtest until. If None, uses latest available data.
+            start_datetime (datetime, optional): Start date/time to research_old from. If None, uses earliest available data.
+            end_datetime (datetime, optional): End date/time to research_old until. If None, uses latest available data.
 
         Returns:
             tuple: A tuple containing:

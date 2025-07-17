@@ -1,0 +1,33 @@
+from abc import abstractmethod, ABC
+
+from gnomepy import SchemaType, Order, OrderExecutionReport
+from gnomepy.backtest.fee import FeeModel
+from gnomepy.backtest.latency import LatencyModel
+
+
+class SimulatedExchange(ABC):
+
+    def __init__(
+            self,
+            fee_model: FeeModel,
+            network_latency: LatencyModel,
+            order_processing_latency: LatencyModel,
+    ):
+        self.fee_model = fee_model
+        self.network_latency = network_latency
+        self.order_processing_latency = order_processing_latency
+
+    @abstractmethod
+    def get_supported_schemas(self) -> list[SchemaType]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def submit_order(self, order: Order) -> OrderExecutionReport:
+        raise NotImplementedError
+
+    def simulate_network_latency(self) -> int:
+        # TODO: Do any exchanges face significantly different delivery vs receive latencies?
+        return self.network_latency.simulate()
+
+    def simulate_order_processing_time(self) -> int:
+        return self.order_processing_latency.simulate()

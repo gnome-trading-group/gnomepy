@@ -109,7 +109,7 @@ def vectorized_cointegrated_basket_backtest(
     use_lob: bool = True
 ):
     """
-    Vectorized backtest for cointegrated basket trading.
+    Vectorized research_old for cointegrated basket trading.
 
     Parameters
     ----------
@@ -523,7 +523,7 @@ def run_backtest_for_basket(
         use_extends=use_extends,
         use_lob=use_lob
     )
-    # print(f"Complete backtest of basket: {basket} with params: "
+    # print(f"Complete research_old of basket: {basket} with params: "
     #       f"beta_refresh_freq={beta_refresh_freq}, spread_window={spread_window}, "
     #       f"cash_start={cash_start}, notional={notional}, trade_freq={trade_freq}, "
     #       f"execution_delay={execution_delay}, enter_zscore={enter_zscore}, exit_zscore={exit_zscore}, "
