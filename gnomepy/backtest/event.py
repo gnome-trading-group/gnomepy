@@ -3,12 +3,12 @@ from enum import IntEnum
 from typing import Any
 
 from gnomepy import SchemaBase, MBP10, MBP1, BBO1S, BBO1M, Trades, OHLCV1H, OHLCV1M, Order, \
-    OrderExecutionReport, OHLCV1S
+    OrderExecutionReport, OHLCV1S, LocalMessage
 
 
 class EventType(IntEnum):
     MARKET_DATA = 0
-    SUBMIT_ORDER = 1
+    LOCAL_MESSAGE = 1
     EXECUTION_REPORT = 2
 
 @dataclass
@@ -28,8 +28,8 @@ class Event:
         return cls(timestamp, EventType.MARKET_DATA, schema)
 
     @classmethod
-    def from_order(cls, order: Order, timestamp: int):
-        return cls(timestamp, EventType.SUBMIT_ORDER, order)
+    def from_local_message(cls, message: LocalMessage, timestamp: int):
+        return cls(timestamp, EventType.LOCAL_MESSAGE, message)
 
     @classmethod
     def from_execution_report(cls, execution_report: OrderExecutionReport, timestamp: int):

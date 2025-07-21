@@ -6,31 +6,13 @@
   <component name="ChangeListManager">
     <list default="true" id="f1b20905-9bde-42f0-a65c-e192fa3a4e60" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/README_vectorized.md" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/README_vectorized.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/api/backtest_app.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/archive/action.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/archive/action.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/archive/coint_testing.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/archive/coint_testing.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/archive/cointegration_nb.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/archive/cointegration_nb.ipynb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/archive/interface.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/archive/interface.ipynb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/archive/signal.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/archive/signal.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/archive/strategy_old.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/archive/strategy_old.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/backtest.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/backtest.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/debug_comparison.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/debug_comparison.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/debug_spread_comparison.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/debug_spread_comparison.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/new_interface.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/new_interface.ipynb" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/oms.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/oms.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/strategy.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/test_vectorized.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/test_vectorized.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/trade_signal.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/trade_signal.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/vectorized_example.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research_old/vectorized_example.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/data/client.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/data/client.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/driver.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/driver.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/event.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/event.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/exchanges/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/exchanges/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/exchanges/mbp.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/exchanges/mbp.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/queues/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/queues/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/gnomepy/data/sbe/schema.xml" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/data/sbe/schema.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/gnomepy/data/types.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/data/types.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/registry/api.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/registry/api.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/poetry.lock" beforeDir="false" afterPath="$PROJECT_DIR$/poetry.lock" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

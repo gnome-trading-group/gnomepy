@@ -59,6 +59,13 @@ class OrderExecutionReport:
     timestamp_event: int
     timestamp_recv: int
 
+@dataclass
+class CancelOrder:
+    exchange_id: int
+    security_id: int
+    client_oid: str
+
+LocalMessage = Order | CancelOrder
 
 class SchemaType(StrEnum):
     MBO = "mbo"

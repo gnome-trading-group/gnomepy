@@ -338,4 +338,9 @@
         <field name="flags" id="14" type="OrderFlags" presence="optional"/>
         <field name="rejectReason" id="15" type="RejectReason" presence="optional"/>
     </sbe:message>
+    <sbe:message name="CancelOrder" id="12" description="Cancel request for a previously sent order">
+        <field name="exchangeId" id="1" type="uint16" />
+        <field name="securityId" id="2" type="uint32" />
+        <field name="clientOid" id="3" type="clientOid" />
+    </sbe:message>
 </sbe:messageSchema>

@@ -3,7 +3,7 @@ import queue
 
 import pandas as pd
 
-from gnomepy import SchemaType, MarketDataClient, RegistryClient, Order
+from gnomepy import SchemaType, MarketDataClient, RegistryClient, Order, LocalMessage, CancelOrder
 from gnomepy.backtest.event import Event, EventType
 from gnomepy.backtest.exchanges import SimulatedExchange
 from gnomepy.backtest.strategy import Strategy
@@ -92,12 +92,17 @@ class Backtest:
                 for order in orders:
                     expected_timestamp = event.timestamp + self.strategy.simulate_strategy_processing_time() + \
                                          self.exchanges[order.exchange_id].simulate_network_latency()
-                    self.queue.put(Event.from_order(order, expected_timestamp))
-            elif event.event_type == EventType.SUBMIT_ORDER:
-                order: Order = event.data
-                execution_report = self.exchanges[order.exchange_id].submit_order(order)
-                expected_timestamp = event.timestamp + self.exchanges[order.exchange_id].simulate_order_processing_time() + \
-                    self.exchanges[order.exchange_id].simulate_network_latency()
+                    self.queue.put(Event.from_local_message(order, expected_timestamp))
+            elif event.event_type == EventType.LOCAL_MESSAGE:
+                message: LocalMessage = event.data
+                if isinstance(message, Order):
+                    execution_report = self.exchanges[message.exchange_id].submit_order(message)
+                elif isinstance(message, CancelOrder):
+                    execution_report = self.exchanges[message.exchange_id].cancel_order(message)
+                else:
+                    raise ValueError(f"Unknown local message type: {type(message)}")
+                expected_timestamp = event.timestamp + self.exchanges[message.exchange_id].simulate_order_processing_time() + \
+                    self.exchanges[message.exchange_id].simulate_network_latency()
                 self.queue.put(Event.from_execution_report(execution_report, expected_timestamp))
             elif event.event_type == EventType.EXECUTION_REPORT:
                 self.strategy.on_execution_report(event.data)

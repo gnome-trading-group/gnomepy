@@ -1,6 +1,6 @@
 from abc import abstractmethod, ABC
 
-from gnomepy import SchemaType, Order, OrderExecutionReport
+from gnomepy import SchemaType, Order, OrderExecutionReport, CancelOrder
 from gnomepy.backtest.fee import FeeModel
 from gnomepy.backtest.latency import LatencyModel
 
@@ -23,6 +23,10 @@ class SimulatedExchange(ABC):
 
     @abstractmethod
     def submit_order(self, order: Order) -> OrderExecutionReport:
+        raise NotImplementedError
+
+    @abstractmethod
+    def cancel_order(self, order: CancelOrder) -> OrderExecutionReport:
         raise NotImplementedError
 
     def simulate_network_latency(self) -> int:
