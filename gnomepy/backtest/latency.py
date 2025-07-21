@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import override
 
 import numpy as np
 
@@ -10,6 +11,14 @@ class LatencyModel(ABC):
         """Simulate the number of nanoseconds for an operation."""
         raise NotImplementedError
 
+class StaticLatency(LatencyModel):
+
+    def __init__(self, latency: int):
+        self.latency = latency
+
+    @override
+    def simulate(self) -> int:
+        return self.latency
 
 class GaussianLatency(LatencyModel):
 
@@ -17,5 +26,6 @@ class GaussianLatency(LatencyModel):
         self.mu = mu
         self.sigma = sigma
 
+    @override
     def simulate(self) -> int:
         return np.random.normal(loc=self.mu, scale=self.sigma).astype(int)

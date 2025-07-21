@@ -3,10 +3,12 @@ import queue
 
 import pandas as pd
 
-from gnomepy import SchemaType, MarketDataClient, RegistryClient, Order, LocalMessage, CancelOrder
 from gnomepy.backtest.event import Event, EventType
 from gnomepy.backtest.exchanges import SimulatedExchange
 from gnomepy.backtest.strategy import Strategy
+from gnomepy.data.client import MarketDataClient
+from gnomepy.data.types import SchemaType, Order, LocalMessage, CancelOrder
+from gnomepy.registry.api import RegistryClient
 
 
 class Backtest:
@@ -18,7 +20,7 @@ class Backtest:
             listing_ids: list[int],
             schema_type: SchemaType,
             strategy: Strategy,
-            exchanges: dict[int, SimulatedExchange],
+            exchanges: dict[int, dict[int, SimulatedExchange]],
             market_data_client: MarketDataClient | None = None,
             registry_client: RegistryClient | None = None,
     ):
@@ -47,10 +49,13 @@ class Backtest:
         for listing in self.listings:
             if listing.exchange_id not in self.exchanges:
                 raise ValueError(f"Exchange ID {listing.exchange_id} is not configured in the parameters")
+            if listing.security_id not in self.exchanges[listing.exchange_id]:
+                raise ValueError(f"Security ID {listing.security_id} not configured in exchange ID {listing.exchange_id}")
 
-        for exchange_id, exchange in self.exchanges.items():
-            if self.schema_type not in exchange.get_supported_schemas():
-                raise ValueError(f"Exchange ID {exchange_id} does not support the provided schema type")
+        for exchange_id, securities in self.exchanges.items():
+            for exchange in securities.values():
+                if self.schema_type not in exchange.get_supported_schemas():
+                    raise ValueError(f"Exchange ID {exchange_id} does not support the provided schema type")
 
         for listing in self.listings:
             available_data = self.market_data_client.has_available_data(
@@ -58,7 +63,7 @@ class Backtest:
                 security_id=listing.security_id,
                 start_datetime=self.start_datetime,
                 end_datetime=self.end_datetime,
-                schema_type=self.schema_type
+                schema_type=self.schema_type,
             )
             if not available_data:
                 raise ValueError(f"Listing ID {listing.listing_id} does not have data in the provided time range")
@@ -70,7 +75,7 @@ class Backtest:
                 security_id=listing.exchange_id,
                 start_datetime=self.start_datetime,
                 end_datetime=self.end_datetime,
-                schema_type=self.schema_type
+                schema_type=self.schema_type,
             )
             for record in records:
                 self.queue.put(Event.from_schema(record))
@@ -88,21 +93,28 @@ class Backtest:
                 break
 
             if event.event_type == EventType.MARKET_DATA:
+                self.exchanges[event.data.exchange_id][event.data.security_id].on_market_data(event.data)
                 orders = self.strategy.on_market_data(event.data)
                 for order in orders:
                     expected_timestamp = event.timestamp + self.strategy.simulate_strategy_processing_time() + \
-                                         self.exchanges[order.exchange_id].simulate_network_latency()
+                                         self.exchanges[order.exchange_id][order.security_id].simulate_network_latency()
                     self.queue.put(Event.from_local_message(order, expected_timestamp))
             elif event.event_type == EventType.LOCAL_MESSAGE:
                 message: LocalMessage = event.data
                 if isinstance(message, Order):
-                    execution_report = self.exchanges[message.exchange_id].submit_order(message)
+                    execution_report = self.exchanges[message.exchange_id][message.security_id].submit_order(message)
                 elif isinstance(message, CancelOrder):
-                    execution_report = self.exchanges[message.exchange_id].cancel_order(message)
+                    execution_report = self.exchanges[message.exchange_id][message.security_id].cancel_order(message)
                 else:
                     raise ValueError(f"Unknown local message type: {type(message)}")
-                expected_timestamp = event.timestamp + self.exchanges[message.exchange_id].simulate_order_processing_time() + \
-                    self.exchanges[message.exchange_id].simulate_network_latency()
+
+                expected_timestamp = event.timestamp + self.exchanges[message.exchange_id][message.security_id].simulate_order_processing_time() + \
+                                     self.exchanges[message.exchange_id][message.security_id].simulate_network_latency()
+                execution_report.timestamp_event = event.timestamp
+                execution_report.timestamp_recv = expected_timestamp
+                execution_report.exchange_id = message.exchange_id
+                execution_report.security_id = message.security_id
+
                 self.queue.put(Event.from_execution_report(execution_report, expected_timestamp))
             elif event.event_type == EventType.EXECUTION_REPORT:
                 self.strategy.on_execution_report(event.data)

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
-from gnomepy import SchemaBase, Order, OrderExecutionReport, LatencyModel
+from gnomepy.backtest.latency import LatencyModel
+from gnomepy.data.types import SchemaBase, Order, OrderExecutionReport
 
 
 class Strategy(ABC):

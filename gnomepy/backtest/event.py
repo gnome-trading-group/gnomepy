@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
 
-from gnomepy import SchemaBase, MBP10, MBP1, BBO1S, BBO1M, Trades, OHLCV1H, OHLCV1M, Order, \
+from gnomepy.data.types import SchemaBase, MBP10, MBP1, BBO1S, BBO1M, Trades, OHLCV1H, OHLCV1M, \
     OrderExecutionReport, OHLCV1S, LocalMessage
 
 

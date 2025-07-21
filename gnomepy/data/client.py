@@ -13,7 +13,7 @@ _KEY_REGEX = re.compile("^\\d+/\\d+/(\\d{10})/([^/]+)\\.zst$")
 class MarketDataClient:
     def __init__(
             self,
-            bucket: str = "market-data-consolidated-dev",
+            bucket: str = "gnome-market-data-prod",
             aws_profile_name: Optional[str] = None,
     ):
         session = boto3.session.Session(profile_name=aws_profile_name)
@@ -41,7 +41,8 @@ class MarketDataClient:
             end_datetime: datetime.datetime | pd.Timestamp,
             schema_type: SchemaType,
     ) -> bool:
-        raise NotImplementedError
+        # TODO: Do this maybe?
+        return True
 
     def _get_raw_history(
             self,

@@ -13,7 +13,6 @@ class OrderType(StrEnum):
 
 class TimeInForce(StrEnum):
     GTC = "GOOD_TILL_CANCELLED"
-    GTX = "GOOD_TILL_CROSSING"
     IOC = "IMMEDIATE_OR_CANCELED"
     FOK = "FILL_OR_KILL"
 
@@ -49,7 +48,7 @@ class Order:
 class OrderExecutionReport:
     exchange_id: int
     security_id: int
-    client_oid: str | None
+    client_oid: str
     exec_type: ExecType
     order_status: OrderStatus
     filled_qty: int
@@ -203,7 +202,7 @@ class MBP1(SchemaBase, PriceMixin, SizeMixin):
     flags: list[str]
     sequence: int | None
     depth: int | None
-    levels: BidAskPair
+    levels: list[BidAskPair]
 
     @classmethod
     def from_message(cls, message: DecodedMessage):
@@ -221,7 +220,7 @@ class MBP1(SchemaBase, PriceMixin, SizeMixin):
             body['flags'],
             body['sequence'],
             body['depth'],
-            BidAskPair.from_dict(body, 0)
+            [BidAskPair.from_dict(body, 0)],
         )
 
 @dataclass
@@ -235,7 +234,7 @@ class BBO(SchemaBase, PriceMixin, SizeMixin):
     side: str | None
     flags: list[str]
     sequence: int | None
-    levels: BidAskPair
+    levels: list[BidAskPair]
 
     @classmethod
     def from_message(cls, message: DecodedMessage):
@@ -250,7 +249,7 @@ class BBO(SchemaBase, PriceMixin, SizeMixin):
             body['side'],
             body['flags'],
             body['sequence'],
-            BidAskPair.from_dict(body, 0)
+            [BidAskPair.from_dict(body, 0)],
         )
 
 BBO1S = BBO
@@ -288,8 +287,6 @@ class Trades(SchemaBase, PriceMixin, SizeMixin):
             body['sequence'],
             body['depth'],
         )
-
-
 
 @dataclass
 class OHLCV(SchemaBase):
