@@ -146,7 +146,7 @@ class MBPSimulatedExchange(SimulatedExchange):
 
     def on_market_data(self, data: SchemaBase):
         if isinstance(data, (MBP10, MBP1)):
-            if data.action in ("A", "C", "M", "W"): # Add, Cancel, Modify, Clear
+            if data.action in ("Add", "Cancel", "Modify", "Clear"): # "A", "C", "M", "W"
                 self.order_book.update_levels(data.levels)
         elif isinstance(data, (BBO1S, BBO1M)):
             self.order_book.update_levels(data.levels)
@@ -173,7 +173,6 @@ class MBPSimulatedExchange(SimulatedExchange):
                 best_price = self.order_book.get_best_ask() if order.side == "B" else self.order_book.get_best_bid()
                 if best_price is None:
                     raise ValueError("Bad limit order book state")
-                order.price = best_price
                 order.order_type = OrderType.LIMIT
                 return self._handle_limit_order(order)
 

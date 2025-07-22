@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
 
-from gnomepy import SchemaBase, Order, OrderExecutionReport, LatencyModel
+from gnomepy.data.types import SchemaBase, Order, OrderExecutionReport
+from gnomepy.backtest.latency import LatencyModel
 from gnomepy.backtest.oms import SimpleOMS
 from gnomepy.backtest.signal import Signal, CointegrationSignal
+from gnomepy.data.common import DataStore
 
 class Strategy(ABC):
 
@@ -10,7 +12,7 @@ class Strategy(ABC):
         self.processing_latency = processing_latency
 
     @abstractmethod
-    def on_market_data(self, data: SchemaBase) -> list[Order]:
+    def on_market_data(self, data: DataStore) -> list[Order]:
         raise NotImplementedError
 
     @abstractmethod
@@ -27,7 +29,7 @@ class CointegrationOMSStrategy(Strategy):
         super().__init__(processing_latency)
         self.oms = oms
 
-    def on_market_data(self, data: SchemaBase) -> list[Order]:       
+    def on_market_data(self, data: DataStore) -> list[Order]:       
         return self.oms.on_market_update(data)
     
     def on_execution_report(self, execution_report: OrderExecutionReport):

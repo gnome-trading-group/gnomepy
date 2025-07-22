@@ -4,7 +4,6 @@ from enum import IntFlag, StrEnum
 from typing import Type
 from gnomepy.data.sbe import DecodedMessage
 from gnomepy.registry.types import Listing
-from gnomepy.backtest.signal import Signal
 
 FIXED_PRICE_SCALE = 1e9
 FIXED_SIZE_SCALE = 1e6
@@ -14,11 +13,13 @@ class Intent:
     listing: Listing
     side: str  # "buy" or "sell"
     confidence: float
+    flatten: bool = False
 
 @dataclass
 class BasketIntent:
     intents: list[Intent]
     proportions: list[float]
+    flatten: bool = False
 
 class OrderType(StrEnum):
     LIMIT = "LIMIT"

@@ -1,5 +1,10 @@
 from abc import ABC, abstractmethod
 from gnomepy.data.types import SchemaBase, Intent, BasketIntent, Listing, SchemaType
+from gnomepy.data.common import DataStore
+from statsmodels.tsa.vector_ar.vecm import coint_johansen
+import time
+import numpy as np
+import pandas as pd
 
 # Global significance level mapping
 SIGNIFICANCE_LEVEL_MAP = {0.01: 0, 0.05: 1, 0.10: 2}
@@ -16,7 +21,7 @@ class Signal(ABC):
         return isinstance(other, Signal) and self._id == other._id
 
     @abstractmethod
-    def process_new_tick(self, data: SchemaBase) -> tuple[list[Intent], int]:
+    def process_new_tick(self, data: DataStore) -> tuple[list[Intent], int]:
         """
         Process market data and return intents with processing latency.
         
@@ -29,13 +34,13 @@ class Signal(ABC):
 class PositionAwareSignal(Signal):
 
     @abstractmethod
-    def process_new_tick(self, data: SchemaBase, positions: dict[Listing, int] = None) -> tuple[list[Intent], int]:
+    def process_new_tick(self, data: DataStore, positions: dict[int, float] = None) -> tuple[list[Intent], int]:
         """
         Process market data and return intents with processing latency, considering current positions.
         
         Args:
             data: Market data to process
-            positions: Dictionary mapping Listing to current position size
+            positions: Dictionary mapping listing_id to current position size
         
         Returns:
             tuple: (list of Intent objects, elapsed time/latency in nanoseconds)
@@ -81,6 +86,8 @@ class CointegrationSignal(PositionAwareSignal):
         significance_level : float, default 0.05
             Significance level for cointegration testing (0.01, 0.05, or 0.10)
         """
+        # Call parent constructor to set up _id
+        super().__init__()
 
         # Get all the signal settings
         self.listings = listings
@@ -96,6 +103,8 @@ class CointegrationSignal(PositionAwareSignal):
         self.use_lob = use_lob
         self.use_dynamic_sizing = use_dynamic_sizing
         self.significance_level = significance_level
+        self.max_lookback = max(beta_refresh_frequency, spread_window)
+        self.sig_idx = SIGNIFICANCE_LEVEL_MAP[self.significance_level]
 
         # Prepare the signal to start generating intents
         self.initialize_signal()
@@ -106,9 +115,240 @@ class CointegrationSignal(PositionAwareSignal):
         self.n_coints = None
         self.beta_history = []
         self.beta_timestamps = []
-        self.elapsed_ticks = 0
+        self.elapsed_ticks = {listing.listing_id: 0 for listing in self.listings}
+        print(f"Initialized CointegrationSignal with {len(self.listings)} listings")
         return
 
-    def process_new_tick(self, data: SchemaBase, positions: dict[Listing, float] = None) -> tuple[list[BasketIntent], int]:
+    def refresh_beta_vec(self, data: dict[int, pd.DataFrame], positions: dict[int, float] = None):
+        print(f"Refreshing beta vectors for CointegrationSignal...")
 
-        return
+        # Before refreshing beta vectors, check if we need to flatten positions
+        if positions is not None:
+            has_positions = any(abs(positions.get(listing.listing_id, 0)) > 1e-6 for listing in self.listings)
+            
+            if has_positions:
+                print(f"Beta refresh triggered - flattening positions before updating beta vectors")
+                # Create flatten intents for all listings with positions
+                flatten_intents = []
+                for listing in self.listings:
+                    current_position = positions.get(listing.listing_id, 0)
+                    if abs(current_position) > 1e-6:
+                        flatten_intents.append(Intent(
+                            listing=listing,
+                            side="S" if current_position > 0 else "B",
+                            confidence=1.0,
+                            flatten=True
+                        ))
+                
+                if flatten_intents:
+                    return [BasketIntent(
+                        intents=flatten_intents,
+                        proportions=[1.0] * len(flatten_intents)
+                    )]
+
+        # Create price matrix and calculate beta vectors
+        coint_price_matrix = np.column_stack([data[listing.listing_id][-self.beta_refresh_frequency::self.trade_frequency]['bidPrice0'] for listing in self.listings])
+        johansen_result = coint_johansen(coint_price_matrix, det_order=0, k_ar_diff=1)
+        self.n_coints = np.sum(johansen_result.lr1 > johansen_result.cvt[:, self.sig_idx])
+        
+        # If no cointegration found and we want to retest, skip trading
+        if self.n_coints == 0 and self.retest_cointegration:
+            print(f"No cointegration found (retest enabled) - beta vectors set to None")
+            self.beta_vec = None
+            self.norm_beta_vec = None
+        else:
+            # Use first eigenvector whether cointegration exists or not
+            self.n_coints = 1
+            self.beta_vec = johansen_result.evec[:, :self.n_coints]
+            self.norm_beta_vec = self.beta_vec / np.linalg.norm(self.beta_vec)
+            print(f"Beta vectors updated: {self.norm_beta_vec.flatten()}")
+
+        # Store historical beta vector and timestamp
+        if self.beta_vec is not None:
+            self.beta_history.append(self.beta_vec.flatten())
+            self.beta_timestamps.append(self.elapsed_ticks)
+
+        return None
+    
+    def generate_intents(self, data_df: dict[int, pd.DataFrame], positions: dict[int, float] = None) -> list[BasketIntent]:
+        """Generate trading intents based on current market data and beta vectors.
+        
+        Args:
+            data_df: Dictionary mapping listing_id to their historical data DataFrames
+            positions: Dictionary mapping listing_id to their current positions
+            
+        Returns:
+            list: List of BasketIntent objects
+        """
+        # Create price matrix and calculate spread using spread_window
+        coint_price_matrix = np.column_stack([
+            np.log(data_df[listing.listing_id][-self.spread_window::self.trade_frequency]['bidPrice0'].values) 
+            for listing in self.listings
+        ])
+
+        # Calculate past spreads and newest one using beta vector
+        window_spreads = coint_price_matrix @ self.beta_vec
+
+        # Calculate z score of newest time stamp
+        z_score = (window_spreads[-1][0] - window_spreads[:-1].mean()) / window_spreads[:-1].std()
+
+        # Turn z_score into confidence, cap at 3x
+        confidence_multiplier = min(abs(z_score / self.enter_zscore), 3.0)
+
+        # Entrance condition: positions are near zero (within 1e-6)
+        entrance_condition = all(abs(positions[listing.listing_id]) < 1e-6 for listing in self.listings)
+
+        # Exit condition for positive mean reversion: positions have same sign as beta vectors
+        positive_exit_condition = all(
+            (positions[self.listings[i].listing_id] > 0 and self.norm_beta_vec[i] > 0) or
+            (positions[self.listings[i].listing_id] < 0 and self.norm_beta_vec[i] < 0) or
+            abs(positions[self.listings[i].listing_id]) < 1e-6
+            for i in range(len(self.listings))
+        )
+
+        # Exit condition for negative mean reversion: positions have same sign as inverse beta vectors
+        negative_exit_condition = all(
+            (positions[self.listings[i].listing_id] > 0 and -self.norm_beta_vec[i] > 0) or
+            (positions[self.listings[i].listing_id] < 0 and -self.norm_beta_vec[i] < 0) or
+            abs(positions[self.listings[i].listing_id]) < 1e-6
+            for i in range(len(self.listings))
+        )
+
+        # Enter positive mean reversion - only if entrance condition is met
+        if z_score < -self.enter_zscore and entrance_condition:
+            print(f"Triggered positive mean reversion entry (z_score: {z_score:.3f})")
+            intents = [Intent(
+                listing=self.listings[i],
+                side="B" if self.norm_beta_vec[i] > 0 else "S",
+                confidence=confidence_multiplier
+            ) for i in range(len(self.listings))]
+            
+            return [BasketIntent(
+                intents=intents,
+                proportions=self.norm_beta_vec.flatten().tolist()
+            )]
+        
+        # Enter negative mean reversion - only if entrance condition is met
+        elif z_score > self.enter_zscore and entrance_condition:
+            print(f"Triggered negative mean reversion entry (z_score: {z_score:.3f})")
+            intents = [Intent(
+                listing=self.listings[i],
+                side="B" if -self.norm_beta_vec[i] > 0 else "S",
+                confidence=1.0
+            ) for i in range(len(self.listings))]
+            
+            return [BasketIntent(
+                intents=intents,
+                proportions=(-self.norm_beta_vec).flatten().tolist()
+            )]
+
+        # # Check if we would enter but positions block us
+        # elif z_score < -self.enter_zscore and not entrance_condition:
+        #     position_values = {listing.listing_id: positions[listing.listing_id] for listing in self.listings}
+        #     print(f"Triggered entrance (z_score: {z_score:.3f}) but positions are not zero: {position_values}")
+        
+        # elif z_score > self.enter_zscore and not entrance_condition:
+        #     position_values = {listing.listing_id: positions[listing.listing_id] for listing in self.listings}
+        #     print(f"Triggered entrance (z_score: {z_score:.3f}) but positions are not zero: {position_values}")
+
+        # Exit positive reversion - only if positive exit condition is met
+        elif (z_score < -self.enter_zscore - self.stop_loss_delta or z_score > -self.exit_zscore) and positive_exit_condition:
+            print(f"Triggered positive reversion exit success (z_score: {z_score:.3f})")
+            intents = [Intent(
+                listing=self.listings[i],
+                side="S" if self.norm_beta_vec[i] > 0 else "buy",
+                confidence=1.0,
+                flatten=True
+            ) for i in range(len(self.listings))]
+            
+            return [BasketIntent(
+                intents=intents,
+                proportions=self.norm_beta_vec.flatten().tolist()
+            )]
+
+        # Exit negative reversion - only if negative exit condition is met
+        elif (z_score > self.enter_zscore + self.stop_loss_delta or z_score < self.exit_zscore) and negative_exit_condition:
+            print(f"Triggered negative reversion exit success (z_score: {z_score:.3f})")
+            intents = [Intent(
+                listing=self.listings[i],
+                side="S" if -self.norm_beta_vec[i] > 0 else "buy",
+                confidence=1.0,
+                flatten=True
+            ) for i in range(len(self.listings))]
+            
+            return [BasketIntent(
+                intents=intents,
+                proportions=(-self.norm_beta_vec).flatten().tolist()
+            )]
+
+        # # Check if we would exit but positions block us
+        # elif (z_score < -self.enter_zscore - self.stop_loss_delta or z_score > -self.exit_zscore) and not positive_exit_condition:
+        #     position_values = {listing.listing_id: positions[listing.listing_id] for listing in self.listings}
+        #     print(f"Triggered positive exit but failed because positions like this: {position_values}")
+            
+        # elif (z_score > self.enter_zscore + self.stop_loss_delta or z_score < self.exit_zscore) and not negative_exit_condition:
+        #     position_values = {listing.listing_id: positions[listing.listing_id] for listing in self.listings}
+        #     print(f"Triggered negative exit but failed because positions like this: {position_values}")
+        
+        # No trading signal generated
+        return []
+
+    def process_new_tick(self, data: dict[int, DataStore], ticker_listing_id: int, positions: dict[int, float] = None) -> tuple[list[BasketIntent], int]:
+        """Process market data event and generate trading signals.
+        
+        Args:
+            data: Dictionary mapping listing_id to their historical data DataStores
+            ticker_listing_id: The specific listing_id that received new data
+            positions: Dictionary mapping listing_id to current position size
+        
+        Returns:
+            tuple containing:
+                - list of BasketIntent objects
+                - int latency in nanoseconds
+        """
+        # Start latency calculation
+        start_time = time.time()
+
+        # # Turn data into dataframe
+        # data_df = {listing: datastore.to_df() for listing, datastore in data.items()}
+        
+        # Increment elapsed ticks for the specific listing that received new data
+        if ticker_listing_id in self.elapsed_ticks:
+            self.elapsed_ticks[ticker_listing_id] += 1
+
+        # Determine if there's enough data to run calculations 
+        # Check that each listing has enough data considering trade_frequency
+        enough_data = all(
+            (self.elapsed_ticks[listing.listing_id] // self.trade_frequency) >= self.max_lookback 
+            for listing in self.listings
+        )
+        
+        if not enough_data:
+            return [], int((time.time() - start_time) * 1e9)
+
+        # First check if we need to update betas
+        # Use the minimum elapsed ticks across all listings to determine beta refresh timing
+        min_elapsed_ticks = min(self.elapsed_ticks[listing.listing_id] for listing in self.listings)
+        
+        if min_elapsed_ticks % self.beta_refresh_frequency == 0:
+
+            # Refresh beta vectors using cointegration testing (may return flatten intents)
+            result = self.refresh_beta_vec(data, positions)
+            
+            if result is not None:
+                # We got flatten intents, return them
+                return result, int((time.time() - start_time) * 1e9)
+            
+            return [], int((time.time() - start_time) * 1e9)
+
+        # If not, then we can consider trading
+        elif self.beta_vec is not None:
+
+            # Generate intents
+            basket_intents = self.generate_intents(data, positions)
+
+            return basket_intents, int((time.time() - start_time) * 1e9)
+
+
+        # We are not currently trading due to no cointegration
+        return [], int((time.time() - start_time) * 1e9)

@@ -72,7 +72,7 @@ class Backtest:
         for listing in self.listings:
             records = self.market_data_client.get_data(
                 exchange_id=listing.exchange_id,
-                security_id=listing.exchange_id,
+                security_id=listing.security_id,
                 start_datetime=self.start_datetime,
                 end_datetime=self.end_datetime,
                 schema_type=self.schema_type,
