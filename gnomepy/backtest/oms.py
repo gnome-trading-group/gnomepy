@@ -8,9 +8,10 @@ import time
 
 class SimpleOMS:
 
-    def __init__(self, signals: list[Signal], notional: float):
+    def __init__(self, signals: list[Signal], notional: float, starting_cash: float = 1000000.0):
         self.signals = signals
         self.notional = notional
+        self.cash = starting_cash
         
         # Infer listings from signals
         all_listings = []
@@ -29,6 +30,8 @@ class SimpleOMS:
         self.positions: dict[int, float] = {listing.listing_id: 0.0 for listing in all_listings}
         # Add order log to keep history of all submitted orders
         self.order_log: dict[str, Order] = {}
+        
+        print(f"Initialized SimpleOMS with starting cash: ${starting_cash:,.2f}")
 
     def on_execution_report(self, execution_report: OrderExecutionReport):
         client_oid = execution_report.client_oid
@@ -52,7 +55,17 @@ class SimpleOMS:
         if execution_report.exec_type in [ExecType.FILL, ExecType.PARTIAL_FILL]:
             # Use order.side to determine position change direction
             filled_qty = execution_report.filled_qty
+            filled_price = execution_report.filled_price / FIXED_PRICE_SCALE  # Scale the price
             position_change = filled_qty if order.side == "B" else -filled_qty
+
+            # Update cash based on the trade
+            trade_value = filled_qty * filled_price
+            if order.side == "B":
+                # Buying - cash decreases
+                self.cash -= trade_value
+            else:
+                # Selling - cash increases
+                self.cash += trade_value
 
             # Update overall positions
             if listing_id in self.positions:
@@ -68,6 +81,8 @@ class SimpleOMS:
                         self.signal_positions[signal][listing_id] += position_change_per_signal
 
             print(f"Position update for listing {listing_id}: change={position_change}")
+            print(f"Trade: {order.side} {filled_qty} @ ${filled_price:.2f} = ${trade_value:.2f}")
+            print(f"Cash update: ${self.cash:,.2f}")
             print(f"Updated positions: {self.positions}")
         return
     

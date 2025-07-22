@@ -181,7 +181,7 @@ class CointegrationSignal(PositionAwareSignal):
         """
         # Create price matrix and calculate spread using spread_window
         coint_price_matrix = np.column_stack([
-            np.log(data_df[listing.listing_id][-self.spread_window::self.trade_frequency]['bidPrice0'].values) 
+            (data_df[listing.listing_id][-self.spread_window::self.trade_frequency]['bidPrice0'].values) 
             for listing in self.listings
         ])
 
@@ -197,24 +197,39 @@ class CointegrationSignal(PositionAwareSignal):
         # Entrance condition: positions are near zero (within 1e-6)
         entrance_condition = all(abs(positions[listing.listing_id]) < 1e-6 for listing in self.listings)
 
-        # Exit condition for positive mean reversion: positions have same sign as beta vectors
+        # Exit condition for positive mean reversion: positions have same sign as beta vectors AND all positions are nonzero
         positive_exit_condition = all(
-            (positions[self.listings[i].listing_id] > 0 and self.norm_beta_vec[i] > 0) or
-            (positions[self.listings[i].listing_id] < 0 and self.norm_beta_vec[i] < 0) or
-            abs(positions[self.listings[i].listing_id]) < 1e-6
+            abs(positions[self.listings[i].listing_id]) > 1e-6 and
+            ((positions[self.listings[i].listing_id] > 0 and self.norm_beta_vec[i] > 0) or
+             (positions[self.listings[i].listing_id] < 0 and self.norm_beta_vec[i] < 0))
             for i in range(len(self.listings))
         )
 
-        # Exit condition for negative mean reversion: positions have same sign as inverse beta vectors
+        # Exit condition for negative mean reversion: positions have same sign as inverse beta vectors AND all positions are nonzero
         negative_exit_condition = all(
-            (positions[self.listings[i].listing_id] > 0 and -self.norm_beta_vec[i] > 0) or
-            (positions[self.listings[i].listing_id] < 0 and -self.norm_beta_vec[i] < 0) or
-            abs(positions[self.listings[i].listing_id]) < 1e-6
+            abs(positions[self.listings[i].listing_id]) > 1e-6 and
+            ((positions[self.listings[i].listing_id] > 0 and -self.norm_beta_vec[i] > 0) or
+             (positions[self.listings[i].listing_id] < 0 and -self.norm_beta_vec[i] < 0))
             for i in range(len(self.listings))
         )
 
-        # Enter positive mean reversion - only if entrance condition is met
-        if z_score < -self.enter_zscore and entrance_condition:
+        # Check if we can extend positions when use_extends is True
+        # Positions are aligned with beta vectors for positive mean reversion
+        can_extend_positive = (self.use_extends and 
+                             all(abs(positions[self.listings[i].listing_id]) > 1e-6 and
+                                 ((positions[self.listings[i].listing_id] > 0 and self.norm_beta_vec[i] > 0) or
+                                  (positions[self.listings[i].listing_id] < 0 and self.norm_beta_vec[i] < 0))
+                                 for i in range(len(self.listings))))
+
+        # Positions are aligned with inverse beta vectors for negative mean reversion
+        can_extend_negative = (self.use_extends and 
+                             all(abs(positions[self.listings[i].listing_id]) > 1e-6 and
+                                 ((positions[self.listings[i].listing_id] > 0 and -self.norm_beta_vec[i] > 0) or
+                                  (positions[self.listings[i].listing_id] < 0 and -self.norm_beta_vec[i] < 0))
+                                 for i in range(len(self.listings))))
+
+        # Enter positive mean reversion - only if entrance condition is met OR can extend
+        if z_score < -self.enter_zscore and (entrance_condition or can_extend_positive):
             print(f"Triggered positive mean reversion entry (z_score: {z_score:.3f})")
             intents = [Intent(
                 listing=self.listings[i],
@@ -227,8 +242,8 @@ class CointegrationSignal(PositionAwareSignal):
                 proportions=self.norm_beta_vec.flatten().tolist()
             )]
         
-        # Enter negative mean reversion - only if entrance condition is met
-        elif z_score > self.enter_zscore and entrance_condition:
+        # Enter negative mean reversion - only if entrance condition is met OR can extend
+        elif z_score > self.enter_zscore and (entrance_condition or can_extend_negative):
             print(f"Triggered negative mean reversion entry (z_score: {z_score:.3f})")
             intents = [Intent(
                 listing=self.listings[i],
@@ -241,21 +256,12 @@ class CointegrationSignal(PositionAwareSignal):
                 proportions=(-self.norm_beta_vec).flatten().tolist()
             )]
 
-        # # Check if we would enter but positions block us
-        # elif z_score < -self.enter_zscore and not entrance_condition:
-        #     position_values = {listing.listing_id: positions[listing.listing_id] for listing in self.listings}
-        #     print(f"Triggered entrance (z_score: {z_score:.3f}) but positions are not zero: {position_values}")
-        
-        # elif z_score > self.enter_zscore and not entrance_condition:
-        #     position_values = {listing.listing_id: positions[listing.listing_id] for listing in self.listings}
-        #     print(f"Triggered entrance (z_score: {z_score:.3f}) but positions are not zero: {position_values}")
-
         # Exit positive reversion - only if positive exit condition is met
         elif (z_score < -self.enter_zscore - self.stop_loss_delta or z_score > -self.exit_zscore) and positive_exit_condition:
             print(f"Triggered positive reversion exit success (z_score: {z_score:.3f})")
             intents = [Intent(
                 listing=self.listings[i],
-                side="S" if self.norm_beta_vec[i] > 0 else "buy",
+                side="S" if self.norm_beta_vec[i] > 0 else "B",
                 confidence=1.0,
                 flatten=True
             ) for i in range(len(self.listings))]
@@ -270,7 +276,7 @@ class CointegrationSignal(PositionAwareSignal):
             print(f"Triggered negative reversion exit success (z_score: {z_score:.3f})")
             intents = [Intent(
                 listing=self.listings[i],
-                side="S" if -self.norm_beta_vec[i] > 0 else "buy",
+                side="S" if -self.norm_beta_vec[i] > 0 else "B",
                 confidence=1.0,
                 flatten=True
             ) for i in range(len(self.listings))]
@@ -279,15 +285,6 @@ class CointegrationSignal(PositionAwareSignal):
                 intents=intents,
                 proportions=(-self.norm_beta_vec).flatten().tolist()
             )]
-
-        # # Check if we would exit but positions block us
-        # elif (z_score < -self.enter_zscore - self.stop_loss_delta or z_score > -self.exit_zscore) and not positive_exit_condition:
-        #     position_values = {listing.listing_id: positions[listing.listing_id] for listing in self.listings}
-        #     print(f"Triggered positive exit but failed because positions like this: {position_values}")
-            
-        # elif (z_score > self.enter_zscore + self.stop_loss_delta or z_score < self.exit_zscore) and not negative_exit_condition:
-        #     position_values = {listing.listing_id: positions[listing.listing_id] for listing in self.listings}
-        #     print(f"Triggered negative exit but failed because positions like this: {position_values}")
         
         # No trading signal generated
         return []
