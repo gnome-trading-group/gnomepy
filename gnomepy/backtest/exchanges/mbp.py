@@ -174,6 +174,7 @@ class MBPSimulatedExchange(SimulatedExchange):
                 if best_price is None:
                     raise ValueError("Bad limit order book state")
                 order.order_type = OrderType.LIMIT
+                order.price = best_price
                 return self._handle_limit_order(order)
 
         total_filled = 0

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from gnomepy.data.types import SchemaBase, Intent, BasketIntent, Listing, SchemaType
-from gnomepy.data.common import DataStore
+from gnomepy.data.types import SchemaBase, SchemaType
+from gnomepy.registry.types import Listing
+from gnomepy.research.types import Intent, BasketIntent
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
 import numpy as np
 import pandas as pd

@@ -1,10 +1,12 @@
-from gnomepy.backtest.signal import Signal
-from gnomepy.data.types import SchemaBase, Listing, Order, OrderType, TimeInForce, Intent, BasketIntent, OrderExecutionReport, ExecType, FIXED_PRICE_SCALE, FIXED_SIZE_SCALE
-from gnomepy.backtest.signal import PositionAwareSignal
+from gnomepy.data.types import SchemaBase, Order, OrderType, TimeInForce, OrderExecutionReport, ExecType, FIXED_PRICE_SCALE, FIXED_SIZE_SCALE
 from gnomepy.data.common import DataStore
 import pandas as pd
 import dataclasses
 import time
+
+from gnomepy.research.signal import Signal, PositionAwareSignal
+from gnomepy.research.types import BasketIntent, Intent
+
 
 class SimpleOMS:
 

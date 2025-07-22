@@ -6,15 +6,12 @@
   <component name="ChangeListManager">
     <list default="true" id="f1b20905-9bde-42f0-a65c-e192fa3a4e60" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/driver.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/driver.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/event.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/event.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/exchanges/README.md" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/exchanges/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/exchanges/__init__.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/gnomepy/backtest/exchanges/mbp.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/exchanges/mbp.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/exchanges/mbp_example.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/fee.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/fee.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/latency.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/latency.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/intent.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/oms.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research/oms.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/signal.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research/signal.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/gnomepy/backtest/strategy.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/backtest/strategy.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/gnomepy/backtest/test.ipynb" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/research/test.ipynb" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/gnomepy/data/client.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/data/client.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/gnomepy/data/types.py" beforeDir="false" afterPath="$PROJECT_DIR$/gnomepy/data/types.py" afterDir="false" />
     </list>
@@ -52,7 +49,7 @@
     "RunOnceActivity.git.unshallow": "true",
     "git-widget-placeholder": "main",
     "last_opened_file_path": "/Users/mprey/Programming/gnome-trading-group/gnomepy",
-    "settings.editor.selected.configurable": "preferences.keymap"
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   },
   "keyToStringList": {
     "com.intellij.ide.scratch.ScratchImplUtil$2/New Scratch File": [
@@ -75,6 +72,7 @@
       <recent name="$PROJECT_DIR$/gnomepy/data" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/gnomepy/research" />
       <recent name="$PROJECT_DIR$/gnomepy/data" />
       <recent name="$PROJECT_DIR$" />
     </key>

@@ -67,7 +67,6 @@ class MarketDataClient:
             end_datetime: datetime.datetime | pd.Timestamp,
             schema_type: SchemaType,
     ):
-        # prefix = f"{exchange_id}/{security_id}/"
         prefix = f"{security_id}/{exchange_id}/"
         paginator = self.s3.get_paginator('list_objects_v2')
         pages = paginator.paginate(Bucket=self.bucket, Prefix=prefix)
