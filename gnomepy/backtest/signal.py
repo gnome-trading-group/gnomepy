@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from gnomepy.data.types import SchemaBase, Intent, BasketIntent, Listing, SchemaType
 from gnomepy.data.common import DataStore
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
-import time
 import numpy as np
 import pandas as pd
 
@@ -21,12 +20,12 @@ class Signal(ABC):
         return isinstance(other, Signal) and self._id == other._id
 
     @abstractmethod
-    def process_new_tick(self, data: DataStore) -> tuple[list[Intent], int]:
+    def process_new_tick(self, data: SchemaBase) -> list[Intent]:
         """
-        Process market data and return intents with processing latency.
+        Process market data and return intents.
         
         Returns:
-            tuple: (list of Intent objects, elapsed time/latency in nanoseconds)
+            list of Intent objects
         """
         raise NotImplementedError
 
@@ -34,16 +33,16 @@ class Signal(ABC):
 class PositionAwareSignal(Signal):
 
     @abstractmethod
-    def process_new_tick(self, data: DataStore, positions: dict[int, float] = None) -> tuple[list[Intent], int]:
+    def process_new_tick(self, data: SchemaBase, positions: dict[int, float] = None) -> list[Intent]:
         """
-        Process market data and return intents with processing latency, considering current positions.
+        Process market data and return intents, considering current positions.
         
         Args:
             data: Market data to process
             positions: Dictionary mapping listing_id to current position size
         
         Returns:
-            tuple: (list of Intent objects, elapsed time/latency in nanoseconds)
+            list of Intent objects
         """
         raise NotImplementedError
 
@@ -293,7 +292,7 @@ class CointegrationSignal(PositionAwareSignal):
         # No trading signal generated
         return []
 
-    def process_new_tick(self, data: dict[int, DataStore], ticker_listing_id: int, positions: dict[int, float] = None) -> tuple[list[BasketIntent], int]:
+    def process_new_tick(self, data: dict[int, SchemaBase], ticker_listing_id: int, positions: dict[int, float] = None) -> list[BasketIntent]:
         """Process market data event and generate trading signals.
         
         Args:
@@ -302,16 +301,8 @@ class CointegrationSignal(PositionAwareSignal):
             positions: Dictionary mapping listing_id to current position size
         
         Returns:
-            tuple containing:
-                - list of BasketIntent objects
-                - int latency in nanoseconds
+            list of BasketIntent objects
         """
-        # Start latency calculation
-        start_time = time.time()
-
-        # # Turn data into dataframe
-        # data_df = {listing: datastore.to_df() for listing, datastore in data.items()}
-        
         # Increment elapsed ticks for the specific listing that received new data
         if ticker_listing_id in self.elapsed_ticks:
             self.elapsed_ticks[ticker_listing_id] += 1
@@ -324,7 +315,7 @@ class CointegrationSignal(PositionAwareSignal):
         )
         
         if not enough_data:
-            return [], int((time.time() - start_time) * 1e9)
+            return []
 
         # First check if we need to update betas
         # Use the minimum elapsed ticks across all listings to determine beta refresh timing
@@ -337,9 +328,9 @@ class CointegrationSignal(PositionAwareSignal):
             
             if result is not None:
                 # We got flatten intents, return them
-                return result, int((time.time() - start_time) * 1e9)
+                return result
             
-            return [], int((time.time() - start_time) * 1e9)
+            return []
 
         # If not, then we can consider trading
         elif self.beta_vec is not None:
@@ -347,8 +338,8 @@ class CointegrationSignal(PositionAwareSignal):
             # Generate intents
             basket_intents = self.generate_intents(data, positions)
 
-            return basket_intents, int((time.time() - start_time) * 1e9)
+            return basket_intents
 
 
         # We are not currently trading due to no cointegration
-        return [], int((time.time() - start_time) * 1e9)
+        return []

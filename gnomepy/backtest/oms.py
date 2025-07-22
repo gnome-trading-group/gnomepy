@@ -29,7 +29,7 @@ class SimpleOMS:
         self.positions: dict[int, float] = {listing.listing_id: 0.0 for listing in all_listings}
         # Add order log to keep history of all submitted orders
         self.order_log: dict[str, Order] = {}
-        
+
     def on_execution_report(self, execution_report: OrderExecutionReport):
         client_oid = execution_report.client_oid
         order = self.order_log.get(client_oid)
@@ -118,9 +118,9 @@ class SimpleOMS:
         all_intents = []
         for signal in self.signals:
             if isinstance(signal, PositionAwareSignal):
-                new_intents, latency = signal.process_new_tick(data=self.listing_data, positions=self.signal_positions[signal], ticker_listing_id=listing_id)
+                new_intents = signal.process_new_tick(data=self.listing_data, positions=self.signal_positions[signal], ticker_listing_id=listing_id)
             else:
-                new_intents, latency = signal.process_new_tick(data=self.listing_data)
+                new_intents = signal.process_new_tick(data=self.listing_data)
 
             if new_intents and len(new_intents) > 0:
                 all_intents.extend(new_intents)
