@@ -1,6 +1,5 @@
 import datetime
 import re
-from typing import Optional
 
 import boto3.session
 import pandas as pd
@@ -14,7 +13,7 @@ class MarketDataClient:
     def __init__(
             self,
             bucket: str = "gnome-market-data-prod",
-            aws_profile_name: Optional[str] = None,
+            aws_profile_name: str | None = None,
     ):
         session = boto3.session.Session(profile_name=aws_profile_name)
         self.s3 = session.client('s3')

@@ -3,5 +3,6 @@ from gnomepy.constants import *
 from gnomepy.config import *
 from gnomepy.data.client import *
 from gnomepy.data.common import *
+from gnomepy.data.cached_client import *
 from gnomepy.data.types import *
 from gnomepy.backtest import *

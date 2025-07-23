@@ -28,4 +28,4 @@ class GaussianLatency(LatencyModel):
 
     @override
     def simulate(self) -> int:
-        return np.random.normal(loc=self.mu, scale=self.sigma).astype(int)
+        return int(np.random.normal(loc=self.mu, scale=self.sigma))

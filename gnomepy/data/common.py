@@ -3,9 +3,11 @@ from __future__ import annotations
 import decimal
 import enum
 import logging
+import pickle
 import warnings
 from abc import ABC
 from io import BytesIO
+from pathlib import Path
 from typing import IO, Generator, Protocol, Any, Iterator, Callable
 
 import importlib_resources
@@ -255,6 +257,61 @@ class DataStore:
     @classmethod
     def from_bytes(cls, data: BytesIO | bytes | IO[bytes], schema_type: SchemaType) -> DataStore:
         return cls(MemoryDataSource(data), schema_type)
+
+
+class CachedDataStore(DataStore):
+    def __init__(
+        self,
+        data_source: DataSource,
+        schema_type: SchemaType,
+        cache_path: Path | None = None,
+        schema_file_module: str = "gnomepy.data.sbe",
+        schema_file_name: str = "schema.xml",
+    ):
+        super().__init__(data_source, schema_type, schema_file_module, schema_file_name)
+        self._parsed_records: list[SchemaBase] | None = None
+        self._cache_path: Path | None = cache_path
+
+        if self._cache_path and self._cache_path.exists():
+            self._load_cache()
+
+    def __iter__(self) -> Generator[SchemaBase, None, None]:
+        if self._parsed_records is not None:
+            yield from self._parsed_records
+            return
+
+        self._parsed_records = []
+        mem = self.bytes
+        offset = 0
+        body_size = self._schema_metadata.body_size
+
+        while offset < len(mem):
+            message = self.schema.decode(mem[offset:])
+            parsed = self._schema_base_type.from_message(message)
+            self._parsed_records.append(parsed)
+            yield parsed
+            offset += body_size + self._header_size
+
+        if self._cache_path:
+            self._save_cache()
+
+    def _load_cache(self) -> None:
+        with self._cache_path.open("rb") as f:
+            self._parsed_records = pickle.load(f)
+
+    def _save_cache(self) -> None:
+        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._cache_path.open("wb") as f:
+            pickle.dump(self._parsed_records, f)
+
+    @classmethod
+    def from_bytes(
+        cls,
+        data: BytesIO | bytes | IO[bytes],
+        schema_type: SchemaType,
+        cache_path: Path | None = None
+    ) -> CachedDataStore:
+        return cls(MemoryDataSource(data), schema_type, cache_path)
 
 
 class NDArrayIterator(Protocol):
