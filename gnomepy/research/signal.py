@@ -119,7 +119,7 @@ class CointegrationSignal(PositionAwareSignal):
         print(f"Initialized CointegrationSignal with {len(self.listings)} listings")
         return
 
-    def refresh_beta_vec(self, data: dict[int, pd.DataFrame], positions: dict[int, float] = None):
+    def refresh_beta_vec(self, data: dict[int, dict[str, np.ndarray]], positions: dict[int, float] = None):
         print(f"Refreshing beta vectors for CointegrationSignal...")
 
         # Before refreshing beta vectors, check if we need to flatten positions
@@ -146,8 +146,11 @@ class CointegrationSignal(PositionAwareSignal):
                         proportions=[1.0] * len(flatten_intents)
                     )]
 
-        # Create price matrix and calculate beta vectors
-        coint_price_matrix = np.column_stack([data[listing.listing_id][-self.beta_refresh_frequency::self.trade_frequency]['bidPrice0'] for listing in self.listings])
+        # Create price matrix and calculate beta vectors - now using numpy arrays directly
+        coint_price_matrix = np.column_stack([
+            data[listing.listing_id]['bidPrice0'][-self.beta_refresh_frequency:] 
+            for listing in self.listings
+        ])
         johansen_result = coint_johansen(coint_price_matrix, det_order=0, k_ar_diff=1)
         self.n_coints = np.sum(johansen_result.lr1 > johansen_result.cvt[:, self.sig_idx])
         
@@ -170,19 +173,19 @@ class CointegrationSignal(PositionAwareSignal):
 
         return None
     
-    def generate_intents(self, data_df: dict[int, pd.DataFrame], positions: dict[int, float] = None) -> list[BasketIntent]:
+    def generate_intents(self, data_df: dict[int, dict[str, np.ndarray]], positions: dict[int, float] = None) -> list[BasketIntent]:
         """Generate trading intents based on current market data and beta vectors.
         
         Args:
-            data_df: Dictionary mapping listing_id to their historical data DataFrames
+            data_df: Dictionary mapping listing_id to their historical data (numpy arrays)
             positions: Dictionary mapping listing_id to their current positions
             
         Returns:
             list: List of BasketIntent objects
         """
-        # Create price matrix and calculate spread using spread_window
+        # Create price matrix and calculate spread using spread_window - now using numpy arrays directly
         coint_price_matrix = np.column_stack([
-            (data_df[listing.listing_id][-self.spread_window::self.trade_frequency]['bidPrice0'].values) 
+            data_df[listing.listing_id]['bidPrice0'][-self.spread_window:]
             for listing in self.listings
         ])
 
@@ -290,11 +293,11 @@ class CointegrationSignal(PositionAwareSignal):
         # No trading signal generated
         return []
 
-    def process_new_tick(self, data: dict[int, SchemaBase], ticker_listing_id: int, positions: dict[int, float] = None) -> list[BasketIntent]:
+    def process_new_tick(self, data: dict[int, dict[str, np.ndarray]], ticker_listing_id: int, positions: dict[int, float] = None) -> list[BasketIntent]:
         """Process market data event and generate trading signals.
         
         Args:
-            data: Dictionary mapping listing_id to their historical data DataStores
+            data: Dictionary mapping listing_id to their historical data (numpy arrays)
             ticker_listing_id: The specific listing_id that received new data
             positions: Dictionary mapping listing_id to current position size
         
