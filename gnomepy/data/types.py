@@ -18,12 +18,10 @@ class TimeInForce(StrEnum):
 
 class ExecType(StrEnum):
     NEW = "NEW"
-    CANCEL = "CANCEL"
-    FILL = "FILL"
-    PARTIAL_FILL = "PARTIAL_FILL"
-    REJECT = "REJECT"
-    CANCEL_REJECT = "CANCEL_REJECT"
-    EXPIRE = "EXPIRE"
+    CANCELED = "CANCELED"
+    TRADE = "TRADE"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
 
 class OrderStatus(StrEnum):
     NEW = "NEW"
@@ -63,8 +61,6 @@ class CancelOrder:
     exchange_id: int
     security_id: int
     client_oid: str
-
-LocalMessage = Order | CancelOrder
 
 class SchemaType(StrEnum):
     MBO = "mbo"
@@ -152,6 +148,40 @@ class PriceMixin:
     def pretty_price(self):
         if hasattr(self, 'price'):
             return self.price / FIXED_PRICE_SCALE
+
+@dataclass
+class MBO(SchemaBase, PriceMixin, SizeMixin):
+    exchange_id: int
+    security_id: int
+    timestamp_event: int
+    timestamp_sent: int | None
+    timestamp_recv: int
+    order_id: str
+    price: int
+    size: int
+    action: str
+    side: str
+    flags: list[str]
+    sequence: int | None
+
+    @classmethod
+    def from_message(cls, message: DecodedMessage):
+        body = message.value
+        return cls(
+            body['exchangeId'],
+            body['securityId'],
+            body['timestampEvent'],
+            body['timestampSent'],
+            body['timestampRecv'],
+            body['orderId'],
+            body['price'],
+            body['size'],
+            body['action'],
+            body['side'],
+            body['flags'],
+            body['sequence'],
+        )
+
 
 @dataclass
 class MBP10(SchemaBase, PriceMixin, SizeMixin):

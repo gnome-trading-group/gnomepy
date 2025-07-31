@@ -9,7 +9,7 @@ class LatencyModel(ABC):
     @abstractmethod
     def simulate(self) -> int:
         """Simulate the number of nanoseconds for an operation."""
-        raise NotImplementedError
+        ...
 
 class StaticLatency(LatencyModel):
 

@@ -11,11 +11,11 @@ class Strategy(ABC):
 
     @abstractmethod
     def on_market_data(self, data: DataStore) -> list[Order]:
-        raise NotImplementedError
+        ...
 
     @abstractmethod
     def on_execution_report(self, execution_report: OrderExecutionReport):
-        raise NotImplementedError
+        ...
 
     def simulate_strategy_processing_time(self) -> int:
         return self.processing_latency.simulate()

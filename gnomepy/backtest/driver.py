@@ -4,11 +4,11 @@ import queue
 
 import pandas as pd
 
-from gnomepy.backtest.event import Event, EventType
-from gnomepy.backtest.exchanges import SimulatedExchange
+from gnomepy.backtest.event import Event, EventType, LocalMessage
+from gnomepy.backtest.exchanges.base import SimulatedExchange
 from gnomepy.backtest.strategy import Strategy
 from gnomepy.data.client import MarketDataClient
-from gnomepy.data.types import SchemaType, Order, LocalMessage, CancelOrder
+from gnomepy.data.types import SchemaType, Order, CancelOrder
 from gnomepy.registry.api import RegistryClient
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,8 @@ class Backtest:
                 schema_type=self.schema_type,
             )
             for record in records:
-                self.queue.put(Event.from_schema(record))
+                self.queue.put(Event.from_schema_local(record))
+                self.queue.put(Event.from_schema_exchange(record))
         self.ready = True
 
     def execute_until(self, timestamp: int | None):
@@ -96,8 +97,16 @@ class Backtest:
                 break
 
             try:
-                if event.event_type == EventType.MARKET_DATA:
-                    self.exchanges[event.data.exchange_id][event.data.security_id].on_market_data(event.data)
+                if event.event_type == EventType.EXCHANGE_MARKET_DATA:
+                    exchange = self.exchanges[event.data.exchange_id][event.data.security_id]
+                    execution_reports = exchange.on_market_data(event.data)
+                    for execution_report in execution_reports:
+                        # no processing time since it is already baked into the event's timestamp
+                        expected_timestamp = event.timestamp + exchange.simulate_network_latency()
+                        self.queue.put(Event.from_exchange_message(execution_report, expected_timestamp))
+                elif event.event_type == EventType.EXCHANGE_MESSAGE:
+                    self.strategy.on_execution_report(event.data)
+                elif event.event_type == EventType.LOCAL_MARKET_DATA:
                     orders = self.strategy.on_market_data(event.data)
                     for order in orders:
                         expected_timestamp = event.timestamp + self.strategy.simulate_strategy_processing_time() + \
@@ -105,23 +114,23 @@ class Backtest:
                         self.queue.put(Event.from_local_message(order, expected_timestamp))
                 elif event.event_type == EventType.LOCAL_MESSAGE:
                     message: LocalMessage = event.data
+                    exchange = self.exchanges[message.exchange_id][message.security_id]
                     if isinstance(message, Order):
-                        execution_report = self.exchanges[message.exchange_id][message.security_id].submit_order(message)
+                        execution_reports = exchange.submit_order(message)
                     elif isinstance(message, CancelOrder):
-                        execution_report = self.exchanges[message.exchange_id][message.security_id].cancel_order(message)
+                        execution_reports = exchange.cancel_order(message)
                     else:
                         raise ValueError(f"Unknown local message type: {type(message)}")
 
-                    expected_timestamp = event.timestamp + self.exchanges[message.exchange_id][message.security_id].simulate_order_processing_time() + \
-                                         self.exchanges[message.exchange_id][message.security_id].simulate_network_latency()
-                    execution_report.timestamp_event = event.timestamp
-                    execution_report.timestamp_recv = expected_timestamp
-                    execution_report.exchange_id = message.exchange_id
-                    execution_report.security_id = message.security_id
+                    for execution_report in execution_reports:
+                        expected_timestamp = event.timestamp + exchange.simulate_order_processing_time() + \
+                                             exchange.simulate_network_latency()
+                        execution_report.timestamp_event = event.timestamp
+                        execution_report.timestamp_recv = expected_timestamp
+                        execution_report.exchange_id = message.exchange_id
+                        execution_report.security_id = message.security_id
 
-                    self.queue.put(Event.from_execution_report(execution_report, expected_timestamp))
-                elif event.event_type == EventType.EXECUTION_REPORT:
-                    self.strategy.on_execution_report(event.data)
+                        self.queue.put(Event.from_exchange_message(execution_report, expected_timestamp))
                 else:
                     raise ValueError(f"Unknown event type: {event.event_type}")
             except Exception as e:
