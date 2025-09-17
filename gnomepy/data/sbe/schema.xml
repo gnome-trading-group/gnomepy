@@ -24,7 +24,7 @@
         <type name="volume" primitiveType="uint64" /> <!-- Current volume will never be null -->
         <type name="count" primitiveType="uint32" nullValue="4294967295" presence="optional" />
         <type name="depth" primitiveType="uint8" nullValue="255" presence="optional" />
-        <type name="sequence" primitiveType="uint32" nullValue="4294967295" presence="optional" />
+        <type name="sequence" primitiveType="uint64" nullValue="0" presence="optional" />
 
         <type name="clientOid" primitiveType="uint8" length="16" presence="optional" description="128-bit client order ID"/>
 
