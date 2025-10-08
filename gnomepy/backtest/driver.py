@@ -7,6 +7,7 @@ import pandas as pd
 from gnomepy.backtest.event import Event, EventType, LocalMessage
 from gnomepy.backtest.exchanges.base import SimulatedExchange
 from gnomepy.backtest.strategy import Strategy
+from gnomepy.backtest.recorder import Recorder
 from gnomepy.data.client import MarketDataClient
 from gnomepy.data.types import SchemaType, Order, CancelOrder
 from gnomepy.registry.api import RegistryClient
@@ -26,6 +27,7 @@ class Backtest:
             exchanges: dict[int, dict[int, SimulatedExchange]],
             market_data_client: MarketDataClient | None = None,
             registry_client: RegistryClient | None = None,
+            recorder: Recorder | None = None
     ):
         self.start_datetime = start_datetime
         self.end_datetime = end_datetime
@@ -34,6 +36,7 @@ class Backtest:
         self.exchanges = exchanges
         self.market_data_client = market_data_client or MarketDataClient()
         self.registry_client = registry_client or RegistryClient()
+        self.recorder = recorder or Recorder(listing_ids, schema_type)
         self.queue = None
         self.ready = False
 
@@ -104,14 +107,17 @@ class Backtest:
                         # no processing time since it is already baked into the event's timestamp
                         expected_timestamp = event.timestamp + exchange.simulate_network_latency()
                         self.queue.put(Event.from_exchange_message(execution_report, expected_timestamp))
+
                 elif event.event_type == EventType.EXCHANGE_MESSAGE:
-                    self.strategy.on_execution_report(event.data)
+                    self.strategy.on_execution_report(event.timestamp, event.data, self.recorder)
+
                 elif event.event_type == EventType.LOCAL_MARKET_DATA:
-                    orders = self.strategy.on_market_data(event.data)
+                    orders = self.strategy.on_market_data(event.timestamp, event.data, self.recorder)
                     for order in orders:
                         expected_timestamp = event.timestamp + self.strategy.simulate_strategy_processing_time() + \
                                              self.exchanges[order.exchange_id][order.security_id].simulate_network_latency()
                         self.queue.put(Event.from_local_message(order, expected_timestamp))
+
                 elif event.event_type == EventType.LOCAL_MESSAGE:
                     message: LocalMessage = event.data
                     exchange = self.exchanges[message.exchange_id][message.security_id]
@@ -133,6 +139,7 @@ class Backtest:
                         self.queue.put(Event.from_exchange_message(execution_report, expected_timestamp))
                 else:
                     raise ValueError(f"Unknown event type: {event.event_type}")
+
             except Exception as e:
                 logger.error(f"Unknown exception occurred at timestamp: {event.timestamp}", e)
                 raise e

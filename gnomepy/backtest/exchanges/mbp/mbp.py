@@ -16,7 +16,8 @@ def _create_execution_report(
     filled_qty: int = 0,
     filled_price: int = 0,
     cumulative_qty: int = 0,
-    leaves_qty: int = 0
+    leaves_qty: int = 0,
+    fee: float = 0.0
 ) -> OrderExecutionReport:
     return OrderExecutionReport(
         client_oid=client_oid,
@@ -30,6 +31,7 @@ def _create_execution_report(
         security_id=-1,
         timestamp_event=-1,
         timestamp_recv=-1,
+        fee=fee,
     )
 
 class MBPSimulatedExchange(SimulatedExchange):
@@ -66,7 +68,6 @@ class MBPSimulatedExchange(SimulatedExchange):
     def _map_execution_report(self, local_order: LocalOrder, filled_qty: int) -> OrderExecutionReport:
         total_price = filled_qty * local_order.order.price
         total_fee = self.fee_model.calculate_fee(total_price, is_maker=True)
-        total_price += total_fee if local_order.order.side == 'B' else -total_fee
         filled_price = total_price // filled_qty
 
         return _create_execution_report(
@@ -77,6 +78,7 @@ class MBPSimulatedExchange(SimulatedExchange):
             cumulative_qty=local_order.order.size - local_order.remaining,
             filled_price=filled_price,
             leaves_qty=local_order.remaining,
+            fee=total_fee,
         )
 
     def submit_order(self, order: Order) -> list[OrderExecutionReport]:
@@ -111,7 +113,7 @@ class MBPSimulatedExchange(SimulatedExchange):
             total_price += match.price * match.size
 
         total_fee = self.fee_model.calculate_fee(total_price, is_maker=False)
-        total_price += total_fee if order.side == 'B' else -total_fee
+        # total_price += total_fee if order.side == 'B' else -total_fee
 
         if total_filled == order.size:
             exec_type = ExecType.TRADE
@@ -125,7 +127,8 @@ class MBPSimulatedExchange(SimulatedExchange):
                 filled_qty=total_filled,
                 cumulative_qty=total_filled,
                 filled_price=total_price // total_filled,
-                leaves_qty=order.size - total_filled
+                leaves_qty=order.size - total_filled,
+                fee=total_fee,
             )
         ]
 
@@ -147,7 +150,7 @@ class MBPSimulatedExchange(SimulatedExchange):
                 total_price += match.price * match.size
 
             total_fee = self.fee_model.calculate_fee(total_price, False)
-            total_price += total_fee if order.side == 'B' else -total_fee
+            # total_price += total_fee if order.side == 'B' else -total_fee
 
             if total_filled == order.size:
                 return [
@@ -157,6 +160,7 @@ class MBPSimulatedExchange(SimulatedExchange):
                         cumulative_qty=total_filled,
                         filled_price=total_price // total_filled,
                         leaves_qty=0,
+                        fee=total_fee,
                     )
                 ]
             else:
@@ -166,6 +170,7 @@ class MBPSimulatedExchange(SimulatedExchange):
                     cumulative_qty=total_filled,
                     filled_price=total_price // total_filled,
                     leaves_qty=order.size - total_filled,
+                    fee=total_fee,
                 )
                 if order.time_in_force == TimeInForce.FOK:
                     return [
@@ -178,6 +183,7 @@ class MBPSimulatedExchange(SimulatedExchange):
                             order.client_oid, ExecType.CANCELED, OrderStatus.PARTIALLY_FILLED,
                             cumulative_qty=total_filled,
                             leaves_qty=0,
+                            fee=total_fee,
                         )
                     ]
                 else:

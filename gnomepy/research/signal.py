@@ -289,7 +289,7 @@ class CointegrationSignal(PositionAwareSignal):
                 intents=intents,
                 proportions=(-self.norm_beta_vec).flatten().tolist()
             )]
-        
+
         # No trading signal generated
         return []
 

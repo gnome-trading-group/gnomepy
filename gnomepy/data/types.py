@@ -55,6 +55,7 @@ class OrderExecutionReport:
     leaves_qty: int
     timestamp_event: int
     timestamp_recv: int
+    fee: float
 
 @dataclass
 class CancelOrder:

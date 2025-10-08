@@ -1,6 +1,4 @@
 from gnomepy.data.types import SchemaBase, Order, OrderType, TimeInForce, OrderExecutionReport, ExecType, FIXED_PRICE_SCALE, FIXED_SIZE_SCALE
-from gnomepy.data.common import DataStore
-import pandas as pd
 import dataclasses
 import time
 import logging
@@ -8,6 +6,7 @@ import numpy as np
 
 from gnomepy.research.signal import Signal, PositionAwareSignal
 from gnomepy.research.types import BasketIntent, Intent
+from gnomepy.backtest.recorder import Recorder, RecordType
 
 # Set up logger for performance tracking
 logger = logging.getLogger(__name__)
@@ -41,7 +40,7 @@ class SimpleOMS:
         # Track elapsed ticks for each listing to control data appending frequency
         self.elapsed_ticks: dict[int, int] = {listing.listing_id: 0 for listing in all_listings}
 
-    def on_execution_report(self, execution_report: OrderExecutionReport):
+    def on_execution_report(self, timestamp: int, execution_report: OrderExecutionReport, recorder: Recorder):
         client_oid = execution_report.client_oid
         order = self.order_log.get(client_oid)
         if order is None:
@@ -60,7 +59,7 @@ class SimpleOMS:
         if listing_id is None:
             return  # Unknown listing, skip
 
-        if execution_report.exec_type in [ExecType.FILL, ExecType.PARTIAL_FILL]:
+        if execution_report.exec_type in [ExecType.TRADE]:
             # Use order.side to determine position change direction
             filled_qty = execution_report.filled_qty
             filled_price = execution_report.filled_price / FIXED_PRICE_SCALE  # Scale the price
@@ -91,9 +90,18 @@ class SimpleOMS:
                     if listing_id in self.signal_positions[signal]:
                         self.signal_positions[signal][listing_id] += position_change_per_signal
 
+            recorder.log(
+                event=RecordType.EXECUTION,
+                listing_id=listing_id,
+                timestamp=timestamp,
+                price=filled_price,
+                quantity=self.positions[listing_id],
+                fee=execution_report.fee / FIXED_PRICE_SCALE,
+            )
+
         return
     
-    def on_market_update(self, market_update: SchemaBase):
+    def on_market_update(self, timestamp: int, market_update: SchemaBase, recorder: Recorder):
         start_time = time.perf_counter()
         
         # Update listing data history using listing_id as key
@@ -151,6 +159,14 @@ class SimpleOMS:
             market_dict[f'askSize{i}'] = level.get('ask_sz', 0) / FIXED_SIZE_SCALE
             market_dict[f'bidCount{i}'] = level.get('bid_ct', 0)
             market_dict[f'askCount{i}'] = level.get('ask_ct', 0)
+
+        recorder.log_market_event(
+            listing_id=listing_id,
+            timestamp=timestamp,
+            market_update=market_update,
+            quantity=self.positions[listing_id],
+        )
+
         convert_data_time = time.perf_counter() - convert_data_start
         # print(f"Convert market data: {convert_data_time:.6f}s")
 
