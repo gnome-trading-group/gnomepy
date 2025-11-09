@@ -3,8 +3,7 @@ from __future__ import annotations
 import enum
 import struct
 from dataclasses import dataclass, field
-from typing import TextIO
-
+from typing import TextIO, Iterable
 import lxml.etree
 
 
@@ -161,13 +160,18 @@ class Enum:
 
     def find_value_by_name(self, name: str | None) -> str:
         if name is None:
-            return self.encoding_type.null_value
+            if isinstance(self.encoding_type, Type):
+                return self.encoding_type.null_value
+            else:
+                return 0
         val = next(x for x in self.valid_values if x.name == name).value
         if self.encoding_type == EnumEncodingType.CHAR or (isinstance(self.encoding_type, Type) and self.encoding_type.primitive_type == PrimitiveType.CHAR):
             return val.encode()
         return int(val)
 
-    def find_name_by_value(self, val: str) -> str:
+    def find_name_by_value(self, val: str | int) -> str:
+        if isinstance(val, int):
+            val = str(val)
         if val not in (x.value for x in self.valid_values):
             return None
         return next(x for x in self.valid_values if x.value == val).name
@@ -179,6 +183,7 @@ class Enum:
 @dataclass
 class Composite:
     name: str
+    parent: Composite | Schema
     types: list[Composite | Type | RefType | Enum] = field(default_factory=list)
     description: str | None = None
 
@@ -208,12 +213,18 @@ class Set:
     description: str | None = None
     choices: list[SetChoice] = field(default_factory=list)
 
-    def decode(self, val: int) -> list[str]:
-        # if isinstance(self.encodingType, SetEncodingType):
-        #     length = FORMAT_SIZES[PrimitiveType[self.encodingType.name]] * 8
-        # else:
-        #     length = FORMAT_SIZES[self.encodingType.primitiveType] * 8
+    def encode(self, vals: Iterable[str]) -> int:
+        vals = set(vals)
+        assert vals.issubset({c.name for c in self.choices}), f"{vals} is not a subset of {self.choices}"
+        # Each choice has a bit position (value), set the bit at that position
+        result = 0
+        for choice in self.choices:
+            if choice.name in vals:
+                result |= (1 << choice.value)
+        return result
 
+    def decode(self, val: int) -> list[str]:
+        # Check each choice's bit position
         return [c.name for c in self.choices if (1 << c.value) & val]
 
     def __repr__(self):
@@ -246,6 +257,7 @@ class Field:
 class Message:
     name: str
     id: int
+    blockLength: int | None = None
     description: str | None = None
     fields: list[Field] = field(default_factory=list, repr=False)
 
@@ -293,6 +305,31 @@ class Schema:
         rv = _parse_schema(f)
         return rv
 
+    def encode(self, message: Message, obj: dict, header: dict | None = None) -> bytes:
+        if header is None:
+            header = {}
+
+        fmts = []
+        vals = []
+        cursor = Cursor(0)
+        _walk_fields_encode(self, message.fields, obj, fmts, vals, cursor)
+        fmt = "<" + ''.join(fmts)
+
+        assert message.blockLength is not None, f"Block length is not defined for message {message.name}"
+        default_header = {
+            'blockLength': message.blockLength,
+            'templateId': message.id,
+            'schemaId': int(self.id),
+            'version': int(self.version),
+        }
+
+        final_header = {**default_header, **header}
+
+        return b''.join([
+            _pack_composite(self, self.types[self.header_type_name], final_header),
+            struct.pack(fmt, *vals)
+        ])
+
     def decode_header(self, buffer: bytes | memoryview) -> dict:
         buffer = memoryview(buffer)
         return _unpack_composite(self, self.types[self.header_type_name], buffer).value
@@ -311,6 +348,167 @@ class Schema:
         _walk_fields_decode(self, rv, m.fields, vals, Cursor(0))
         return DecodedMessage(m.name, header.value, rv)
 
+
+def _pack_composite(_schema: Schema, composite: Composite, obj: dict):
+    fmt = []
+    vals = []
+    for t in composite.types:
+        v = obj.get(t.name)
+
+        if v is None:
+            if t.primitive_type == PrimitiveType.CHAR:
+                if t.length > 1:
+                    v = ''
+                else:
+                    v = '0'
+
+            else:
+                v = 0
+
+        if t.length > 1 and t.primitive_type == PrimitiveType.CHAR:
+            fmt.append(str(t.length) + 's')
+            vals.append(v.encode())
+        elif t.primitive_type == PrimitiveType.CHAR:
+            fmt.append(FORMAT[t.primitive_type])
+            vals.append(v.encode())
+        else:
+            fmt.append(FORMAT[t.primitive_type])
+            vals.append(v)
+
+    return struct.pack('<' + ''.join(fmt), *vals)
+
+
+def _resolve_ref_type(t: RefType, composite: Composite):
+    parent = composite.parent
+    while parent is not None:
+        if isinstance(parent, Schema):
+            if t.type in parent.types:
+                return parent.types[t.type]
+            assert False, f"RefType '{t.type}' not found in schema"
+        else:
+            t1 = next((x for x in parent.types if x.name == t.type), None)
+            if t1 is not None:
+                return t1
+            parent = parent.parent
+    assert False, "unreachable"
+
+def _walk_fields_encode_composite(
+    schema: Schema, composite: Composite,
+    obj: dict, fmt: list, vals: list, cursor: Cursor
+):
+    for t in composite.types:
+        if isinstance(t, RefType):
+            t = _resolve_ref_type(t, composite)
+
+        if isinstance(t, Composite):
+            _walk_fields_encode_composite(schema, t, obj[t.name], fmt, vals, cursor)
+            continue
+
+        if t.presence != Presence.CONSTANT:
+            if isinstance(t, Enum):
+                if isinstance(t.encoding_type, Type):
+                    t1 = t.encoding_type.primitive_type
+                    l = t.encoding_type.length
+                else:
+                    assert isinstance(t.encoding_type, EnumEncodingType)
+                    t1 = PrimitiveType(t.encoding_type.value)
+                    l = 1
+            else:
+                assert isinstance(t, Type)
+                t1 = t.primitive_type
+                l = t.length
+
+            if t1 == PrimitiveType.CHAR:
+                if l > 1:
+                    fmt.append(str(l) + "s")
+                    vals.append(obj[t.name].encode())
+                    cursor.val += l
+            else:
+                fmt.append(FORMAT[t1])
+                vals.append(obj[t.name])
+                cursor.val += FORMAT_SIZES[t1]
+
+
+def _walk_fields_encode(
+        schema: Schema,
+        fields: list[Field],
+        obj: dict,
+        fmt: list,
+        vals: list,
+        cursor: Cursor,
+):
+    for f in fields:
+        if isinstance(f.type, Composite):
+            _walk_fields_encode_composite(schema, f.type, obj[f.name], fmt, vals, cursor)
+
+        elif isinstance(f.type, Type):
+            if f.type.presence == Presence.CONSTANT:
+                continue
+            t = f.type.primitive_type
+            if f.type.length > 1:
+                # Handle arrays (both char and numeric types)
+                if t == PrimitiveType.CHAR:
+                    fmt.append(str(f.type.length) + "s")
+                    if isinstance(obj[f.name], bytes):
+                        vals.append(obj[f.name])
+                    else:
+                        vals.append(obj[f.name].encode())
+                else:
+                    # Numeric array (e.g., uint8[16] for clientOid)
+                    fmt.append(str(f.type.length) + "s")
+                    if isinstance(obj[f.name], bytes):
+                        vals.append(obj[f.name])
+                    elif isinstance(obj[f.name], str):
+                        # Pad or truncate string to exact length
+                        data = obj[f.name].encode()
+                        if len(data) < f.type.length:
+                            data = data + b'\x00' * (f.type.length - len(data))
+                        else:
+                            data = data[:f.type.length]
+                        vals.append(data)
+                    else:
+                        # Assume it's already the right format
+                        vals.append(obj[f.name])
+                cursor.val += f.type.length
+            else:
+                fmt.append(FORMAT[t])
+                if t == PrimitiveType.CHAR:
+                    vals.append(obj[f.name].encode())
+                else:
+                    vals.append(obj[f.name] if obj[f.name] is not None else f.type.null_value)
+                cursor.val += FORMAT_SIZES[t]
+
+        elif isinstance(f.type, Set):
+            if f.type.presence == Presence.CONSTANT:
+                continue
+            if isinstance(f.type.encoding_type, (PrimitiveType, SetEncodingType)):
+                encoding_primitive_type = PrimitiveType(f.type.encoding_type.value)
+            else:
+                encoding_primitive_type = PrimitiveType(f.type.encoding_type.primitive_type.value)
+
+            fmt.append(FORMAT[encoding_primitive_type])
+            vals.append(f.type.encode(obj[f.name]))
+            cursor.val += FORMAT_SIZES[encoding_primitive_type]
+
+        elif isinstance(f.type, Enum):
+            if f.type.presence == Presence.CONSTANT:
+                continue
+            if isinstance(f.type.encoding_type, Type):
+                encoding_primitive_type = f.type.encoding_type.primitive_type
+            else:
+                encoding_primitive_type = PrimitiveType(f.type.encoding_type.value)
+
+            fmt.append(FORMAT[encoding_primitive_type])
+            vals.append(f.type.find_value_by_name(obj[f.name]))
+            cursor.val += FORMAT_SIZES[encoding_primitive_type]
+
+        elif isinstance(f.type, PrimitiveType):
+            fmt.append(FORMAT[f.type])
+            vals.append(obj[f.name].encode() if f.type == PrimitiveType.CHAR else obj[f.name])
+            cursor.val += FORMAT_SIZES[f.type]
+        else:
+            assert 0
+
 def _unpack_format(
         type_: Field | PrimitiveType | Type | RefType | Set | Enum | Composite,
         output: list,
@@ -327,10 +525,11 @@ def _unpack_format(
         rv = ''
         if type_.padding > 0:
             rv += str(type_.padding) + 'x'
-        if type_.primitive_type == PrimitiveType.CHAR:
+        # Handle arrays (both char and numeric types with length > 1)
+        if type_.length > 1:
             return output.append(rv + f"{type_.length}s")
 
-        return output.append(FORMAT[type_.primitive_type])
+        return output.append(rv + FORMAT[type_.primitive_type])
 
     if isinstance(type_, (Set, Enum)):
         if type_.presence == Presence.CONSTANT:
@@ -365,10 +564,15 @@ def _unpack_composite(schema: Schema, composite: Composite, buffer: memoryview):
     return UnpackedValue(rv, size)
 
 def _prettify_type(_schema: Schema, t: Type, v):
-    if t.primitive_type == PrimitiveType.CHAR and (
-            t.character_encoding == CharacterEncoding.ASCII or t.character_encoding is None
-    ):
-        return v.split(b'\x00', 1)[0].decode('ascii', errors='ignore').strip()
+    # Handle arrays (length > 1)
+    if t.length > 1 and isinstance(v, bytes):
+        if t.primitive_type == PrimitiveType.CHAR:
+            # CHAR arrays: decode as ASCII string, strip null bytes
+            return v.split(b'\x00', 1)[0].decode('ascii', errors='ignore').strip()
+        else:
+            # Non-CHAR arrays (e.g., uint8[16]): decode as ASCII string, strip null bytes
+            return v.split(b'\x00', 1)[0].decode('ascii', errors='ignore')
+
     if t.null_value is not None and v == t.null_value:
         return None
 
@@ -460,7 +664,7 @@ def _parse_schema_impl(doc, only_tags: list | None = None, extra_types: dict | N
         elif tag == "composite":
             if action == "start":
                 name = next(v for k, v in elem.items() if k == 'name')
-                x = Composite(name=name)
+                x = Composite(name=name, parent=stack[-1])
                 for k, v in elem.items():
                     if k == 'name':
                         pass
@@ -480,9 +684,11 @@ def _parse_schema_impl(doc, only_tags: list | None = None, extra_types: dict | N
                 x = Type(name=attrs['name'], primitive_type=PrimitiveType(attrs['primitiveType']),
                          null_value=attrs['nullValue'] if 'nullValue' in attrs else None)
 
+                # Handle length attribute for all types (not just CHAR)
+                if 'length' in attrs:
+                    x.length = int(attrs['length'])
+
                 if x.primitive_type == PrimitiveType.CHAR:
-                    if 'length' in attrs:
-                        x.length = int(attrs['length'])
                     if 'characterEncoding' in attrs:
                         x.character_encoding = CharacterEncoding(attrs['characterEncoding'])
                 if 'semanticType' in attrs:
@@ -576,13 +782,21 @@ def _parse_schema_impl(doc, only_tags: list | None = None, extra_types: dict | N
         elif tag == "message":
             if action == "start":
                 attrs = dict(elem.items())
-                stack.append(Message(name=attrs['name'],
-                                     id=int(attrs['id']),
-                                     description=attrs.get('description')))
+                stack.append(
+                    Message(
+                        name=attrs['name'],
+                        id=int(attrs['id']),
+                        blockLength=int(attrs['blockLength']) if 'blockLength' in attrs else None,
+                        description=attrs.get('description')
+                    )
+                )
 
             elif action == "end":
                 x = stack.pop()
                 assert isinstance(stack[-1], Schema)
+                # Calculate blockLength from fields if not provided
+                if x.blockLength is None:
+                    x.blockLength = x.body_size
                 stack[-1].messages[x.id] = x
 
         elif tag == "ref":
