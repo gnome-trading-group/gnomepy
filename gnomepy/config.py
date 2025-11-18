@@ -12,7 +12,7 @@ class StagingConfig(Config):
 class ProdConfig(Config):
     REGISTRY_API_URL: str = 'https://n5dxpwnij0.execute-api.us-east-1.amazonaws.com/api'
 
-_ENV = os.getenv("ENVIRONMENT", "prod").lower()
+_STAGE = os.getenv("STAGE", "prod").lower()
 
 _CONFIG_MAP = {
     "dev": DevConfig,
@@ -20,4 +20,4 @@ _CONFIG_MAP = {
     "prod": ProdConfig
 }
 
-config = _CONFIG_MAP.get(_ENV, DevConfig)
+config = _CONFIG_MAP.get(_STAGE, DevConfig)

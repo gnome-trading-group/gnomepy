@@ -1,7 +1,7 @@
 from enum import StrEnum
 
 
-class Environment(StrEnum):
+class Stage(StrEnum):
     DEV = "dev",
     STAGING = "staging",
     PROD = "prod",
