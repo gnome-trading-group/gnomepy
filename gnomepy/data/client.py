@@ -1,5 +1,5 @@
 import datetime
-import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3.session
 import pandas as pd
@@ -7,17 +7,18 @@ import pandas as pd
 from gnomepy.data.common import DataStore
 from gnomepy.data.types import SchemaType
 
-_KEY_REGEX = re.compile("^\\d+/\\d+/(\\d{10})/([^/]+)\\.zst$")
 
 class MarketDataClient:
     def __init__(
             self,
             bucket: str = "gnome-market-data-prod",
             aws_profile_name: str | None = None,
+            max_workers: int = 10,
     ):
         session = boto3.session.Session(profile_name=aws_profile_name)
         self.s3 = session.client('s3')
         self.bucket = bucket
+        self.max_workers = max_workers
 
     def get_data(
             self,
@@ -51,14 +52,24 @@ class MarketDataClient:
             end_datetime: datetime.datetime | pd.Timestamp,
             schema_type: SchemaType,
     ) -> bytes:
-        keys = self._get_available_keys(exchange_id, security_id, start_datetime, end_datetime, schema_type)
-        total = b''
-        for key in keys:
-            response = self.s3.get_object(Bucket=self.bucket, Key=key)
-            total += response["Body"].read()
-        return total
+        keys = self._get_keys(exchange_id, security_id, start_datetime, end_datetime, schema_type)
 
-    def _get_available_keys(
+        def fetch_key(key: str) -> bytes:
+            try:
+                response = self.s3.get_object(Bucket=self.bucket, Key=key)
+                return response["Body"].read()
+            except self.s3.exceptions.NoSuchKey:
+                return b''
+
+        chunks = []
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            future_to_key = {executor.submit(fetch_key, key): key for key in keys}
+            for future in as_completed(future_to_key):
+                chunks.append(future.result())
+
+        return b''.join(chunks)
+
+    def _get_keys(
             self,
             exchange_id: int,
             security_id: int,
@@ -66,20 +77,10 @@ class MarketDataClient:
             end_datetime: datetime.datetime | pd.Timestamp,
             schema_type: SchemaType,
     ):
-        prefix = f"{security_id}/{exchange_id}/"
-        paginator = self.s3.get_paginator('list_objects_v2')
-        pages = paginator.paginate(Bucket=self.bucket, Prefix=prefix)
-
         keys = []
-        for page in pages:
-            for obj in page['Contents']:
-                key = obj['Key']
-                parsed = _KEY_REGEX.match(key)
-                if parsed is not None:
-                    date_hour = parsed.group(1)
-                    schema = parsed.group(2)
-                    parsed_dt = datetime.datetime.strptime(f"{date_hour}", "%Y%m%d%H")
-                    if schema == schema_type and start_datetime <= parsed_dt <= end_datetime:
-                        keys.append(key)
-
+        current_time = start_datetime
+        while current_time <= end_datetime:
+            key = f"{security_id}/{exchange_id}/{current_time.year}/{current_time.month}/{current_time.day}/{current_time.hour}/{current_time.minute}/{schema_type.value}.zst"
+            keys.append(key)
+            current_time += datetime.timedelta(minutes=1)
         return keys
