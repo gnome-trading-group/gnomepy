@@ -58,6 +58,7 @@ class OrderExecutionReport:
     timestamp_event: int
     timestamp_recv: int
     fee: float
+    mid_price: int = 0  # Mid price at time of execution (for spread capture modeling)
 
 @dataclass
 class CancelOrder:

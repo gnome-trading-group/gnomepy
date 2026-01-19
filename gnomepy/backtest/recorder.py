@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from enum import IntEnum
 from typing import Any
 
@@ -11,50 +12,119 @@ from gnomepy.data.types import (
     FIXED_PRICE_SCALE, FIXED_SIZE_SCALE, SchemaType
 )
 
-record_dtype = np.dtype(
-    [
-        ('event', 'i8'),
-        ('timestamp', 'i8'),
-        ('price', 'f8'),
-        ('quantity', 'f8'),
-        ('fee', 'f8'),
-    ],
-    align=True
-)
-
 class RecordType(IntEnum):
     """Enumeration of supported record/event types."""
     MARKET = 1
     EXECUTION = 2
+    INTENT = 3
 
 
-class Recorder:
-    """In-memory recorder for market and execution events across multiple assets.
-
-    Events are appended into a preallocated structured NumPy array for speed and
-    minimal overhead during backtests.
-
+class BaseRecorder(ABC):
+    """Base class for recorders that handle a single record type.
+    
+    This abstract base class provides common functionality for recording
+    structured data across multiple assets. Subclasses must implement
+    the record-specific methods.
+    
     Parameters
     ----------
     listing_ids : list[int]
         Unique listing identifiers for tracked assets.
-    schema_type : SchemaType
-        The schema type being used for market data logging.
     size : int, default 100_000
         Maximum number of events to record per asset.
     auto_resize : bool, default True
         Whether to automatically resize the buffer when it's full.
     """
-
-    def __init__(self, listing_ids: list[int], schema_type: SchemaType, size: int = 100_000, auto_resize: bool = True):
+    
+    def __init__(self, listing_ids: list[int], size: int = 100_000, auto_resize: bool = True):
         num_assets = len(listing_ids)
-        self.records = np.zeros((size, num_assets), record_dtype)
+        self.records = np.zeros((size, num_assets), self.get_dtype())
         self.at_i = np.zeros((num_assets,), dtype=np.int64)
         self.listing_id_to_asset_no = {v: k for k, v in enumerate(listing_ids)}
-        self.schema_type = schema_type
         self.auto_resize = auto_resize
         self.initial_size = size
+    
+    @abstractmethod
+    def get_record_class(self):
+        """Return the BaseRecord subclass to use for this recorder's data."""
+        raise NotImplementedError
+    
+    def get_dtype(self) -> np.dtype:
+        """Return the numpy dtype for this recorder's records."""
+        return self.get_record_class().get_dtype()
+    
+    def _resize_buffer(self):
+        """Dynamically resize the buffer when it's full."""
+        old_size = len(self.records)
+        new_size = old_size * 2  # Double the size
+        
+        # Create new larger buffer
+        new_records = np.zeros((new_size, self.records.shape[1]), self.get_dtype())
+        
+        # Copy existing data
+        new_records[:old_size] = self.records
+        
+        # Replace the old buffer
+        self.records = new_records
+    
+    def get_buffer_usage(self) -> dict[int, float]:
+        """Get buffer usage statistics for each asset.
+        
+        Returns
+        -------
+        dict[int, float]
+            Dictionary mapping listing_id to usage percentage (0.0 to 1.0).
+        """
+        usage = {}
+        for listing_id, asset_no in self.listing_id_to_asset_no.items():
+            usage[listing_id] = self.at_i[asset_no] / len(self.records)
+        return usage
+    
+    def clear(self):
+        """Clear all recorded data and reset counters."""
+        self.records.fill(0)
+        self.at_i.fill(0)
+    
+    def get_record(self, listing_id: int):
+        """Return non-empty rows for a given `listing_id` as a Record object."""
+        if listing_id not in self.listing_id_to_asset_no:
+            raise KeyError(f"Listing ID {listing_id} not found in recorder")
 
+        asset_no = self.listing_id_to_asset_no[listing_id]
+        count = self.at_i[asset_no]
+        
+        if count == 0:
+            # Return empty array wrapped in record class
+            empty_arr = np.array([], dtype=self.get_dtype())
+            return self.get_record_class()(empty_arr)
+        
+        return self.get_record_class()(self.records[:count, asset_no].copy())
+    
+    def get_all_records(self):
+        """Get records for all assets efficiently.
+        
+        Returns
+        -------
+        dict[int, Record]
+            Dictionary mapping listing_id to Record objects.
+        """
+        records = {}
+        for listing_id in self.listing_id_to_asset_no.keys():
+            records[listing_id] = self.get_record(listing_id)
+        return records
+
+
+class MarketRecorder(BaseRecorder):
+    """Recorder for market and execution events."""
+    
+    def __init__(self, listing_ids: list[int], schema_type: SchemaType, size: int = 100_000, auto_resize: bool = True):
+        super().__init__(listing_ids, size, auto_resize)
+        self.schema_type = schema_type
+    
+    def get_record_class(self):
+        from gnomepy.backtest.stats.stats import MarketRecord
+        return MarketRecord
+    
     def log(
         self,
         event: RecordType,
@@ -63,6 +133,7 @@ class Recorder:
         price: float = None,
         quantity: float = None,
         fee: float = None,
+        fill_price: float = None,
     ):
         """Append an arbitrary event to the record buffer.
 
@@ -80,6 +151,8 @@ class Recorder:
             Position quantity after the event or event quantity.
         fee : float, optional
             Fee associated with the event.
+        fill_price : float, optional
+            Fill price at execution time.
 
         Raises
         ------
@@ -99,9 +172,6 @@ class Recorder:
         
         if price is not None and price < 0:
             raise ValueError(f"Price must be non-negative, got {price}")
-        
-        if fee is not None and fee < 0:
-            raise ValueError(f"Fee must be non-negative, got {fee}")
 
         asset_no = self.listing_id_to_asset_no[listing_id]
         i = self.at_i[asset_no]
@@ -114,9 +184,10 @@ class Recorder:
 
         self.records[i, asset_no]['event'] = event.value
         self.records[i, asset_no]['timestamp'] = timestamp
-        self.records[i, asset_no]['price'] = price
-        self.records[i, asset_no]['quantity'] = quantity
-        self.records[i, asset_no]['fee'] = fee
+        self.records[i, asset_no]['price'] = price if price is not None else 0.0
+        self.records[i, asset_no]['quantity'] = quantity if quantity is not None else 0.0
+        self.records[i, asset_no]['fee'] = fee if fee is not None else 0.0
+        self.records[i, asset_no]['fill_price'] = fill_price if fill_price is not None else 0.0
 
         self.at_i[asset_no] += 1
 
@@ -176,7 +247,7 @@ class Recorder:
 
         self.records[i, asset_no]['event'] = RecordType.MARKET.value
         self.records[i, asset_no]['timestamp'] = timestamp
-        self.records[i, asset_no]['price'] = price
+        self.records[i, asset_no]['price'] = price if price is not None else 0.0
         self.records[i, asset_no]['quantity'] = quantity
         self.records[i, asset_no]['fee'] = 0
 
@@ -230,71 +301,127 @@ class Recorder:
         else:
             raise ValueError(f"Unsupported schema type: {type(market_update)}")
 
-    def _resize_buffer(self):
-        """Dynamically resize the buffer when it's full."""
-        old_size = len(self.records)
-        new_size = old_size * 2  # Double the size
-        
-        # Create new larger buffer
-        new_records = np.zeros((new_size, self.records.shape[1]), record_dtype)
-        
-        # Copy existing data
-        new_records[:old_size] = self.records
-        
-        # Replace the old buffer
-        self.records = new_records
 
-    def get_buffer_usage(self) -> dict[int, float]:
-        """Get buffer usage statistics for each asset.
-        
-        Returns
-        -------
-        dict[int, float]
-            Dictionary mapping listing_id to usage percentage (0.0 to 1.0).
+class IntentRecorder(BaseRecorder):
+    """Recorder for trading intent events."""
+    
+    def get_record_class(self):
+        from gnomepy.backtest.stats.stats import IntentRecord
+        return IntentRecord
+    
+    def log(
+        self,
+        listing_id: int,
+        timestamp: int,
+        side: str,
+        confidence: float,
+        price: float = None,
+        flatten: bool = False
+    ):
+        """Append an intent record to the buffer.
+
+        Parameters
+        ----------
+        listing_id : int
+            Asset listing identifier.
+        timestamp : int
+            Event timestamp (ns or ms consistent with data source).
+        side : str
+            Order side ('B' for buy, 'S' or 'A' for sell/ask).
+        confidence : float
+            Confidence level (0.0 to 1.0).
+        price : float, optional
+            Limit order price, if applicable.
+        flatten : bool, default False
+            Whether this intent is to flatten the position.
+
+        Raises
+        ------
+        KeyError
+            If listing_id is not found in the recorder.
+        IndexError
+            If the per-asset buffer is full and auto_resize is disabled.
+        ValueError
+            If inputs are invalid.
         """
-        usage = {}
-        for listing_id, asset_no in self.listing_id_to_asset_no.items():
-            usage[listing_id] = self.at_i[asset_no] / len(self.records)
-        return usage
-
-    def clear(self):
-        """Clear all recorded data and reset counters."""
-        self.records.fill(0)
-        self.at_i.fill(0)
-
-    def get_record(self, listing_id: int):
-        """Return non-empty rows for a given `listing_id` as a structured array."""
+        # Input validation
         if listing_id not in self.listing_id_to_asset_no:
-            raise KeyError(f"Listing ID {listing_id} not found in recorder")
-
-        # Import here to avoid circular imports
-        from gnomepy.backtest.stats.stats import Record
-
-        asset_no = self.listing_id_to_asset_no[listing_id]
-        used_count = self.at_i[asset_no]
-
-        if used_count == 0:
-            data = np.array([], dtype=record_dtype)
-        else:
-            data = self.records[:used_count, asset_no]
-
-        return Record(arr=data)
-
-    def get_all_records(self):
-        """Get records for all assets efficiently.
+            raise KeyError(f"Listing ID {listing_id} not found in recorder. Available: {list(self.listing_id_to_asset_no.keys())}")
         
-        Returns
-        -------
-        dict[int, Record]
-            Dictionary mapping listing_id to Record objects.
-        """
-        records = {}
-        for listing_id in self.listing_id_to_asset_no.keys():
-            records[listing_id] = self.get_record(listing_id)
-        return records
+        if timestamp < 0:
+            raise ValueError(f"Timestamp must be non-negative, got {timestamp}")
+        
+        if price is not None and price < 0:
+            raise ValueError(f"Price must be non-negative, got {price}")
+        
+        if confidence < 0 or confidence > 1:
+            raise ValueError(f"Confidence must be between 0 and 1, got {confidence}")
+        
+        if side not in ['B', 'S', 'A']:
+            raise ValueError(f"Side must be 'B', 'S', or 'A', got {side}")
+        
+        asset_no = self.listing_id_to_asset_no[listing_id]
+        i = self.at_i[asset_no]
+        
+        if i >= len(self.records):
+            if self.auto_resize:
+                self._resize_buffer()
+            else:
+                raise IndexError(f"Intent buffer full for asset {listing_id}. Consider increasing size or enabling auto_resize.")
+        
+        self.records[i, asset_no]['timestamp'] = timestamp
+        self.records[i, asset_no]['side'] = side
+        self.records[i, asset_no]['confidence'] = confidence
+        self.records[i, asset_no]['price'] = price if price is not None else 0.0
+        self.records[i, asset_no]['flatten'] = 1 if flatten else 0
+        
+        self.at_i[asset_no] += 1
 
-    def get_record_count(self, listing_id: int) -> int:
-        """Get the number of records for a specific asset.
+
+class Recorder:
+    """Composite recorder that combines MarketRecorder, IntentRecorder, and ModelValueRecorder.
+    
+    This class provides backward compatibility by delegating to the individual recorders
+    while maintaining the same interface as the original Recorder class.
+    
+    Parameters
+    ----------
+    listing_ids : list[int]
+        Unique listing identifiers for tracked assets.
+    schema_type : SchemaType
+        The schema type being used for market data logging.
+    size : int, default 100_000
+        Maximum number of events to record per asset.
+    auto_resize : bool, default True
+        Whether to automatically resize the buffer when it's full.
+    """
+    
+    def __init__(self, listing_ids: list[int], schema_type: SchemaType, size: int = 100_000, auto_resize: bool = True):
+        self.market_recorder = MarketRecorder(listing_ids, schema_type, size, auto_resize)
+        self.intent_recorder = IntentRecorder(listing_ids, size, auto_resize)
+        
+        # Expose common attributes for backward compatibility
+        self.listing_id_to_asset_no = self.market_recorder.listing_id_to_asset_no
+        self.schema_type = schema_type
+        self.auto_resize = auto_resize
+        self.initial_size = size
+    
+    # Delegate market recorder methods
+    def log(self, *args, **kwargs):
+        return self.market_recorder.log(*args, **kwargs)
+    
+    def log_market_event(self, *args, **kwargs):
+        return self.market_recorder.log_market_event(*args, **kwargs)
+    
+    def get_record(self, listing_id: int):
+        return self.market_recorder.get_record(listing_id)
+    
+    # Delegate intent recorder methods
+    def log_intent(self, *args, **kwargs):
+        return self.intent_recorder.log_intent(*args, **kwargs)
+    
+    def get_intent_record(self, listing_id: int):
+        """Get intent records for a specific listing as an IntentRecord object.
         
         Parameters
         ----------
@@ -303,33 +430,74 @@ class Recorder:
             
         Returns
         -------
-        int
-            Number of records for the asset.
+        IntentRecord
+            IntentRecord object for the listing.
         """
+        return self.intent_recorder.get_record(listing_id)
+    
+    # Buffer usage methods
+    def get_buffer_usage(self) -> dict[int, float]:
+        """Get market buffer usage statistics for each asset."""
+        return self.market_recorder.get_buffer_usage()
+    
+    def get_intent_buffer_usage(self) -> dict[int, float]:
+        """Get intent buffer usage statistics for each asset."""
+        return self.intent_recorder.get_buffer_usage()
+    
+    def clear(self):
+        """Clear all recorded data and reset counters."""
+        self.market_recorder.clear()
+        self.intent_recorder.clear()
+    
+    def get_total_record_count(self) -> int:
+        """Get total number of records across all assets and record types."""
+        market_count = sum(self.market_recorder.at_i)
+        intent_count = sum(self.intent_recorder.at_i)
+        return market_count + intent_count
+    
+    def get_summary(self) -> dict[str, Any]:
+        """Get summary statistics for all recorders."""
+        summary = {
+            'total_records': self.get_total_record_count(),
+            'market_buffer_usage': self.get_buffer_usage(),
+            'intent_buffer_usage': self.get_intent_buffer_usage(),
+            'schema_type': self.schema_type.value,
+            'assets': {}
+        }
+        
+        for listing_id in self.listing_id_to_asset_no.keys():
+            market_record = self.market_recorder.get_record(listing_id)
+            intent_record = self.get_intent_record(listing_id)
+            
+            asset_stats = {}
+            if len(market_record.arr) > 0:
+                asset_stats['market_record_count'] = len(market_record.arr)
+                asset_stats['market_timestamp_range'] = (int(np.min(market_record.arr['timestamp'])), int(np.max(market_record.arr['timestamp'])))
+                asset_stats['market_price_range'] = (float(np.min(market_record.arr['price'])), float(np.max(market_record.arr['price'])))
+            
+            if len(intent_record.arr) > 0:
+                asset_stats['intent_record_count'] = len(intent_record.arr)
+                asset_stats['intent_timestamp_range'] = (int(np.min(intent_record.arr['timestamp'])), int(np.max(intent_record.arr['timestamp'])))
+            
+            if asset_stats:
+                summary['assets'][listing_id] = asset_stats
+        
+        return summary
+    
+    # Additional methods for backward compatibility
+    def get_all_records(self):
+        """Get records for all assets efficiently."""
+        return self.market_recorder.get_all_records()
+    
+    def get_record_count(self, listing_id: int) -> int:
+        """Get the number of market records for a specific asset."""
         if listing_id not in self.listing_id_to_asset_no:
             raise KeyError(f"Listing ID {listing_id} not found in recorder")
-        
         asset_no = self.listing_id_to_asset_no[listing_id]
-        return int(self.at_i[asset_no])
-
-    def get_total_record_count(self) -> int:
-        """Get total number of records across all assets.
-        
-        Returns
-        -------
-        int
-            Total number of records.
-        """
-        return int(np.sum(self.at_i))
-
+        return int(self.market_recorder.at_i[asset_no])
+    
     def validate_data_integrity(self) -> dict[str, Any]:
-        """Validate data integrity and consistency across all records.
-        
-        Returns
-        -------
-        dict[str, Any]
-            Dictionary containing validation results and any issues found.
-        """
+        """Validate data integrity and consistency across all records."""
         issues = []
         stats = {
             'total_records': self.get_total_record_count(),
@@ -340,7 +508,7 @@ class Recorder:
         
         # Check for timestamp ordering issues
         for listing_id in self.listing_id_to_asset_no.keys():
-            record = self.get_record(listing_id)
+            record = self.market_recorder.get_record(listing_id)
             if len(record.arr) > 1:
                 timestamps = record.arr['timestamp']
                 if not np.all(timestamps[:-1] <= timestamps[1:]):
@@ -348,127 +516,59 @@ class Recorder:
         
         # Check for negative prices
         for listing_id in self.listing_id_to_asset_no.keys():
-            record = self.get_record(listing_id)
+            record = self.market_recorder.get_record(listing_id)
             if len(record.arr) > 0:
                 prices = record.arr['price']
                 negative_prices = np.sum(prices < 0)
                 if negative_prices > 0:
                     issues.append(f"Found {negative_prices} negative prices for asset {listing_id}")
         
-        # Check for negative fees
-        for listing_id in self.listing_id_to_asset_no.keys():
-            record = self.get_record(listing_id)
-            if len(record.arr) > 0:
-                fees = record.arr['fee']
-                negative_fees = np.sum(fees < 0)
-                if negative_fees > 0:
-                    issues.append(f"Found {negative_fees} negative fees for asset {listing_id}")
-        
         stats['is_valid'] = len(issues) == 0
         return stats
-
+    
     def get_summary_stats(self) -> dict[str, Any]:
-        """Get statistics for all recorded data.
-        
-        Returns
-        -------
-        dict[str, Any]
-            Dictionary containing summary statistics.
-        """
-        summary = {
-            'total_records': self.get_total_record_count(),
-            'buffer_usage': self.get_buffer_usage(),
-            'schema_type': self.schema_type.value,
-            'assets': {}
-        }
-        
-        for listing_id in self.listing_id_to_asset_no.keys():
-            record = self.get_record(listing_id)
-            if len(record.arr) > 0:
-                asset_stats = {
-                    'record_count': len(record.arr),
-                    'timestamp_range': (int(np.min(record.arr['timestamp'])), int(np.max(record.arr['timestamp']))),
-                    'price_range': (float(np.min(record.arr['price'])), float(np.max(record.arr['price']))),
-                }
-                summary['assets'][listing_id] = asset_stats
-        
-        return summary
-
+        """Get statistics for all recorded data (alias for get_summary for backward compatibility)."""
+        return self.get_summary()
+    
     def __len__(self) -> int:
         """Return total number of records across all assets."""
         return self.get_total_record_count()
-
+    
     def __contains__(self, listing_id: int) -> bool:
         """Check if a listing_id is tracked by this recorder."""
         return listing_id in self.listing_id_to_asset_no
-
-    def __repr__(self) -> str:
-        """String representation of the recorder."""
-        return (f"Recorder(schema_type={self.schema_type.value}, "
-                f"assets={len(self.listing_id_to_asset_no)}, "
-                f"total_records={self.get_total_record_count()}, "
-                f"buffer_size={len(self.records)})")
-
+    
     def keys(self):
         """Return listing IDs tracked by this recorder."""
         return self.listing_id_to_asset_no.keys()
-
+    
     def values(self):
         """Return Record objects for all assets."""
         return self.get_all_records().values()
-
+    
     def items(self):
         """Return (listing_id, Record) pairs for all assets."""
         return self.get_all_records().items()
-
+    
     def to_npz(self, file: str):
-        """Persist all per-asset records to a compressed `.npz` file.
-
-        Parameters
-        ----------
-        file : str
-            Destination file path.
-        """
-        # Only save non-empty records for each asset
+        """Persist all per-asset records to a compressed `.npz` file."""
         kwargs = {}
-        for asset_no in range(self.records.shape[1]):
-            # Get the actual listing_id for this asset
+        for asset_no in range(self.market_recorder.records.shape[1]):
             listing_id = next(k for k, v in self.listing_id_to_asset_no.items() if v == asset_no)
-            # Only save records that have been written to (non-zero timestamps)
-            valid_records = self.records[:self.at_i[asset_no], asset_no]
+            valid_records = self.market_recorder.records[:self.market_recorder.at_i[asset_no], asset_no]
             if len(valid_records) > 0:
                 kwargs[f"asset_{listing_id}"] = valid_records
-
+        
         if kwargs:
             np.savez_compressed(file, **kwargs)
         else:
-            # Create empty file if no records
             np.savez_compressed(file, empty=np.array([]))
-
+    
     @classmethod
     def from_npz(cls, file: str, schema_type: SchemaType) -> 'Recorder':
-        """Load a recorder from a saved .npz file.
-        
-        Parameters
-        ----------
-        file : str
-            Path to the .npz file.
-        schema_type : SchemaType
-            The schema type used for the original recording.
-            
-        Returns
-        -------
-        Recorder
-            A new Recorder instance loaded from the file.
-            
-        Note
-        ----
-        This is a simplified implementation. In practice, you might want to
-        store metadata about the original recorder configuration.
-        """
+        """Load a recorder from a saved .npz file."""
         data = np.load(file)
         
-        # Extract listing IDs from the saved data
         listing_ids = []
         for key in data.keys():
             if key.startswith('asset_'):
@@ -478,20 +578,21 @@ class Recorder:
         if not listing_ids:
             raise ValueError("No asset data found in the file")
         
-        # Create new recorder
-        recorder = cls(listing_ids, schema_type)  # Default size
+        recorder = cls(listing_ids, schema_type)
         
-        # Load the data
         for listing_id in listing_ids:
             asset_data = data[f'asset_{listing_id}']
             if len(asset_data) > 0:
                 asset_no = recorder.listing_id_to_asset_no[listing_id]
-                # Ensure we have enough space
-                while len(recorder.records) < len(asset_data):
-                    recorder._resize_buffer()
+                while len(recorder.market_recorder.records) < len(asset_data):
+                    recorder.market_recorder._resize_buffer()
                 
-                # Copy the data
-                recorder.records[:len(asset_data), asset_no] = asset_data
-                recorder.at_i[asset_no] = len(asset_data)
+                recorder.market_recorder.records[:len(asset_data), asset_no] = asset_data
+                recorder.market_recorder.at_i[asset_no] = len(asset_data)
         
         return recorder
+    
+    def __repr__(self):
+        return (f"Recorder(schema_type={self.schema_type.value}, "
+                f"assets={len(self.listing_id_to_asset_no)}, "
+                f"total_records={self.get_total_record_count()})")

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from typing import Any, Optional, Union, Literal
 from dataclasses import dataclass
-
+from abc import ABC, abstractmethod
+import numpy as np
 import pandas as pd
+
 from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
 from gnomepy.backtest.stats.metric import Metric, DEFAULT_METRICS
 from gnomepy.backtest.stats.utils import resample, partition, compute_metrics, IntervalType
+from gnomepy.backtest.recorder import RecordType
 
 
 PlotValueType = Literal['nmv', 'quantity', 'pnl', 'fee']
@@ -23,7 +26,7 @@ class PlotConfig:
     save_path: Optional[str] = None
 
 
-class Record:
+class BaseRecord(ABC):
     """Pandas-oriented wrapper around a structured event array.
 
     Provides convenience methods to prepare data, compute metrics, and produce
@@ -36,30 +39,19 @@ class Record:
         self.prepare()
 
     def prepare(self):
-        """Normalize and enrich the underlying DataFrame."""
+        """Prepare the record for analysis."""
         self.df = self._prepare_dataframe(self.df)
-    
+
+    @abstractmethod
     def _prepare_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Prepare DataFrame without mutating the original."""
-        df = df.copy()
-        
-        if 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            df = df.set_index('timestamp')
+        """Prepare the DataFrame for analysis."""
+        raise NotImplementedError
 
-        df['quantity'] = df['quantity'].ffill().fillna(0.0)
-        df['fee'] = df['fee'].fillna(0.0)
-        df['price'] = df['price'].ffill().bfill()
-
-        # TODO: some logs have the same event timestamp... how to fix properly?
-        df = df.groupby(level=0).agg(
-            {"event": "mean", "price": "mean", "quantity": "mean", "fee": "sum"}
-        )
-        df['nmv'] = df['quantity'] * df['price']
-        df['pnl_wo_fee'] = df['nmv'].shift() * df['price'].pct_change()
-        df['pnl'] = df['pnl_wo_fee'] - df['fee']
-
-        return df
+    @classmethod
+    @abstractmethod
+    def get_dtype(cls) -> np.dtype:
+        """Return the numpy dtype for this recorder's records."""
+        raise NotImplementedError
 
     def stats(
             self,
@@ -104,6 +96,94 @@ class Record:
 
         return Stats(df, stats, **kwargs)
 
+
+class IntentRecord(BaseRecord):
+    """Pandas-oriented wrapper around a structured intent array.
+    
+    Similar to Record, but specifically for trading intent events
+    (side, confidence, price, flatten) tracked when intents are generated.
+    
+    Provides convenience methods to prepare data and analyze intent behavior.
+    """
+
+    @classmethod
+    def get_dtype(cls) -> np.dtype:
+        return np.dtype(
+            [
+                ('timestamp', 'i8'),
+                ('side', 'U1'),  # 'B' or 'S'/'A'
+                ('confidence', 'f8'),
+                ('price', 'f8'),
+                ('flatten', 'i8'),  # 0 or 1
+            ],
+            align=True
+        )
+    
+    def _prepare_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Prepare DataFrame without mutating the original."""
+        df = df.copy()
+        
+        if 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df = df.set_index('timestamp')
+        
+        # Forward fill prices and confidence for continuity
+        df['price'] = df['price'].ffill().bfill()
+        df['confidence'] = df['confidence'].ffill().bfill()
+        df['flatten'] = df['flatten'].fillna(0).astype(bool)
+        
+        # Calculate derived metrics
+        df['is_buy'] = df['side'] == 'B'
+        df['is_sell'] = df['side'].isin(['S', 'A'])
+        
+        return df
+
+
+class MarketRecord(BaseRecord):
+    """Pandas-oriented wrapper around a structured market array.
+    
+    Similar to Record, but specifically for market events
+    (price, quantity, fee) tracked when market data is received.
+    """
+    
+    @classmethod
+    def get_dtype(cls) -> np.dtype:
+        return np.dtype(
+            [
+                ('event', 'i8'),
+                ('timestamp', 'i8'),
+                ('price', 'f8'),
+                ('fill_price', 'f8'),
+                ('quantity', 'f8'),
+                ('fee', 'f8'),
+            ],
+            align=True
+        )
+
+    def _prepare_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Prepare DataFrame without mutating the original."""
+        df = df.copy()
+        
+        if 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            df = df.set_index('timestamp')
+
+        df['fill_price'] = np.where(df['event'] == RecordType.EXECUTION, df['fill_price'], df['price'])
+
+        df['price'] = df['price'].ffill().bfill()
+        df['quantity'] = df['quantity'].ffill().bfill()
+        df['fee'] = df['fee'].ffill().bfill()
+
+        # TODO: some logs have the same event timestamp... how to fix properly?
+        df = df.groupby(level=0).agg(
+            {"event": "mean", "price": "mean", "fill_price": "mean", "quantity": "mean", "fee": "sum"}
+        )
+        df['nmv'] = df['quantity'] * df['price']
+        df['pnl_wo_fee'] = df['nmv'].shift() * df['price'].pct_change()
+        df['spread_pnl'] = (df['quantity'] - df['quantity'].shift()) * (df['fill_price'] - df['price'])
+        df['pnl'] = df['pnl_wo_fee'] + df['spread_pnl'].fillna(0) - df['fee']
+        
+        return df
 
 class Stats:
     """Container for computed statistics and source data with convenience views."""

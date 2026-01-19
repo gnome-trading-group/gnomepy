@@ -9,6 +9,7 @@ class Intent:
     side: str  # "buy" or "sell"
     confidence: float
     flatten: bool = False
+    price: float | None = None  # Optional price for limit orders
 
 @dataclass
 class BasketIntent:

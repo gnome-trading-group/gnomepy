@@ -7,6 +7,7 @@ from gnomepy.backtest.queues.base import QueueModel
 from gnomepy.data.types import SchemaType, Order, OrderExecutionReport, OrderType, \
     TimeInForce, OrderStatus, ExecType, SchemaBase, MBP10, MBP1
 import time
+import numpy as np
 
 
 def _create_execution_report(
@@ -17,7 +18,8 @@ def _create_execution_report(
     filled_price: int = 0,
     cumulative_qty: int = 0,
     leaves_qty: int = 0,
-    fee: float = 0.0
+    fee: float = 0.0,
+    mid_price: int = 0
 ) -> OrderExecutionReport:
     return OrderExecutionReport(
         client_oid=client_oid,
@@ -32,6 +34,7 @@ def _create_execution_report(
         timestamp_event=-1,
         timestamp_recv=-1,
         fee=fee,
+        mid_price=mid_price,
     )
 
 class MBPSimulatedExchange(SimulatedExchange):
@@ -68,7 +71,11 @@ class MBPSimulatedExchange(SimulatedExchange):
     def _map_execution_report(self, local_order: LocalOrder, filled_qty: int) -> OrderExecutionReport:
         total_price = filled_qty * local_order.order.price
         total_fee = self.fee_model.calculate_fee(total_price, is_maker=True)
-        filled_price = total_price // filled_qty
+        filled_price = total_price / filled_qty if filled_qty > 0 else np.nan
+        
+        # Calculate mid price at time of execution
+        mid_price = self.order_book.get_mid_price()
+        mid_price = float(mid_price) if mid_price is not None else 0
 
         return _create_execution_report(
             client_oid=local_order.order.client_oid,
@@ -79,6 +86,7 @@ class MBPSimulatedExchange(SimulatedExchange):
             filled_price=filled_price,
             leaves_qty=local_order.remaining,
             fee=total_fee,
+            mid_price=mid_price,
         )
 
     def submit_order(self, order: Order) -> list[OrderExecutionReport]:
@@ -121,14 +129,19 @@ class MBPSimulatedExchange(SimulatedExchange):
         else:
             raise ValueError("Not enough liquidity")
         
+        # Calculate mid price at time of execution
+        mid_price = self.order_book.get_mid_price()
+        mid_price = float(mid_price) if mid_price is not None else 0
+        
         return [
             _create_execution_report(
                 order.client_oid, exec_type, order_status,
                 filled_qty=total_filled,
                 cumulative_qty=total_filled,
-                filled_price=total_price // total_filled,
+                filled_price=total_price / total_filled,
                 leaves_qty=order.size - total_filled,
                 fee=total_fee,
+                mid_price=mid_price,
             )
         ]
 
@@ -149,8 +162,13 @@ class MBPSimulatedExchange(SimulatedExchange):
                 total_filled += match.size
                 total_price += match.price * match.size
 
-            total_fee = self.fee_model.calculate_fee(total_price, False)
-            # total_price += total_fee if order.side == 'B' else -total_fee
+            # TODO: Make this based on distance from best bid/ask
+            total_fee = self.fee_model.calculate_fee(total_price, is_maker=True)
+            filled_price = total_price / total_filled if total_filled > 0 else np.nan
+            
+            # Calculate mid price at time of execution
+            mid_price = self.order_book.get_mid_price()
+            mid_price = int(mid_price) if mid_price is not None else 0
 
             if total_filled == order.size:
                 return [
@@ -158,9 +176,10 @@ class MBPSimulatedExchange(SimulatedExchange):
                         order.client_oid, ExecType.TRADE, OrderStatus.FILLED,
                         filled_qty=total_filled,
                         cumulative_qty=total_filled,
-                        filled_price=total_price // total_filled,
+                        filled_price=filled_price,
                         leaves_qty=0,
                         fee=total_fee,
+                        mid_price=mid_price,
                     )
                 ]
             else:
@@ -168,9 +187,10 @@ class MBPSimulatedExchange(SimulatedExchange):
                     order.client_oid, ExecType.TRADE, OrderStatus.PARTIALLY_FILLED,
                     filled_qty=total_filled,
                     cumulative_qty=total_filled,
-                    filled_price=total_price // total_filled,
+                    filled_price=filled_price,
                     leaves_qty=order.size - total_filled,
                     fee=total_fee,
+                    mid_price=mid_price,
                 )
                 if order.time_in_force == TimeInForce.FOK:
                     return [
@@ -214,6 +234,7 @@ class MBPSimulatedExchange(SimulatedExchange):
                 ]
 
     def cancel_order(self, client_oid: str) -> list[OrderExecutionReport]:
+        client_oid = client_oid.client_oid
         if self.order_book.cancel_order(client_oid):
             return [_create_execution_report(client_oid, ExecType.CANCELED, OrderStatus.CANCELED)]
         return [_create_execution_report(client_oid, ExecType.REJECTED, OrderStatus.REJECTED)]

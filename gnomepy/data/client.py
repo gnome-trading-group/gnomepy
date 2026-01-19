@@ -7,7 +7,7 @@ import pandas as pd
 from gnomepy.data.common import DataStore
 from gnomepy.data.types import SchemaType
 
-_KEY_REGEX = re.compile("^\\d+/\\d+/(\\d{10})/([^/]+)\\.zst$")
+_KEY_REGEX = re.compile(r'^.*/(\d{4}/\d{1,2}/\d{1,2}/\d{1,2})/\d{1,2}/([^/]+)\.zst$')
 
 class MarketDataClient:
     def __init__(
@@ -78,7 +78,7 @@ class MarketDataClient:
                 if parsed is not None:
                     date_hour = parsed.group(1)
                     schema = parsed.group(2)
-                    parsed_dt = datetime.datetime.strptime(f"{date_hour}", "%Y%m%d%H")
+                    parsed_dt = datetime.datetime.strptime(f"{date_hour}", "%Y/%m/%d/%H")
                     if schema == schema_type and start_datetime <= parsed_dt <= end_datetime:
                         keys.append(key)
 
