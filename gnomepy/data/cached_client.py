@@ -51,7 +51,7 @@ class CachedMarketDataClient(MarketDataClient):
         end_datetime: datetime.datetime | pd.Timestamp,
         schema_type: SchemaType,
     ) -> bytes:
-        keys = self._get_available_keys(exchange_id, security_id, start_datetime, end_datetime, schema_type)
+        keys = self._get_keys(exchange_id, security_id, start_datetime, end_datetime, schema_type)
 
         total = b''
         for key in keys:
