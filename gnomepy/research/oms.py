@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 class SimpleOMS:
 
     def __init__(self, signals: list[Signal], notional: float, starting_cash: float = 1000000.0):
+        # notional: user supplies in dollars, used as-is for order sizing calculations
         self.signals = signals
         self.notional = notional
         self.cash = starting_cash
@@ -35,9 +36,14 @@ class SimpleOMS:
         self.positions: dict[int, float] = {listing.listing_id: 0.0 for listing in all_listings}
         # Add order log to keep history of all submitted orders
         self.order_log: dict[str, Order] = {}
-        
+        self._order_counter: int = 0
+
         # Track elapsed ticks for each listing to control data appending frequency
         self.elapsed_ticks: dict[int, int] = {listing.listing_id: 0 for listing in all_listings}
+
+    def _next_client_oid(self) -> str:
+        self._order_counter += 1
+        return f"oms_{self._order_counter}"
 
     def on_execution_report(self, timestamp: int, execution_report: OrderExecutionReport, recorder: MarketRecorder):
         client_oid = execution_report.client_oid
@@ -58,10 +64,22 @@ class SimpleOMS:
         if listing_id is None:
             return  # Unknown listing, skip
 
-        if execution_report.exec_type in [ExecType.TRADE]:
+        if execution_report.exec_type == ExecType.REJECTED:
+            signals_for_listing = [signal for signal in self.signals
+                                 if any(listing.listing_id == listing_id for listing in signal.listings)]
+            for signal in signals_for_listing:
+                if hasattr(signal, '_entry_pending'):
+                    signal._entry_pending = False
+                if hasattr(signal, '_exit_pending'):
+                    signal._exit_pending = False
+            return
+
+        if execution_report.exec_type in [ExecType.TRADE] and execution_report.filled_qty > 0:
             # Use order.side to determine position change direction
-            filled_qty = execution_report.filled_qty
+            filled_qty = execution_report.filled_qty / FIXED_SIZE_SCALE
+            mid_price = execution_report.mid_price / FIXED_PRICE_SCALE  # Scale the price
             filled_price = execution_report.filled_price / FIXED_PRICE_SCALE  # Scale the price
+            fee = execution_report.fee / (FIXED_PRICE_SCALE * FIXED_SIZE_SCALE)
             position_change = filled_qty if order.side == "B" else -filled_qty
 
             # Update cash based on the trade
@@ -70,11 +88,11 @@ class SimpleOMS:
             if order.side == "B":
                 # Buying - cash decreases
                 self.cash -= trade_value
-                print(f"Cash update - BUY: {previous_cash:.2f} -> {self.cash:.2f} (trade value: {trade_value:.2f})")
+                # print(f"Cash update - BUY: {previous_cash:.2f} -> {self.cash:.2f} (trade value: {trade_value:.2f})")
             else:
                 # Selling - cash increases
                 self.cash += trade_value
-                print(f"Cash update - SELL: {previous_cash:.2f} -> {self.cash:.2f} (trade value: {trade_value:.2f})")
+                # print(f"Cash update - SELL: {previous_cash:.2f} -> {self.cash:.2f} (trade value: {trade_value:.2f})")
 
             # Update overall positions
             if listing_id in self.positions:
@@ -93,14 +111,14 @@ class SimpleOMS:
                 event=RecordType.EXECUTION,
                 listing_id=listing_id,
                 timestamp=timestamp,
-                price=execution_report.mid_price / FIXED_PRICE_SCALE if execution_report.mid_price > 0 else None,
+                price=mid_price if mid_price > 0 else filled_price,
                 fill_price=filled_price,
                 quantity=self.positions[listing_id],
-                fee=execution_report.fee / FIXED_PRICE_SCALE,
+                fee=fee,
             )
 
         return
-    
+
     def on_market_update(self, timestamp: int, market_update: SchemaBase, market_recorder: MarketRecorder):
         start_time = time.perf_counter()
         
@@ -253,16 +271,27 @@ class SimpleOMS:
                     if order is not None:
                         # Assign a client_oid if not already set
                         if order.client_oid is None:
-                            order.client_oid = f"oms_{int(time.time() * 1e9)}"
+                            order.client_oid = self._next_client_oid()
                         self.order_log[order.client_oid] = order
                         orders.append(order)
             else:
                 order = self._create_order_from_intent(intent, intent.confidence)
                 if order is not None:
                     if order.client_oid is None:
-                        order.client_oid = f"oms_{int(time.time() * 1e9)}"
+                        order.client_oid = self._next_client_oid()
                     self.order_log[order.client_oid] = order
                     orders.append(order)
+                else:
+                    # Order creation failed (bad midprice, no position to flatten, etc.)
+                    # Clear pending flags so the signal isn't stuck
+                    listing_id = intent.listing.listing_id
+                    signals_for_listing = [s for s in self.signals
+                                         if any(l.listing_id == listing_id for l in s.listings)]
+                    for s in signals_for_listing:
+                        if hasattr(s, '_entry_pending'):
+                            s._entry_pending = False
+                        if hasattr(s, '_exit_pending'):
+                            s._exit_pending = False
         convert_orders_time = time.perf_counter() - convert_orders_start
         # print(f"Convert intents to orders: {convert_orders_time:.6f}s")
         
@@ -281,10 +310,13 @@ class SimpleOMS:
         latest_ask = ask_prices[-1]
         midprice = (latest_bid + latest_ask) / 2
 
+        if midprice <= 0:
+            return None
+
         if getattr(intent, "flatten", False):
             # Generate order to flatten position
             current_position = self.positions[listing_id]
-            
+
             # Determine side and size based on current position
             if current_position > 0:
                 # We have a long position, need to sell to flatten
@@ -306,12 +338,12 @@ class SimpleOMS:
             security_id=intent.listing.security_id,
             client_oid=None,
             price=None,  # There is no price for Market Orders
-            size=order_size,
+            size=order_size * FIXED_SIZE_SCALE,
             side=side,
             order_type=OrderType.MARKET,
             time_in_force=TimeInForce.GTC
         )
-        
+
         return order
 
 
@@ -339,11 +371,13 @@ class LimitOrderOMS:
         signals : list[Signal]
             List of trading signals
         notional : float
-            Base notional value for order sizing
+            Base notional value for order sizing (in dollars).
+            User supplies in dollars, used directly in calculations with midprice (also in dollars).
         starting_cash : float, default 1000000.0
             Starting cash balance
         max_position_notional : float, optional
-            Maximum position notional value (absolute). If None, no limit.
+            Maximum position notional value in dollars (absolute). If None, no limit.
+            Stored in dollars to match current_position_notional calculation.
         position_aware_sizing : bool, default True
             If True, reduce order size as position grows
         position_scaling_factor : float, default 0.5
@@ -351,9 +385,11 @@ class LimitOrderOMS:
             Lower values = more aggressive position reduction
         """
         self.signals = signals
+        # notional: user supplies in dollars, used as-is for order sizing calculations
+        # max_position_notional: user supplies in dollars, stored in dollars (not scaled)
         self.notional = notional
         self.cash = starting_cash
-        self.max_position_notional = max_position_notional
+        self.max_position_notional = max_position_notional  # Keep in dollars to match current_position_notional calculation
         self.position_aware_sizing = position_aware_sizing
         self.position_scaling_factor = position_scaling_factor
 
@@ -378,6 +414,7 @@ class LimitOrderOMS:
 
         # Add order log to keep history of all submitted orders
         self.order_log: dict[str, Order] = {}
+        self._order_counter: int = 0
 
         # Track elapsed ticks for each listing to control data appending frequency
         self.elapsed_ticks: dict[int, int] = {listing.listing_id: 0 for listing in all_listings}
@@ -399,11 +436,11 @@ class LimitOrderOMS:
         side : str
             Order side ("B" for buy, "A" for sell)
         base_notional : float
-            Base notional value before adjustments
+            Base notional value before adjustments (in dollars)
         confidence : float
             Confidence multiplier
         midprice : float
-            Current mid price
+            Current mid price (in dollars, already scaled down from FIXED_PRICE_SCALE)
         
         Returns
         -------
@@ -411,13 +448,15 @@ class LimitOrderOMS:
             Adjusted order size
         """
         # Base order size calculation
+        # base_notional in dollars, midprice in dollars -> base_size in shares
         base_size = abs(float(base_notional * confidence / midprice))
         
         if not self.position_aware_sizing:
             return base_size
         
-        # Get current position
+        # Get current position (in shares, not scaled)
         current_position = self.positions.get(listing_id, 0.0)
+        # current_position in shares * midprice in dollars -> current_position_notional in dollars
         current_position_notional = abs(current_position * midprice)
         
         # Check max position notional limit
@@ -486,9 +525,10 @@ class LimitOrderOMS:
             if order_key in self.active_orders and self.active_orders[order_key][0] == client_oid:
                 del self.active_orders[order_key]
 
-        if execution_report.exec_type in [ExecType.TRADE]:
+        if execution_report.exec_type in [ExecType.TRADE] and execution_report.filled_qty > 0:
             # Use order.side to determine position change direction
-            filled_qty = execution_report.filled_qty
+            # filled_qty is in scaled units (FIXED_SIZE_SCALE), convert to shares
+            filled_qty = execution_report.filled_qty / FIXED_SIZE_SCALE
             filled_price = execution_report.filled_price / FIXED_PRICE_SCALE  # Scale the price
             position_change = filled_qty if order.side == "B" else -filled_qty
 
@@ -498,11 +538,11 @@ class LimitOrderOMS:
             if order.side == "B":
                 # Buying - cash decreases
                 self.cash -= trade_value
-                print(f"Cash update - BUY: {previous_cash:.2f} -> {self.cash:.2f} (trade value: {trade_value:.2f})")
+                #print(f"Cash update - BUY: {previous_cash:.2f} -> {self.cash:.2f} (trade value: {trade_value:.2f})")
             else:
                 # Selling - cash increases
                 self.cash += trade_value
-                print(f"Cash update - SELL: {previous_cash:.2f} -> {self.cash:.2f} (trade value: {trade_value:.2f})")
+                #print(f"Cash update - SELL: {previous_cash:.2f} -> {self.cash:.2f} (trade value: {trade_value:.2f})")
 
             # Update overall positions
             if listing_id in self.positions:
@@ -521,17 +561,17 @@ class LimitOrderOMS:
                 event=RecordType.EXECUTION,
                 listing_id=listing_id,
                 timestamp=timestamp,
-                price=execution_report.mid_price / FIXED_PRICE_SCALE if execution_report.mid_price > 0 else None,
+                price=execution_report.mid_price / FIXED_PRICE_SCALE if execution_report.mid_price > 0 else filled_price,
                 fill_price=filled_price,
                 quantity=self.positions[listing_id],
-                fee=execution_report.fee / FIXED_PRICE_SCALE,
+                fee=execution_report.fee / (FIXED_PRICE_SCALE * FIXED_SIZE_SCALE),
             )
 
         return
-    
+
     def on_market_update(self, timestamp: int, market_update: SchemaBase, market_recorder: MarketRecorder):
         """Process market update and generate/cancel orders as needed.
-        
+
         Parameters
         ----------
         timestamp : int
@@ -786,7 +826,8 @@ class LimitOrderOMS:
             if listing:
                 # Create new limit order
                 # side is already normalized to "B" or "A" from order_key
-                client_oid = f"limit_oms_{int(time.time() * 1e9)}_{listing_id_key}_{side}"
+                self._order_counter += 1
+                client_oid = f"limit_oms_{self._order_counter}_{listing_id_key}_{side}"
                 order = Order(
                     exchange_id=listing.exchange_id,
                     security_id=listing.security_id,

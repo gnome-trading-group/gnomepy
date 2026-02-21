@@ -42,7 +42,7 @@ def resample(
 ):
     if aggregate is None:
         # aggregate = {"price": "mean", "quantity": "sum", "fee": "sum", "nmv": "mean"}
-        aggregate = {"event": "mean", "price": "mean", "quantity": "mean", "fee": "sum"}
+        aggregate = {"event": "mean", "price": "mean", "quantity": "mean", "fee": "sum", "nmv": "mean", "pnl_wo_fee": "sum"}
 
     if not pd.api.types.is_datetime64_any_dtype(df.index):
         raise ValueError("Index dtype of datetime is expected when resampling.")

@@ -71,7 +71,7 @@ class MBPSimulatedExchange(SimulatedExchange):
     def _map_execution_report(self, local_order: LocalOrder, filled_qty: int) -> OrderExecutionReport:
         total_price = filled_qty * local_order.order.price
         total_fee = self.fee_model.calculate_fee(total_price, is_maker=True)
-        filled_price = total_price / filled_qty if filled_qty > 0 else np.nan
+        filled_price = total_price // filled_qty if filled_qty > 0 else np.nan
         
         # Calculate mid price at time of execution
         mid_price = self.order_book.get_mid_price()
@@ -103,16 +103,9 @@ class MBPSimulatedExchange(SimulatedExchange):
     def _handle_market_order(self, order: Order) -> list[OrderExecutionReport]:
         matches = self.order_book.get_matching_orders(order)
         if not matches:
-            raise ValueError("Not enough liquidity to fulfill order")
-            # if order.time_in_force == TimeInForce.IOC or order.time_in_force == TimeInForce.FOK:
-            #     return self._create_execution_report(order.client_oid, ExecType.REJECT, OrderStatus.REJECTED)
-            # else:
-            #     best_price = self.order_book.get_best_ask() if order.side == "B" else self.order_book.get_best_bid()
-            #     if best_price is None:
-            #         raise ValueError("Bad limit order book state")
-            #     order.order_type = OrderType.LIMIT
-            #     order.price = best_price
-            #     return self._handle_limit_order(order)
+            return [_create_execution_report(
+                order.client_oid, ExecType.REJECTED, OrderStatus.REJECTED,
+            )]
 
         total_filled = 0
         total_price = 0
@@ -120,14 +113,28 @@ class MBPSimulatedExchange(SimulatedExchange):
             total_filled += match.size
             total_price += match.price * match.size
 
+        if total_filled == 0:
+            return [_create_execution_report(
+                order.client_oid, ExecType.REJECTED, OrderStatus.REJECTED,
+            )]
+
         total_fee = self.fee_model.calculate_fee(total_price, is_maker=False)
-        # total_price += total_fee if order.side == 'B' else -total_fee
 
         if total_filled == order.size:
             exec_type = ExecType.TRADE
             order_status = OrderStatus.FILLED
         else:
-            raise ValueError("Not enough liquidity")
+            mid_price = self.order_book.get_mid_price()
+            mid_price = float(mid_price) if mid_price is not None else 0
+            return [_create_execution_report(
+                order.client_oid, ExecType.TRADE, OrderStatus.PARTIALLY_FILLED,
+                filled_qty=total_filled,
+                cumulative_qty=total_filled,
+                filled_price=total_price / total_filled if total_filled > 0 else 0,
+                leaves_qty=order.size - total_filled,
+                fee=total_fee,
+                mid_price=mid_price,
+            )]
         
         # Calculate mid price at time of execution
         mid_price = self.order_book.get_mid_price()

@@ -52,12 +52,6 @@ class StrategyStats:
             if not isinstance(stats, Stats):
                 raise TypeError(f"Stats must be Stats instance, got {type(stats)}")
 
-    @staticmethod
-    def _compute_pnl_series(df: pd.DataFrame) -> pd.Series:
-        """Compute per-period PnL for a single listing frame."""
-        pnl = df["nmv"].shift() * df["price"].pct_change()
-        return pnl.fillna(0.0)
-
     def _build_portfolio_frame(self) -> pd.DataFrame:
         """Construct a portfolio-level DataFrame from per-listing `Stats.data`."""
         nmv_frames: list[pd.Series] = []
@@ -72,7 +66,7 @@ class StrategyStats:
                 df = resample(df, self.frequency)
 
             nmv_series = df["nmv"].rename(listing_id)
-            pnl_series = self._compute_pnl_series(df).rename(listing_id)
+            pnl_series = df["pnl"].rename(listing_id)
             fee_series = df["fee"].rename(listing_id)
 
             nmv_frames.append(nmv_series)
@@ -310,8 +304,7 @@ class StrategyStats:
     
     def _plot_pnl(self, ax, df, book_size, price_as_ret):
         """Plot PnL."""
-        pnl_w_fee = df['pnl'] - df['fee']
-        cpnl = pnl_w_fee.cumsum()
+        cpnl = df['pnl'].cumsum()
         
         if book_size is not None:
             if price_as_ret:

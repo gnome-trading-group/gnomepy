@@ -128,7 +128,7 @@ class IntentRecord(BaseRecord):
             df = df.set_index('timestamp')
         
         # Forward fill prices and confidence for continuity
-        df['price'] = df['price'].ffill().bfill()
+        df['price'] = df['price'].replace(0.0, np.nan).ffill().bfill()
         df['confidence'] = df['confidence'].ffill().bfill()
         df['flatten'] = df['flatten'].fillna(0).astype(bool)
         
@@ -168,21 +168,40 @@ class MarketRecord(BaseRecord):
             df['timestamp'] = pd.to_datetime(df['timestamp'])
             df = df.set_index('timestamp')
 
-        df['fill_price'] = np.where(df['event'] == RecordType.EXECUTION, df['fill_price'], df['price'])
-
-        df['price'] = df['price'].ffill().bfill()
+        df['price'] = df['price'].replace(0.0, np.nan).ffill().bfill()
         df['quantity'] = df['quantity'].ffill().bfill()
-        df['fee'] = df['fee'].ffill().bfill()
+        df['fee'] = df['fee'].fillna(0.0)
+
+        df['trade_price'] = np.where(
+            (df['event'] == RecordType.EXECUTION) & (df['fill_price'] > 0),
+            df['fill_price'],
+            df['price'],
+        )
 
         # TODO: some logs have the same event timestamp... how to fix properly?
         df = df.groupby(level=0).agg(
-            {"event": "mean", "price": "mean", "fill_price": "mean", "quantity": "mean", "fee": "sum"}
+            {"event": "mean", "price": "mean", "trade_price": "mean", "quantity": "mean", "fee": "sum"}
         )
-        df['nmv'] = df['quantity'] * df['price']
-        df['pnl_wo_fee'] = df['nmv'].shift() * df['price'].pct_change()
-        df['spread_pnl'] = (df['quantity'] - df['quantity'].shift()) * (df['fill_price'] - df['price'])
-        df['pnl'] = df['pnl_wo_fee'] + df['spread_pnl'].fillna(0) - df['fee']
         
+        # Derived columns
+        previous_quantity = df['quantity'].shift(1).fillna(0.0)
+        previous_price = df['price'].shift(1)
+        price_change = df['price'] - previous_price
+        quantity_change = df['quantity'] - previous_quantity
+
+        # Holding PnL: price movement on prior position (shares * $/share = $)
+        df['holding_pnl'] = (previous_quantity * price_change).fillna(0.0)
+
+        # Trade PnL: spread capture on new fills (shares * $/share = $)
+        df['trade_pnl'] = (quantity_change * (df['price'] - df['trade_price'])).fillna(0.0)
+
+        # Composite PnL
+        df['pnl_wo_fee'] = df['holding_pnl'] + df['trade_pnl']
+        df['pnl'] = df['pnl_wo_fee'] - df['fee']
+
+        # Net market value
+        df['nmv'] = df['quantity'] * df['price']
+
         return df
 
 class Stats:

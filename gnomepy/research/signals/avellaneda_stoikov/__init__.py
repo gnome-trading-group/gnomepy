@@ -1,1 +1,1 @@
-from gnomepy.research.signals.avellaneda_stoikov.signal import AvellanedaStoikovSignal
+from gnomepy.research.signals.avellaneda_stoikov.signal import AvellanedaStoikovSignal, AvellanedaStoikovModelValueRecorder

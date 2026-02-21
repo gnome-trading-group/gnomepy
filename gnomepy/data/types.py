@@ -60,6 +60,9 @@ class OrderExecutionReport:
     fee: float
     mid_price: int = 0  # Mid price at time of execution (for spread capture modeling)
 
+    def __repr__(self):
+        return f"OrderExecutionReport(exchange_id={self.exchange_id}, security_id={self.security_id}, client_oid={self.client_oid}, exec_type={self.exec_type}, order_status={self.order_status}, filled_qty={self.filled_qty}, filled_price={self.filled_price}, cumulative_qty={self.cumulative_qty}, leaves_qty={self.leaves_qty}, timestamp_event={self.timestamp_event}, timestamp_recv={self.timestamp_recv}, fee={self.fee}, mid_price={self.mid_price})"
+
 @dataclass
 class CancelOrder:
     exchange_id: int

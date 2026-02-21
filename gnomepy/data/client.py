@@ -3,10 +3,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3.session
 import pandas as pd
+import re
 
 from gnomepy.data.common import DataStore
 from gnomepy.data.types import SchemaType
 
+_KEY_REGEX = re.compile(r'^.*/(\d{4}/\d{1,2}/\d{1,2}/\d{1,2})/\d{1,2}/([^/]+)\.zst$')
 
 class MarketDataClient:
     def __init__(
@@ -41,8 +43,8 @@ class MarketDataClient:
             end_datetime: datetime.datetime | pd.Timestamp,
             schema_type: SchemaType,
     ) -> bool:
-        # TODO: Do this maybe?
-        return True
+        keys = self._get_keys(exchange_id, security_id, start_datetime, end_datetime, schema_type)
+        return len(keys) > 0
 
     def _get_raw_history(
             self,
@@ -77,10 +79,20 @@ class MarketDataClient:
             end_datetime: datetime.datetime | pd.Timestamp,
             schema_type: SchemaType,
     ):
+        prefix = f"{security_id}/{exchange_id}/"
+        paginator = self.s3.get_paginator('list_objects_v2')
+        pages = paginator.paginate(Bucket=self.bucket, Prefix=prefix)
+
         keys = []
-        current_time = start_datetime
-        while current_time <= end_datetime:
-            key = f"{security_id}/{exchange_id}/{current_time.year}/{current_time.month}/{current_time.day}/{current_time.hour}/{current_time.minute}/{schema_type.value}.zst"
-            keys.append(key)
-            current_time += datetime.timedelta(minutes=1)
+        for page in pages:
+            for obj in page['Contents']:
+                key = obj['Key']
+                parsed = _KEY_REGEX.match(key)
+                if parsed is not None:
+                    date_hour = parsed.group(1)
+                    schema = parsed.group(2)
+                    parsed_dt = datetime.datetime.strptime(f"{date_hour}", "%Y/%m/%d/%H")
+                    if schema == schema_type and start_datetime <= parsed_dt <= end_datetime:
+                        keys.append(key)
+
         return keys

@@ -288,6 +288,9 @@ class MBPBook:
             if price_level.has_local_orders:
                 continue
 
+            if price_level.size == 0:
+                continue
+
             match_size = min(remaining_size, price_level.size)
             remaining_size -= match_size
             matches.append(OrderMatch(price=price, size=match_size))

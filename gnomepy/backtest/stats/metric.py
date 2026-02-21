@@ -134,6 +134,59 @@ class Volatility(Metric):
         return pnl.std()
 
 
+class TradeVolume(Metric):
+    """
+    Total trade volume - sum of absolute quantity changes for all executions.
+    Calculates the total volume traded (in shares/units) across all execution events.
+    """
+    def __init__(self, name: str = "trade_volume"):
+        super().__init__(name)
+
+    def _compute(self, df: pd.DataFrame, ctx: dict) -> np.floating:
+        # Check if we have execution events
+        if 'event' not in df.columns:
+            return 0.0
+        
+        from gnomepy.backtest.recorder import RecordType
+        
+        # Calculate quantity changes for all rows
+        quantity_changes = df['quantity'].diff().abs()
+        
+        # Sum only the quantity changes that occur at execution events
+        # This gives total trade volume (absolute value of all position changes from trades)
+        trade_volume = quantity_changes[df['event'] == RecordType.EXECUTION].sum()
+        
+        # Handle first execution if it exists and has NaN change
+        executions = df[df['event'] == RecordType.EXECUTION]
+        if len(executions) > 0:
+            first_exec_idx = executions.index[0]
+            if pd.isna(quantity_changes.loc[first_exec_idx]):
+                # First execution: use absolute quantity as trade size
+                trade_volume += abs(executions['quantity'].iloc[0])
+        
+        return trade_volume
+
+
+class NumberOfTrades(Metric):
+    """
+    Number of trades - count of execution events.
+    """
+    def __init__(self, name: str = "num_trades"):
+        super().__init__(name)
+
+    def _compute(self, df: pd.DataFrame, ctx: dict) -> np.floating:
+        # Check if we have execution events
+        if 'event' not in df.columns:
+            return 0.0
+        
+        from gnomepy.backtest.recorder import RecordType
+        
+        # Count execution events
+        num_trades = (df['event'] == RecordType.EXECUTION).sum()
+        
+        return float(num_trades)
+
+
 DEFAULT_METRICS = [
     TotalPnL(),
     TotalFees(),
@@ -142,4 +195,6 @@ DEFAULT_METRICS = [
     Volatility(),
     WinRate(),
     ReturnOnFees(),
+    TradeVolume(),
+    NumberOfTrades(),
 ]

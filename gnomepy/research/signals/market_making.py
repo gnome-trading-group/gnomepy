@@ -7,7 +7,7 @@ from gnomepy.research.signals import PositionAwareSignal
 import numpy as np
 
 if TYPE_CHECKING:
-    from gnomepy.backtest.recorder import M
+    from gnomepy.backtest.recorder import MarketRecorder
 
 
 class MarketMakingSignal(PositionAwareSignal):
@@ -24,12 +24,10 @@ class MarketMakingSignal(PositionAwareSignal):
             listing: Listing,
             data_schema_type: SchemaType = SchemaType.MBP_10,
             trade_frequency: int = 1,
-            volatility_window: int = 100,
-            volatility_span: float = None,
-            max_inventory: float = None,
+            max_lookback: int = 2,
+            max_inventory: float | None = None,
             liquidation_threshold: float = 0.8,
             use_market_orders_for_liquidation: bool = True,
-            model_value_recorder: 'ModelValueRecorder | None' = None
     ):
         """Initialize a market making signal.
 
@@ -41,21 +39,12 @@ class MarketMakingSignal(PositionAwareSignal):
             Type of market data schema to use
         trade_frequency : int, default 1
             How frequently to check for trading signals
-        volatility_window : int, default 100
-            DEPRECATED: Use volatility_span instead. Kept for backward compatibility.
-            If volatility_span is None, will be used to set volatility_span.
-        volatility_span : float, optional
-            Span parameter for exponentially weighted volatility calculation.
-            If None, defaults to volatility_window.
-            Higher values give more weight to older data (smoother).
-        max_inventory : float, optional
-            Maximum absolute inventory size before stopping market making
+        max_lookback : int, default 2
+            Maximum number of ticks to look back for volatility calculation.
         liquidation_threshold : float, default 0.8
             Fraction of max_inventory at which to start aggressive liquidation (0.0-1.0)
         use_market_orders_for_liquidation : bool, default True
             If True, use market orders when at max inventory for immediate liquidation
-        model_value_recorder : ModelValueRecorder, optional
-            Recorder for model values. If None, a default recorder will be created.
         """
         super().__init__()
 
@@ -63,16 +52,10 @@ class MarketMakingSignal(PositionAwareSignal):
         self.listings = [listing]  # For compatibility with OMS
         self.data_schema_type = data_schema_type
         self.trade_frequency = trade_frequency
-        self.volatility_window = volatility_window  # Kept for backward compatibility
-        # Set volatility_span: use provided value or default to volatility_window
-        self.volatility_span = volatility_span if volatility_span is not None else float(volatility_window)
+        self.max_lookback = max_lookback
         self.max_inventory = max_inventory
         self.liquidation_threshold = liquidation_threshold
         self.use_market_orders_for_liquidation = use_market_orders_for_liquidation
-        self.max_lookback = volatility_window  # Still use window for lookback
-
-        # Initialize model value recorder
-        self.model_value_recorder = model_value_recorder
 
         # Initialize state (elapsed_ticks only used for trade_frequency)
         self.elapsed_ticks = {listing.listing_id: 0}
@@ -124,7 +107,7 @@ class MarketMakingSignal(PositionAwareSignal):
         ask_prices = listing_data['askPrice0']
 
         # For EWM volatility, we need at least 2 prices (for 1 return)
-        min_data_points = max(2, int(self.volatility_span * 0.5))
+        min_data_points = max(2, self.max_lookback)
         if len(bid_prices) < min_data_points or len(ask_prices) < min_data_points:
             return []
 
