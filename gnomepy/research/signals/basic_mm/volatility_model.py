@@ -20,7 +20,7 @@ class VolatilityModel(ABC):
 
     @abstractmethod
     def predict(self, listing_data: dict[str, np.ndarray]) -> float | None:
-        """Predict forward absolute movement in bps.
+        """Predict per-tick volatility in bps.
 
         Parameters
         ----------
@@ -30,7 +30,7 @@ class VolatilityModel(ABC):
         Returns
         -------
         float or None
-            Predicted absolute movement in bps, or None if insufficient data.
+            Predicted per-tick volatility in bps, or None if insufficient data.
         """
 
     @property
@@ -41,25 +41,26 @@ class VolatilityModel(ABC):
     @property
     @abstractmethod
     def horizon(self) -> int:
-        """Forward horizon (in ticks) that the prediction covers.
+        """Forward horizon (in ticks) used for label estimation.
 
-        Used by the signal to convert predicted bps back to per-tick sigma
-        for the AS formulas: ``sigma_per_tick = predicted_bps / 1e4 / sqrt(horizon)``.
+        Longer horizons produce smoother volatility estimates.  All models
+        return per-tick bps directly, so the signal converts via
+        ``sigma_per_tick = predicted_bps / 1e4``.
         """
 
 
 class RealizedVolatilityModel(VolatilityModel):
     """Simple realized volatility model.
 
-    Computes rolling standard deviation of log returns over a window,
-    then scales by sqrt(horizon) to estimate forward movement in bps.
+    Computes rolling standard deviation of log returns over a window
+    and returns per-tick volatility in bps.
 
     Parameters
     ----------
     window : int
         Lookback window for rolling std of log returns.
     horizon : int
-        Forward horizon in ticks to scale volatility to.
+        Retained for interface compatibility (not used in prediction).
     """
 
     def __init__(self, window: int = 100, horizon: int = 20):
@@ -89,5 +90,5 @@ class RealizedVolatilityModel(VolatilityModel):
         # Rolling std over window with ddof=1 to match pandas convention
         vol = float(np.std(log_returns[-self.window:], ddof=1))
 
-        # Scale by sqrt(horizon) and convert to bps
-        return vol * np.sqrt(self.horizon) * 1e4
+        # Convert per-tick sigma to bps
+        return vol * 1e4

@@ -2,8 +2,10 @@
 Walk-forward training, hyperparameter tuning, and label creation for the
 LightGBM volatility regression model.
 
-Predicts absolute forward price movement in bps. Uses the same features
-as the directional model but with regression objective and MAE metric.
+Predicts forward realized per-tick volatility in log1p-bps space using 30
+dedicated volatility features.  Labels are normalized by sqrt(horizon) so
+the prediction scale is invariant to the chosen horizon.  Metrics are
+reported in per-tick bps via expm1.
 """
 
 import datetime
@@ -20,7 +22,7 @@ from gnomepy.data.cached_client import CachedMarketDataClient
 from gnomepy.data.types import SchemaType
 from gnomepy.registry.api import RegistryClient
 
-from gnomepy.research.signals.lgbm_directional.features import FEATURE_NAMES, extract_features_bulk
+from gnomepy.research.signals.basic_mm.lgbm_volatility.features import VOL_FEATURE_NAMES, extract_vol_features_bulk
 from gnomepy.research.signals.lgbm_directional.registry import ModelRegistry
 
 # -----------------------------------------------------------------------
@@ -153,18 +155,25 @@ class LGBMVolatilityTrainer:
         self._labels = y
 
         print(f"  {len(X)} usable samples")
-        print(f"  Label stats: mean={y.mean():.2f} bps, median={y.median():.2f} bps, std={y.std():.2f} bps")
+        bps_y = np.expm1(y)
+        print(f"  Label stats (log1p space): mean={y.mean():.4f}, median={y.median():.4f}, std={y.std():.4f}")
+        print(f"  Label stats (per-tick bps): mean={bps_y.mean():.2f}, median={bps_y.median():.2f}, std={bps_y.std():.2f}")
         return X, y
 
     def _compute_features(self, df: pd.DataFrame) -> pd.DataFrame:
         if self._features is not None:
             return self._features
-        return extract_features_bulk(df)
+        return extract_vol_features_bulk(df)
 
     def _create_labels(self, df: pd.DataFrame) -> pd.Series:
-        """Absolute forward return in bps.
+        """Forward realized per-tick volatility in log1p-bps space.
 
-        Label = abs((mid_{t+horizon} - mid_t) / mid_t) * 1e4
+        Label = log1p(sqrt(sum(log_returns^2 over horizon)) * 1e4 / sqrt(horizon))
+
+        The sqrt(horizon) normalization makes labels horizon-invariant:
+        longer horizons produce smoother estimates without inflating the
+        prediction distribution.
+
         NaN for last `horizon` rows (insufficient future data).
         """
         if self._labels is not None:
@@ -175,15 +184,20 @@ class LGBMVolatilityTrainer:
         labels = pd.Series(np.nan, index=df.index, dtype="float64")
 
         if n > self.horizon:
-            future_mid = np.empty(n)
-            future_mid[:] = np.nan
-            future_mid[:n - self.horizon] = mid[self.horizon:]
+            log_mid = np.log(mid)
+            sq_returns = np.diff(log_mid) ** 2
+            cumsum = np.concatenate([[0.0], np.cumsum(sq_returns)])
+            # realized_var[t] = sum of sq_returns from t to t+horizon-1
+            # = cumsum[t+horizon] - cumsum[t]
+            valid_len = len(cumsum) - self.horizon
+            realized_var = cumsum[self.horizon:] - cumsum[:valid_len]
+            realized_vol_bps = np.sqrt(realized_var) * 1e4
+            per_tick_vol_bps = realized_vol_bps / np.sqrt(self.horizon)
 
-            labels = pd.Series(
-                np.abs((future_mid - mid) / mid) * 1e4,
-                index=df.index,
-                dtype="float64",
-            )
+            label_vals = np.full(n, np.nan)
+            label_vals[:valid_len] = np.log1p(per_tick_vol_bps)
+
+            labels = pd.Series(label_vals, index=df.index, dtype="float64")
 
         return labels
 
@@ -234,17 +248,20 @@ class LGBMVolatilityTrainer:
             preds = model.predict(X_val)
             y_true = y_val.values
 
-            # Regression metrics
-            residuals = preds - y_true
+            # Convert from log1p space back to bps for interpretable metrics
+            preds_bps = np.expm1(preds)
+            y_true_bps = np.expm1(y_true)
+
+            residuals_bps = preds_bps - y_true_bps
             metrics = {
-                "mae": float(np.mean(np.abs(residuals))),
-                "rmse": float(np.sqrt(np.mean(residuals ** 2))),
-                "median_ae": float(np.median(np.abs(residuals))),
+                "mae": float(np.mean(np.abs(residuals_bps))),
+                "rmse": float(np.sqrt(np.mean(residuals_bps ** 2))),
+                "median_ae": float(np.median(np.abs(residuals_bps))),
             }
 
-            # Correlation (skip if constant predictions)
-            if np.std(preds) > 0 and np.std(y_true) > 0:
-                corr, _ = pearsonr(preds, y_true)
+            # Correlation in bps space
+            if np.std(preds_bps) > 0 and np.std(y_true_bps) > 0:
+                corr, _ = pearsonr(preds_bps, y_true_bps)
                 metrics["correlation"] = float(corr)
             else:
                 metrics["correlation"] = 0.0
@@ -404,7 +421,7 @@ class LGBMVolatilityTrainer:
         if fold_results:
             last_model = fold_results[-1].model
             importance = dict(
-                zip(FEATURE_NAMES, last_model.feature_importance(importance_type="gain"))
+                zip(VOL_FEATURE_NAMES, last_model.feature_importance(importance_type="gain"))
             )
             sorted_imp = sorted(importance.items(), key=lambda x: x[1], reverse=True)
             print("\nTop 10 features (gain):")
@@ -427,13 +444,15 @@ class LGBMVolatilityTrainer:
                 avg[f"mean_{k}"] = float(np.mean([f[k] for f in per_fold]))
 
         importance = dict(
-            zip(FEATURE_NAMES, model.feature_importance(importance_type="gain"))
+            zip(VOL_FEATURE_NAMES, model.feature_importance(importance_type="gain"))
         )
 
         return {
-            "feature_names": FEATURE_NAMES,
+            "feature_names": VOL_FEATURE_NAMES,
             "horizon": self.horizon,
             "objective": "regression",
+            "label_transform": "log1p",
+            "label_unit": "per_tick_bps",
             "training_start": self.start_datetime.isoformat(),
             "training_end": self.end_datetime.isoformat(),
             "params": params,

@@ -1,9 +1,10 @@
 """
 LGBMVolatilityModel — LGBM regression model for volatility prediction.
 
-Reuses feature extraction from lgbm_directional to predict forward
-absolute price movement in bps. Used as a VolatilityModel for the
-BasicMMSignal circuit breaker.
+Uses dedicated volatility features to predict forward realized per-tick
+volatility in bps.  Model outputs are in log1p space and transformed back
+via expm1.  The per-tick normalization (sqrt(horizon)) is applied during
+training so predictions are horizon-invariant.
 """
 
 import json
@@ -12,10 +13,10 @@ from pathlib import Path
 import lightgbm as lgb
 import numpy as np
 
-from gnomepy.research.signals.lgbm_directional.features import (
-    FEATURE_NAMES,
+from gnomepy.research.signals.basic_mm.lgbm_volatility.features import (
+    VOL_FEATURE_NAMES,
     MIN_LOOKBACK,
-    extract_features_tick,
+    extract_vol_features_tick,
 )
 from gnomepy.research.signals.lgbm_directional.registry import ModelRegistry
 
@@ -23,10 +24,10 @@ from ..volatility_model import VolatilityModel
 
 
 class LGBMVolatilityModel(VolatilityModel):
-    """LGBM regression model predicting forward absolute movement in bps.
+    """LGBM regression model predicting forward realized per-tick volatility in bps.
 
-    Uses the same 44 features as the directional model but trained with
-    regression objective on absolute returns.
+    Uses 30 dedicated volatility features. Model outputs are in log1p space
+    and transformed back via expm1 to produce per-tick bps predictions.
 
     Model loading supports two modes:
 
@@ -57,7 +58,7 @@ class LGBMVolatilityModel(VolatilityModel):
         horizon: int = 20,
     ):
         self.model: lgb.Booster | None = None
-        self._feature_names: list[str] = FEATURE_NAMES
+        self._feature_names: list[str] = VOL_FEATURE_NAMES
         self._horizon = horizon
 
         if model_path is not None:
@@ -77,12 +78,12 @@ class LGBMVolatilityModel(VolatilityModel):
         if self.model is None:
             return None
 
-        features = extract_features_tick(listing_data)
+        features = extract_vol_features_tick(listing_data)
         if features is None:
             return None
 
-        pred = float(self.model.predict(features.reshape(1, -1))[0])
-        return max(0.0, pred)
+        raw_pred = float(self.model.predict(features.reshape(1, -1))[0])
+        return max(0.0, float(np.expm1(raw_pred)))
 
     def _load_from_path(self, model_path: str) -> None:
         path = Path(model_path)
@@ -91,7 +92,7 @@ class LGBMVolatilityModel(VolatilityModel):
         if meta_path.exists():
             with open(meta_path) as f:
                 meta = json.load(f)
-            self._feature_names = meta.get("feature_names", FEATURE_NAMES)
+            self._feature_names = meta.get("feature_names", VOL_FEATURE_NAMES)
             if "horizon" in meta:
                 self._horizon = int(meta["horizon"])
 
@@ -103,6 +104,6 @@ class LGBMVolatilityModel(VolatilityModel):
         else:
             model, meta = registry.load_latest(listing_id)
         self.model = model
-        self._feature_names = meta.get("feature_names", FEATURE_NAMES)
+        self._feature_names = meta.get("feature_names", VOL_FEATURE_NAMES)
         if "horizon" in meta:
             self._horizon = int(meta["horizon"])

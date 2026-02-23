@@ -117,9 +117,9 @@ class BasicMMSignal(MarketMakingSignal):
     Uses the Avellaneda-Stoikov infinite horizon formulas for reservation price
     and optimal spread. The pluggable VolatilityModel provides:
 
-    1. **AS sigma**: its prediction (bps over a horizon) is converted to
-       per-tick sigma via ``predicted_bps / 1e4 / sqrt(horizon)`` and used
-       as the volatility input to the AS formulas.
+    1. **AS sigma**: its prediction (per-tick bps) is converted to
+       per-tick sigma via ``predicted_bps / 1e4`` and used as the
+       volatility input to the AS formulas.
     2. **Circuit breaker**: when predicted movement exceeds
        ``vol_threshold_bps``, quoting stops entirely.
 
@@ -203,18 +203,17 @@ class BasicMMSignal(MarketMakingSignal):
         predicted_vol_bps = self.volatility_model.predict(listing_data)
 
         if predicted_vol_bps is not None:
-            # Convert predicted bps over horizon → per-tick sigma (log-return units)
-            volatility = (predicted_vol_bps / 1e4) / np.sqrt(self.volatility_model.horizon)
+            # Model predicts per-tick vol in bps; convert to log-return units
+            volatility = predicted_vol_bps / 1e4
         else:
             # Fallback: EWM volatility when vol model has insufficient data
             volatility = self._calculate_ewm_volatility(recent_mids)
         volatility = max(volatility, self.min_volatility)
 
-        # Circuit breaker
-        circuit_breaker_active = False
-
+        # Circuit breaker: cancel resting orders when vol exceeds threshold.
+        # Returns a single price=None intent so LimitOrderOMS bypasses its
+        # early return and cancels all active orders (empty desired_orders).
         if predicted_vol_bps is not None and predicted_vol_bps > self.vol_threshold_bps:
-            circuit_breaker_active = True
             if self.recorder is not None and timestamp is not None:
                 inventory = positions.get(listing_id, 0.0) if positions else 0.0
                 self.recorder.log(
@@ -233,7 +232,9 @@ class BasicMMSignal(MarketMakingSignal):
                     ask_confidence=0.0,
                     circuit_breaker_active=True,
                 )
-            return []
+            return [Intent(
+                listing=self.listing, side="B", confidence=0.0, price=None,
+            )]
 
         # Get current inventory
         inventory = positions.get(listing_id, 0.0) if positions else 0.0
