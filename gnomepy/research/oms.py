@@ -356,16 +356,18 @@ class LimitOrderOMS:
     """
 
     def __init__(
-        self, 
-        signals: list[Signal], 
-        notional: float, 
+        self,
+        signals: list[Signal],
+        notional: float,
         starting_cash: float = 1000000.0,
         max_position_notional: float = None,
         position_aware_sizing: bool = True,
-        position_scaling_factor: float = 0.5
+        position_scaling_factor: float = 0.5,
+        tick_size: float = 0.01,
+        passive_reprice_ticks: int = 3,
     ):
         """Initialize LimitOrderOMS with position-aware sizing controls.
-        
+
         Parameters
         ----------
         signals : list[Signal]
@@ -383,6 +385,13 @@ class LimitOrderOMS:
         position_scaling_factor : float, default 0.5
             Factor to reduce order size by when position grows (0.0-1.0)
             Lower values = more aggressive position reduction
+        tick_size : float, default 0.01
+            Minimum price increment in dollars. Desired prices are snapped to
+            this grid before comparison with active orders.
+        passive_reprice_ticks : int, default 3
+            Number of ticks an order may passively drift before repricing.
+            Preserves queue position for safe drift. 0 = always reprice
+            immediately in both directions.
         """
         self.signals = signals
         # notional: user supplies in dollars, used as-is for order sizing calculations
@@ -392,6 +401,10 @@ class LimitOrderOMS:
         self.max_position_notional = max_position_notional  # Keep in dollars to match current_position_notional calculation
         self.position_aware_sizing = position_aware_sizing
         self.position_scaling_factor = position_scaling_factor
+        if tick_size <= 0:
+            raise ValueError("tick_size must be positive")
+        self.tick_size = tick_size
+        self.passive_reprice_ticks = passive_reprice_ticks
 
         # Infer listings from signals
         all_listings = []
@@ -418,7 +431,9 @@ class LimitOrderOMS:
 
         # Track elapsed ticks for each listing to control data appending frequency
         self.elapsed_ticks: dict[int, int] = {listing.listing_id: 0 for listing in all_listings}
-    
+
+        self._flatten_in_flight: set[int] = set()  # listing_ids with pending flatten orders
+
     def _calculate_position_aware_order_size(
         self, 
         listing_id: int, 
@@ -499,6 +514,18 @@ class LimitOrderOMS:
         
         return base_size * scaling
 
+    def _snap_to_tick(self, price: float) -> float:
+        """Round price to nearest tick increment."""
+        return round(price / self.tick_size) * self.tick_size
+
+    def _find_listing(self, listing_id: int):
+        """Find a Listing by listing_id across all signals."""
+        for signal in self.signals:
+            for listing in signal.listings:
+                if listing.listing_id == listing_id:
+                    return listing
+        return None
+
     def on_execution_report(self, timestamp: int, execution_report: OrderExecutionReport, recorder: MarketRecorder):
         """Handle execution reports from the exchange."""
         client_oid = execution_report.client_oid
@@ -518,6 +545,11 @@ class LimitOrderOMS:
 
         if listing_id is None:
             return  # Unknown listing, skip
+
+        # Clear flatten-in-flight guard when flatten order completes
+        if client_oid.startswith("flatten_"):
+            if execution_report.exec_type in [ExecType.TRADE, ExecType.CANCELED, ExecType.REJECTED]:
+                self._flatten_in_flight.discard(listing_id)
 
         # Remove from active orders if filled or cancelled
         if execution_report.exec_type in [ExecType.TRADE, ExecType.CANCELED]:
@@ -697,6 +729,39 @@ class LimitOrderOMS:
         if len(all_intents) == 0:
             return []
 
+        # Handle flatten intents (circuit breaker) — generate market orders to close position
+        flatten_orders = []
+        for intent in all_intents:
+            if isinstance(intent, BasketIntent):
+                continue
+            if not getattr(intent, 'flatten', False):
+                continue
+            listing_id_intent = intent.listing.listing_id
+            if listing_id_intent in self._flatten_in_flight:
+                continue  # already have a pending flatten order
+            current_position = self.positions.get(listing_id_intent, 0.0)
+            if current_position == 0.0:
+                continue  # nothing to flatten
+            side = "A" if current_position > 0 else "B"
+            order_size = abs(current_position)
+            listing = self._find_listing(listing_id_intent)
+            if listing:
+                self._order_counter += 1
+                client_oid = f"flatten_{listing_id_intent}_{self._order_counter}"
+                order = Order(
+                    exchange_id=listing.exchange_id,
+                    security_id=listing.security_id,
+                    client_oid=client_oid,
+                    price=None,
+                    size=int(order_size * FIXED_SIZE_SCALE),
+                    side=side,
+                    order_type=OrderType.MARKET,
+                    time_in_force=TimeInForce.GTC,
+                )
+                self.order_log[client_oid] = order
+                self._flatten_in_flight.add(listing_id_intent)
+                flatten_orders.append(order)
+
         # Convert intents to orders and manage active orders
         orders = []
         cancel_orders = []
@@ -758,90 +823,69 @@ class LimitOrderOMS:
                     if order_size > 0:  # Only add if size > 0
                         desired_orders[order_key] = (intent.price, order_size)
 
-        # Cancel orders that are no longer desired or have changed prices
+        # --- Reconcile active orders vs desired orders ---
+
+        # 1. Cancel orders whose intent is gone entirely
         for order_key, (existing_oid, existing_price) in list(self.active_orders.items()):
-            listing_id_key, side = order_key
-
             if order_key not in desired_orders:
-                # Order no longer desired, cancel it
-                listing = None
-                for signal in self.signals:
-                    for l in signal.listings:
-                        if l.listing_id == listing_id_key:
-                            listing = l
-                            break
-                    if listing:
-                        break
-
+                listing = self._find_listing(order_key[0])
                 if listing:
                     cancel_orders.append(CancelOrder(
                         exchange_id=listing.exchange_id,
                         security_id=listing.security_id,
-                        client_oid=existing_oid
+                        client_oid=existing_oid,
                     ))
-            else:
-                desired_price, desired_size = desired_orders[order_key]
-                # Check if price has changed significantly (more than 0.01% to avoid constant cancels)
-                price_change_pct = abs(desired_price - existing_price) / existing_price if existing_price > 0 else float('inf')
-                if price_change_pct > 0.0001:
-                    # Price changed, cancel old order
-                    listing = None
-                    for signal in self.signals:
-                        for l in signal.listings:
-                            if l.listing_id == listing_id_key:
-                                listing = l
-                                break
-                        if listing:
-                            break
+                    del self.active_orders[order_key]
 
-                    if listing:
-                        cancel_orders.append(CancelOrder(
-                            exchange_id=listing.exchange_id,
-                            security_id=listing.security_id,
-                            client_oid=existing_oid
-                        ))
-
-        # Create new orders for desired orders that don't exist or were cancelled
+        # 2. For each desired order: snap to tick grid, apply asymmetric urgency
         for order_key, (desired_price, desired_size) in desired_orders.items():
             listing_id_key, side = order_key
+            snapped_price = self._snap_to_tick(desired_price)
 
-            # Check if we already have this order active
             if order_key in self.active_orders:
                 existing_oid, existing_price = self.active_orders[order_key]
-                price_change_pct = abs(desired_price - existing_price) / existing_price if existing_price > 0 else float('inf')
-                if price_change_pct <= 0.0001:
-                    # Order already exists with same price, skip
-                    continue
+                ticks_away = round(abs(snapped_price - existing_price) / self.tick_size)
 
-            # Find listing
-            listing = None
-            for signal in self.signals:
-                for l in signal.listings:
-                    if l.listing_id == listing_id_key:
-                        listing = l
-                        break
+                if ticks_away == 0:
+                    continue  # same tick level — no action
+
+                # Asymmetric urgency: is existing order too aggressive?
+                if side == "B":
+                    too_aggressive = existing_price > snapped_price
+                else:  # "A"
+                    too_aggressive = existing_price < snapped_price
+
+                if not too_aggressive and ticks_away <= self.passive_reprice_ticks:
+                    continue  # passive drift within tolerance — keep queue
+
+                # Cancel existing order (aggressive, or passive beyond tolerance)
+                listing = self._find_listing(listing_id_key)
                 if listing:
-                    break
+                    cancel_orders.append(CancelOrder(
+                        exchange_id=listing.exchange_id,
+                        security_id=listing.security_id,
+                        client_oid=existing_oid,
+                    ))
+                    del self.active_orders[order_key]
 
-            if listing:
-                # Create new limit order
-                # side is already normalized to "B" or "A" from order_key
-                self._order_counter += 1
-                client_oid = f"limit_oms_{self._order_counter}_{listing_id_key}_{side}"
-                order = Order(
-                    exchange_id=listing.exchange_id,
-                    security_id=listing.security_id,
-                    client_oid=client_oid,
-                    price=desired_price * FIXED_PRICE_SCALE,  # Convert to fixed point
-                    size=desired_size * FIXED_SIZE_SCALE,  # Convert to fixed point
-                    side=side,  # Already normalized to "B" or "A"
-                    order_type=OrderType.LIMIT,
-                    time_in_force=TimeInForce.GTC
-                )
+            # Create new order (either no active order, or just cancelled one above)
+            if order_key not in self.active_orders:
+                listing = self._find_listing(listing_id_key)
+                if listing:
+                    self._order_counter += 1
+                    client_oid = f"limit_oms_{self._order_counter}_{listing_id_key}_{side}"
+                    order = Order(
+                        exchange_id=listing.exchange_id,
+                        security_id=listing.security_id,
+                        client_oid=client_oid,
+                        price=int(snapped_price * FIXED_PRICE_SCALE),
+                        size=int(desired_size * FIXED_SIZE_SCALE),
+                        side=side,
+                        order_type=OrderType.LIMIT,
+                        time_in_force=TimeInForce.GTC,
+                    )
+                    self.order_log[client_oid] = order
+                    self.active_orders[order_key] = (client_oid, snapped_price)
+                    orders.append(order)
 
-                self.order_log[client_oid] = order
-                self.active_orders[order_key] = (client_oid, desired_price)
-                orders.append(order)
-
-        # Return both cancel orders and new orders
-        return cancel_orders + orders
+        return cancel_orders + flatten_orders + orders

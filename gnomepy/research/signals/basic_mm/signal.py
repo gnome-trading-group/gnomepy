@@ -233,7 +233,7 @@ class BasicMMSignal(MarketMakingSignal):
                     circuit_breaker_active=True,
                 )
             return [Intent(
-                listing=self.listing, side="B", confidence=0.0, price=None,
+                listing=self.listing, side="B", confidence=0.0, price=None, flatten=True,
             )]
 
         # Get current inventory
