@@ -1,0 +1,25 @@
+{
+  "family": "gnome-train",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "4096",
+  "memory": "16384",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/gnome-train-task-role",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/gnome-train-execution-role",
+  "containerDefinitions": [
+    {
+      "name": "gnome-train",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/gnome-train:latest",
+      "essential": true,
+      "command": ["s3://gnome-train-configs/train-xyz.yaml"],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/gnome-train",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "train"
+        }
+      }
+    }
+  ]
+}

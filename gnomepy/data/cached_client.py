@@ -43,6 +43,22 @@ class CachedMarketDataClient(MarketDataClient):
         cache_path = self._local_data_store_cache_path(exchange_id, security_id, start_datetime, end_datetime, schema_type)
         return CachedDataStore.from_bytes(total, schema_type, cache_path=cache_path)
 
+    def _fetch_chunk(self, key: str) -> bytes:
+        local_path = self._local_cache_path(key)
+
+        if local_path.exists():
+            with local_path.open("rb") as f:
+                return f.read()
+
+        data = super()._fetch_chunk(key)
+
+        if data:
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            with local_path.open("wb") as f:
+                f.write(data)
+
+        return data
+
     def _get_raw_history(
         self,
         exchange_id: int,
@@ -52,22 +68,5 @@ class CachedMarketDataClient(MarketDataClient):
         schema_type: SchemaType,
     ) -> bytes:
         keys = self._get_keys(exchange_id, security_id, start_datetime, end_datetime, schema_type)
-
-        total = b''
-        for key in keys:
-            local_path = self._local_cache_path(key)
-
-            if local_path.exists():
-                with local_path.open("rb") as f:
-                    data = f.read()
-            else:
-                response = self.s3.get_object(Bucket=self.bucket, Key=key)
-                data = response["Body"].read()
-
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-                with local_path.open("wb") as f:
-                    f.write(data)
-
-            total += data
-
-        return total
+        chunks = [self._fetch_chunk(key) for key in keys]
+        return b''.join(chunks)

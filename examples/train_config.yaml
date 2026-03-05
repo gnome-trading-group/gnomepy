@@ -1,0 +1,25 @@
+data:
+  listing_id: 1
+  start_datetime: "2025-01-01T00:00:00"
+  end_datetime: "2025-01-15T00:00:00"
+  schema_type: "mbp-10"
+
+model:
+  type: lgbm_volatility
+  horizon: 20
+
+tuning:
+  enabled: true
+  train_window: 50000
+  val_window: 10000
+  n_random: 10
+  metric: mae
+  num_boost_round: 500
+
+training:
+  num_boost_round: 500
+  early_stopping_rounds: 50
+
+registry:
+  base_dir: "./models"
+  upload_s3: false

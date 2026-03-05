@@ -1,0 +1,25 @@
+{
+  "family": "gnome-backtest",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "2048",
+  "memory": "8192",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/gnome-backtest-task-role",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/gnome-backtest-execution-role",
+  "containerDefinitions": [
+    {
+      "name": "gnome-backtest",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/gnome-backtest:latest",
+      "essential": true,
+      "command": ["s3://gnome-backtest-configs/run-xyz.yaml"],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/gnome-backtest",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "backtest"
+        }
+      }
+    }
+  ]
+}

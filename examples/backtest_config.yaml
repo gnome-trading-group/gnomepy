@@ -1,0 +1,47 @@
+backtest:
+  start_datetime: "2025-01-01T00:00:00"
+  end_datetime: "2025-01-02T00:00:00"
+  listing_ids: [1]
+  schema_type: "mbp-10"
+
+exchange:
+  default:
+    fee_model:
+      type: static
+      taker_fee: 0.0004
+      maker_fee: 0.0002
+    network_latency:
+      type: static
+      latency_ns: 5000000
+    order_processing_latency:
+      type: static
+      latency_ns: 1000000
+    queue_model:
+      type: risk_averse
+
+strategy:
+  type: simple
+  processing_latency:
+    type: static
+    latency_ns: 100000
+
+oms:
+  type: market_making
+  notional: 1000.0
+  starting_cash: 1000000.0
+  max_position_notional: 50000.0
+  tick_size: 0.01
+
+signals:
+  - type: market_making
+    listing_id: 1
+    volatility_model:
+      type: realized
+      window: 100
+      horizon: 20
+    gamma: 0.1
+    order_arrival_rate: 1.0
+
+output:
+  s3_bucket: "gnome-backtest-results"
+  s3_prefix: "backtests/"

@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 import numpy as np
 import pandas as pd
 
-from matplotlib import pyplot as plt
 from numpy.typing import NDArray
 
 from gnomepy.backtest.stats.metric import Metric, DEFAULT_METRICS
@@ -380,7 +379,9 @@ class Stats:
         n_plots = len(config.plots)
         if n_plots == 0:
             raise ValueError("At least one plot must be specified")
-        
+
+        from matplotlib import pyplot as plt
+
         fig, axes = plt.subplots(n_plots, 1, sharex=True)
         if n_plots == 1:
             axes = [axes]

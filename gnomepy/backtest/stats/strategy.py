@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import pandas as pd
-from matplotlib import pyplot as plt
 
 from typing import Any, Optional, Union
 
@@ -246,7 +247,9 @@ class StrategyStats:
         n_plots = len(config.plots)
         if n_plots == 0:
             raise ValueError("At least one plot must be specified")
-        
+
+        from matplotlib import pyplot as plt
+
         df = self.data.reset_index()
 
         # Handle empty data

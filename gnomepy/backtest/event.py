@@ -48,4 +48,6 @@ class Event:
         return cls(timestamp, EventType.EXCHANGE_MESSAGE, exchange_message)
 
     def __lt__(self, other):
-        return self.timestamp < other.timestamp
+        if self.timestamp != other.timestamp:
+            return self.timestamp < other.timestamp
+        return self.event_type < other.event_type

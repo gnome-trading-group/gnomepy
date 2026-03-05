@@ -1,6 +1,6 @@
 import datetime
+import heapq
 import logging
-import queue
 
 import pandas as pd
 
@@ -37,7 +37,9 @@ class Backtest:
         self.market_data_client = market_data_client or MarketDataClient()
         self.registry_client = registry_client or RegistryClient()
         self.recorder = recorder or Recorder(listing_ids, schema_type)
-        self.queue = None
+        self._merged_market_events = None
+        self._dynamic_queue = []
+        self._next_market = None
         self.ready = False
 
         self._load_listings(listing_ids)
@@ -74,27 +76,49 @@ class Backtest:
             if not available_data:
                 raise ValueError(f"Listing ID {listing.listing_id} does not have data in the provided time range")
 
+    def _event_stream(self, listing):
+        for record in self.market_data_client.stream_data(
+            exchange_id=listing.exchange_id,
+            security_id=listing.security_id,
+            start_datetime=self.start_datetime,
+            end_datetime=self.end_datetime,
+            schema_type=self.schema_type,
+        ):
+            exchange_evt = Event.from_schema_exchange(record)
+            local_evt = Event.from_schema_local(record)
+            if exchange_evt.timestamp <= local_evt.timestamp:
+                yield exchange_evt
+                yield local_evt
+            else:
+                yield local_evt
+                yield exchange_evt
+
     def prepare_data(self):
-        self.queue = queue.PriorityQueue()
-        for listing in self.listings:
-            records = self.market_data_client.get_data(
-                exchange_id=listing.exchange_id,
-                security_id=listing.security_id,
-                start_datetime=self.start_datetime,
-                end_datetime=self.end_datetime,
-                schema_type=self.schema_type,
-            )
-            for record in records:
-                self.queue.put(Event.from_schema_local(record))
-                self.queue.put(Event.from_schema_exchange(record))
+        streams = [self._event_stream(listing) for listing in self.listings]
+        self._merged_market_events = heapq.merge(*streams)
+        self._dynamic_queue = []
+        self._next_market = next(self._merged_market_events, None)
         self.ready = True
+
+    def _next_event(self):
+        if self._next_market and (
+            not self._dynamic_queue or self._next_market < self._dynamic_queue[0]
+        ):
+            event = self._next_market
+            self._next_market = next(self._merged_market_events, None)
+            return event
+        elif self._dynamic_queue:
+            return heapq.heappop(self._dynamic_queue)
+        return None
 
     def execute_until(self, timestamp: int | None):
         if not self.ready:
             raise ValueError("Call prepare_data() before executing the backtest")
 
-        while not self.queue.empty():
-            event: Event = self.queue.get()
+        while True:
+            event: Event = self._next_event()
+            if event is None:
+                break
 
             if timestamp is not None and event.timestamp >= timestamp:
                 break
@@ -106,7 +130,7 @@ class Backtest:
                     for execution_report in execution_reports:
                         # no processing time since it is already baked into the event's timestamp
                         expected_timestamp = event.timestamp + exchange.simulate_network_latency()
-                        self.queue.put(Event.from_exchange_message(execution_report, expected_timestamp))
+                        heapq.heappush(self._dynamic_queue, Event.from_exchange_message(execution_report, expected_timestamp))
 
                 elif event.event_type == EventType.EXCHANGE_MESSAGE:
                     self.strategy.on_execution_report(event.timestamp, event.data, self.recorder)
@@ -116,7 +140,7 @@ class Backtest:
                     for order in orders:
                         expected_timestamp = event.timestamp + self.strategy.simulate_strategy_processing_time() + \
                                              self.exchanges[order.exchange_id][order.security_id].simulate_network_latency()
-                        self.queue.put(Event.from_local_message(order, expected_timestamp))
+                        heapq.heappush(self._dynamic_queue, Event.from_local_message(order, expected_timestamp))
 
                 elif event.event_type == EventType.LOCAL_MESSAGE:
                     message: LocalMessage = event.data
@@ -136,7 +160,7 @@ class Backtest:
                         execution_report.exchange_id = message.exchange_id
                         execution_report.security_id = message.security_id
 
-                        self.queue.put(Event.from_exchange_message(execution_report, expected_timestamp))
+                        heapq.heappush(self._dynamic_queue, Event.from_exchange_message(execution_report, expected_timestamp))
                 else:
                     raise ValueError(f"Unknown event type: {event.event_type}")
 
