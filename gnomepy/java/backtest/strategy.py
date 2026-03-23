@@ -1,0 +1,54 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+from gnomepy.java.backtest.orders import ExecutionReport
+from gnomepy.java.oms import Intent
+from gnomepy.java.schemas import JavaSchema
+
+
+class Strategy(ABC):
+    """Base class for Python backtest strategies.
+
+    Strategies declare desired state via Intents. The OMS resolves intents
+    into orders (diffing against current open orders) and handles risk
+    validation, order tracking, and position management.
+
+    Example:
+        class MyMMStrategy(Strategy):
+            def on_market_data(self, timestamp, data):
+                mid = (data.bid_price(0) + data.ask_price(0)) // 2
+                return [Intent(
+                    exchange_id=1, security_id=100,
+                    bid_price=mid - 50, bid_size=10,
+                    ask_price=mid + 50, ask_size=10,
+                )]
+
+            def on_execution_report(self, timestamp, report):
+                print(f"Fill: {report.fill_price} x {report.filled_qty}")
+    """
+
+    @abstractmethod
+    def on_market_data(
+        self, timestamp: int, data: JavaSchema
+    ) -> list[Intent]:
+        """Called on each market data update. Return desired state as Intents."""
+        ...
+
+    @abstractmethod
+    def on_execution_report(
+        self, timestamp: int, report: ExecutionReport
+    ) -> None:
+        """Called when an execution report is received."""
+        ...
+
+    _oms_view = None
+
+    @property
+    def oms(self):
+        """Access the OMS for position/order queries. Available after backtest starts."""
+        return self._oms_view
+
+    def simulate_processing_time(self) -> int:
+        """Override to simulate strategy processing latency in nanoseconds."""
+        return 0
