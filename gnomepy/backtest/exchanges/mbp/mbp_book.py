@@ -6,7 +6,7 @@ from typing import Deque
 
 from gnomepy.backtest.exchanges.mbp.types import LocalOrder
 from gnomepy.backtest.queues.base import QueueModel
-from gnomepy.data.types import BidAskPair, Order, OrderType, CancelOrder, MBP10, MBP1
+from gnomepy.data.types import BidAskPair, Order, OrderType, MBP10, MBP1
 
 
 @dataclass
@@ -40,18 +40,6 @@ class MBPBook:
 
     def get_best_ask(self) -> int | None:
         return self.asks[0] if self.asks else None
-
-    def get_mid_price(self) -> float | None:
-        """Calculate mid price from best bid and ask.
-        
-        Returns:
-            Mid price as integer (scaled), or None if either side is missing.
-        """
-        best_bid = self.get_best_bid()
-        best_ask = self.get_best_ask()
-        if best_bid is not None and best_ask is not None:
-            return (best_bid + best_ask) / 2
-        return None
 
     def _insert_price(self, price: int, side: str):
         key = (lambda x: -x) if side == 'B' else None
@@ -226,11 +214,7 @@ class MBPBook:
     def _clear_fills(self, fills: list[tuple[LocalOrder, int]]):
         for (local_order, _) in fills:
             if local_order.remaining == 0:
-                # Only delete if the order still exists (it may have been cancelled)
-                side = local_order.order.side
-                client_oid = local_order.order.client_oid
-                if client_oid in self.local_orders.get(side, {}):
-                    del self.local_orders[side][client_oid]
+                del self.local_orders[local_order.order.side][local_order.order.client_oid]
 
     def add_local_order(self, order: Order, remaining: int | None = None) -> None:
         side, price = order.side, order.price
@@ -286,10 +270,12 @@ class MBPBook:
             # Our local orders are queued behind the market depth, but to be safe,
             # we skip matching against any price level where we have orders
             if price_level.has_local_orders:
-                continue
+                raise ValueError(f"Self filling triggered - price level {price} has local orders")
+                # continue
 
             if price_level.size == 0:
-                continue
+                raise ValueError(f"Malformed local book - price level has no size but no local orders: {price_level}")
+                # continue
 
             match_size = min(remaining_size, price_level.size)
             remaining_size -= match_size

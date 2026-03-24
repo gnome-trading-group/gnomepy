@@ -8,9 +8,11 @@ import numpy as np
 
 from gnomepy import SchemaBase
 from gnomepy.data.types import (
-    MBP10, MBP1, MBO, BBO, Trades, OHLCV, 
+    MBP10, MBP1, MBO, BBO, Trades, OHLCV,
     FIXED_PRICE_SCALE, FIXED_SIZE_SCALE, SchemaType
 )
+
+_BUILTIN_RECORDER_NAMES = frozenset({'market', 'intent'})
 
 class RecordType(IntEnum):
     """Enumeration of supported record/event types."""
@@ -378,6 +380,123 @@ class IntentRecorder(BaseRecorder):
         self.at_i[asset_no] += 1
 
 
+def _make_generic_record_class(dtype: np.dtype):
+    """Dynamically create a BaseRecord subclass for the given dtype."""
+    from gnomepy.backtest.stats.stats import BaseRecord
+    import pandas as pd
+
+    _dtype = dtype
+
+    class _GenericRecord(BaseRecord):
+        @classmethod
+        def get_dtype(cls) -> np.dtype:
+            return _dtype
+
+        def _prepare_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
+            df = df.copy()
+            if 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                df = df.set_index('timestamp')
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            df[numeric_cols] = df[numeric_cols].ffill()
+            return df
+
+    _GenericRecord.__name__ = 'GenericRecord'
+    _GenericRecord.__qualname__ = 'GenericRecord'
+    return _GenericRecord
+
+
+class GenericRecorder(BaseRecorder):
+    """Recorder for arbitrary model-specific values with a user-supplied numpy dtype.
+
+    Parameters
+    ----------
+    listing_ids : list[int]
+        Unique listing identifiers for tracked assets.
+    dtype : np.dtype
+        Numpy structured dtype describing the fields to record. Must include a
+        field named ``timestamp`` of type ``i8``.
+    record_class : type | None, default None
+        A ``BaseRecord`` subclass to use when wrapping raw arrays. If *None* a
+        class is generated dynamically from *dtype*.
+    size : int, default 100_000
+        Initial buffer capacity per asset.
+    auto_resize : bool, default True
+        Whether to grow the buffer automatically when it is full.
+    """
+
+    def __init__(
+        self,
+        listing_ids: list[int],
+        dtype: np.dtype,
+        record_class=None,
+        size: int = 100_000,
+        auto_resize: bool = True,
+    ):
+        self._dtype = np.dtype(dtype)
+        self._record_class = record_class if record_class is not None else _make_generic_record_class(self._dtype)
+        super().__init__(listing_ids, size, auto_resize)
+
+    def get_record_class(self):
+        return self._record_class
+
+    def get_dtype(self) -> np.dtype:
+        return self._dtype
+
+    def log(self, listing_id: int, **fields):
+        """Write a row of field values into the buffer for the given listing.
+
+        Parameters
+        ----------
+        listing_id : int
+            Asset listing identifier.
+        **fields
+            Keyword arguments matching field names in the recorder's dtype.
+            A ``timestamp`` field is required.
+
+        Raises
+        ------
+        KeyError
+            If *listing_id* is not tracked by this recorder.
+        ValueError
+            If the ``timestamp`` field is missing or negative.
+        IndexError
+            If the buffer is full and *auto_resize* is disabled.
+        """
+        if listing_id not in self.listing_id_to_asset_no:
+            raise KeyError(
+                f"Listing ID {listing_id} not found in recorder. "
+                f"Available: {list(self.listing_id_to_asset_no.keys())}"
+            )
+
+        timestamp = fields.get('timestamp')
+        if timestamp is None:
+            raise ValueError("A 'timestamp' field is required when calling log()")
+        if timestamp < 0:
+            raise ValueError(f"Timestamp must be non-negative, got {timestamp}")
+
+        asset_no = self.listing_id_to_asset_no[listing_id]
+        i = self.at_i[asset_no]
+
+        if i >= len(self.records):
+            if self.auto_resize:
+                self._resize_buffer()
+            else:
+                raise IndexError(
+                    f"Buffer full for asset {listing_id}. "
+                    "Consider increasing size or enabling auto_resize."
+                )
+
+        for field_name in self._dtype.names:
+            if field_name in fields:
+                self.records[i, asset_no][field_name] = fields[field_name]
+
+        self.at_i[asset_no] += 1
+
+
+ModelValueRecorder = GenericRecorder
+
+
 class Recorder:
     """Composite recorder that combines MarketRecorder, IntentRecorder, and ModelValueRecorder.
     
@@ -399,7 +518,8 @@ class Recorder:
     def __init__(self, listing_ids: list[int], schema_type: SchemaType, size: int = 100_000, auto_resize: bool = True):
         self.market_recorder = MarketRecorder(listing_ids, schema_type, size, auto_resize)
         self.intent_recorder = IntentRecorder(listing_ids, size, auto_resize)
-        
+        self.custom_recorders: dict[str, BaseRecorder] = {}
+
         # Expose common attributes for backward compatibility
         self.listing_id_to_asset_no = self.market_recorder.listing_id_to_asset_no
         self.schema_type = schema_type
@@ -443,18 +563,68 @@ class Recorder:
     def get_intent_buffer_usage(self) -> dict[int, float]:
         """Get intent buffer usage statistics for each asset."""
         return self.intent_recorder.get_buffer_usage()
-    
+
+    # Custom recorder registry
+
+    def register(self, name: str, recorder: BaseRecorder) -> None:
+        """Register a custom recorder under *name*.
+
+        Parameters
+        ----------
+        name : str
+            Unique name for this recorder. Must not collide with built-in names
+            (``'market'`` or ``'intent'``).
+        recorder : BaseRecorder
+            The recorder instance to register.
+
+        Raises
+        ------
+        ValueError
+            If *name* collides with a built-in recorder name or is already registered.
+        """
+        if name in _BUILTIN_RECORDER_NAMES:
+            raise ValueError(
+                f"'{name}' is a built-in recorder name. "
+                f"Choose a name other than {sorted(_BUILTIN_RECORDER_NAMES)}."
+            )
+        if name in self.custom_recorders:
+            raise ValueError(f"A custom recorder named '{name}' is already registered.")
+        self.custom_recorders[name] = recorder
+
+    def get_custom_recorder(self, name: str) -> BaseRecorder:
+        """Return the custom recorder registered under *name*.
+
+        Raises
+        ------
+        KeyError
+            If no recorder with that name is registered.
+        """
+        if name not in self.custom_recorders:
+            raise KeyError(f"No custom recorder named '{name}' is registered.")
+        return self.custom_recorders[name]
+
+    def get_custom_record(self, name: str, listing_id: int):
+        """Shortcut for ``get_custom_recorder(name).get_record(listing_id)``."""
+        return self.get_custom_recorder(name).get_record(listing_id)
+
+    def get_all_custom_recorders(self) -> dict[str, BaseRecorder]:
+        """Return a shallow copy of the custom recorders dict."""
+        return dict(self.custom_recorders)
+
     def clear(self):
         """Clear all recorded data and reset counters."""
         self.market_recorder.clear()
         self.intent_recorder.clear()
+        for recorder in self.custom_recorders.values():
+            recorder.clear()
     
     def get_total_record_count(self) -> int:
         """Get total number of records across all assets and record types."""
-        market_count = sum(self.market_recorder.at_i)
-        intent_count = sum(self.intent_recorder.at_i)
-        return market_count + intent_count
-    
+        market_count = int(sum(self.market_recorder.at_i))
+        intent_count = int(sum(self.intent_recorder.at_i))
+        custom_count = sum(int(sum(r.at_i)) for r in self.custom_recorders.values())
+        return market_count + intent_count + custom_count
+
     def get_summary(self) -> dict[str, Any]:
         """Get summary statistics for all recorders."""
         summary = {
@@ -462,26 +632,32 @@ class Recorder:
             'market_buffer_usage': self.get_buffer_usage(),
             'intent_buffer_usage': self.get_intent_buffer_usage(),
             'schema_type': self.schema_type.value,
-            'assets': {}
+            'custom_recorders': list(self.custom_recorders.keys()),
+            'assets': {},
         }
-        
+
         for listing_id in self.listing_id_to_asset_no.keys():
             market_record = self.market_recorder.get_record(listing_id)
             intent_record = self.get_intent_record(listing_id)
-            
+
             asset_stats = {}
             if len(market_record.arr) > 0:
                 asset_stats['market_record_count'] = len(market_record.arr)
                 asset_stats['market_timestamp_range'] = (int(np.min(market_record.arr['timestamp'])), int(np.max(market_record.arr['timestamp'])))
                 asset_stats['market_price_range'] = (float(np.min(market_record.arr['price'])), float(np.max(market_record.arr['price'])))
-            
+
             if len(intent_record.arr) > 0:
                 asset_stats['intent_record_count'] = len(intent_record.arr)
                 asset_stats['intent_timestamp_range'] = (int(np.min(intent_record.arr['timestamp'])), int(np.max(intent_record.arr['timestamp'])))
-            
+
+            for cname, crec in self.custom_recorders.items():
+                record = crec.get_record(listing_id)
+                if len(record.arr) > 0:
+                    asset_stats[f'{cname}_record_count'] = len(record.arr)
+
             if asset_stats:
                 summary['assets'][listing_id] = asset_stats
-        
+
         return summary
     
     # Additional methods for backward compatibility
@@ -551,48 +727,105 @@ class Recorder:
         return self.get_all_records().items()
     
     def to_npz(self, file: str):
-        """Persist all per-asset records to a compressed `.npz` file."""
+        """Persist all per-asset records to a compressed `.npz` file.
+
+        Market records are stored under keys ``asset_{listing_id}``.
+        Custom recorder data is stored under keys
+        ``custom_{name}_asset_{listing_id}``.
+        A metadata array listing custom recorder names and their dtype
+        descriptions is saved under the key ``_custom_meta``.
+        """
         kwargs = {}
+
         for asset_no in range(self.market_recorder.records.shape[1]):
             listing_id = next(k for k, v in self.listing_id_to_asset_no.items() if v == asset_no)
             valid_records = self.market_recorder.records[:self.market_recorder.at_i[asset_no], asset_no]
             if len(valid_records) > 0:
                 kwargs[f"asset_{listing_id}"] = valid_records
-        
-        if kwargs:
-            np.savez_compressed(file, **kwargs)
-        else:
-            np.savez_compressed(file, empty=np.array([]))
-    
+
+        # Persist custom recorders
+        custom_meta = []
+        for cname, crec in self.custom_recorders.items():
+            dtype_str = crec.get_dtype().str if hasattr(crec.get_dtype(), 'str') else str(crec.get_dtype())
+            # For structured dtypes use descr
+            dtype_descr = str(crec.get_dtype().descr)
+            custom_meta.append(f"{cname}|||{dtype_descr}")
+            for asset_no in range(crec.records.shape[1]):
+                listing_id = next(k for k, v in crec.listing_id_to_asset_no.items() if v == asset_no)
+                valid_records = crec.records[:crec.at_i[asset_no], asset_no]
+                if len(valid_records) > 0:
+                    kwargs[f"custom_{cname}_asset_{listing_id}"] = valid_records
+
+        if custom_meta:
+            kwargs['_custom_meta'] = np.array(custom_meta, dtype=object)
+
+        # Always persist the listing IDs so from_npz can reconstruct the recorder
+        # even when no market records were logged.
+        kwargs['_listing_ids'] = np.array(
+            list(self.listing_id_to_asset_no.keys()), dtype=np.int64
+        )
+
+        np.savez_compressed(file, **kwargs)
+
     @classmethod
     def from_npz(cls, file: str, schema_type: SchemaType) -> 'Recorder':
         """Load a recorder from a saved .npz file."""
-        data = np.load(file)
-        
-        listing_ids = []
-        for key in data.keys():
-            if key.startswith('asset_'):
-                listing_id = int(key.split('_')[1])
-                listing_ids.append(listing_id)
-        
+        data = np.load(file, allow_pickle=True)
+
+        # Prefer the explicitly-saved listing IDs; fall back to inferring from keys.
+        if '_listing_ids' in data:
+            listing_ids = list(map(int, data['_listing_ids']))
+        else:
+            listing_ids = []
+            for key in data.keys():
+                if key.startswith('asset_'):
+                    listing_ids.append(int(key.split('_')[1]))
+
         if not listing_ids:
             raise ValueError("No asset data found in the file")
-        
+
         recorder = cls(listing_ids, schema_type)
-        
+
         for listing_id in listing_ids:
-            asset_data = data[f'asset_{listing_id}']
+            key = f'asset_{listing_id}'
+            if key not in data:
+                continue
+            asset_data = data[key]
             if len(asset_data) > 0:
                 asset_no = recorder.listing_id_to_asset_no[listing_id]
                 while len(recorder.market_recorder.records) < len(asset_data):
                     recorder.market_recorder._resize_buffer()
-                
+
                 recorder.market_recorder.records[:len(asset_data), asset_no] = asset_data
                 recorder.market_recorder.at_i[asset_no] = len(asset_data)
-        
+
+        # Restore custom recorders
+        if '_custom_meta' in data:
+            import ast
+            for meta_entry in data['_custom_meta']:
+                cname, dtype_descr_str = str(meta_entry).split('|||', 1)
+                dtype_descr = ast.literal_eval(dtype_descr_str)
+                dtype = np.dtype(dtype_descr)
+
+                crec = GenericRecorder(listing_ids, dtype)
+                for listing_id in listing_ids:
+                    key = f"custom_{cname}_asset_{listing_id}"
+                    if key in data:
+                        asset_data = data[key]
+                        if len(asset_data) > 0:
+                            asset_no = crec.listing_id_to_asset_no[listing_id]
+                            while len(crec.records) < len(asset_data):
+                                crec._resize_buffer()
+                            crec.records[:len(asset_data), asset_no] = asset_data
+                            crec.at_i[asset_no] = len(asset_data)
+                recorder.custom_recorders[cname] = crec
+
         return recorder
     
     def __repr__(self):
-        return (f"Recorder(schema_type={self.schema_type.value}, "
-                f"assets={len(self.listing_id_to_asset_no)}, "
-                f"total_records={self.get_total_record_count()})")
+        return (
+            f"Recorder(schema_type={self.schema_type.value}, "
+            f"assets={len(self.listing_id_to_asset_no)}, "
+            f"total_records={self.get_total_record_count()}, "
+            f"custom_recorders={len(self.custom_recorders)})"
+        )

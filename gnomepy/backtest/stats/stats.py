@@ -33,6 +33,9 @@ class BaseRecord(ABC):
     resampled or partitioned views.
     """
 
+    # Subclasses may set this to False to bypass Stats column validation.
+    _stats_strict: bool = False
+
     def __init__(self, arr: NDArray):
         self.arr = arr
         self.df = pd.DataFrame(arr)
@@ -78,7 +81,7 @@ class BaseRecord(ABC):
             a list of context dictionaries with metric results.
         """
         if metrics is None:
-            metrics = DEFAULT_METRICS
+            metrics = DEFAULT_METRICS if self._stats_strict else []
 
         # Work with a copy to avoid side effects
         df = self.df.copy()
@@ -94,7 +97,7 @@ class BaseRecord(ABC):
 
         stats = [compute_metrics(sub_df, metrics) for sub_df in partitions]
 
-        return Stats(df, stats, **kwargs)
+        return Stats(df, stats, strict=self._stats_strict, **kwargs)
 
 
 class IntentRecord(BaseRecord):
@@ -141,11 +144,13 @@ class IntentRecord(BaseRecord):
 
 class MarketRecord(BaseRecord):
     """Pandas-oriented wrapper around a structured market array.
-    
+
     Similar to Record, but specifically for market events
     (price, quantity, fee) tracked when market data is received.
     """
-    
+
+    _stats_strict: bool = True
+
     @classmethod
     def get_dtype(cls) -> np.dtype:
         return np.dtype(
@@ -207,26 +212,27 @@ class MarketRecord(BaseRecord):
 class Stats:
     """Container for computed statistics and source data with convenience views."""
 
-    def __init__(self, data: pd.DataFrame, stats: list[dict[str, Any]], **kwargs):
-        self._validate_data(data)
+    def __init__(self, data: pd.DataFrame, stats: list[dict[str, Any]], strict: bool = True, **kwargs):
+        self._validate_data(data, strict=strict)
         self._validate_stats(stats)
         self.data = data
         self.stats = stats
         self.kwargs = kwargs
         self._cache: dict[str, Any] = {}
-    
-    def _validate_data(self, data: pd.DataFrame) -> None:
+
+    def _validate_data(self, data: pd.DataFrame, strict: bool = True) -> None:
         """Validate input DataFrame."""
         if not isinstance(data, pd.DataFrame):
             raise TypeError("data must be a pandas DataFrame")
-        
+
         if data.empty:
             raise ValueError("DataFrame cannot be empty")
-        
-        required_columns = ['nmv', 'price', 'quantity', 'fee']
-        missing = set(required_columns) - set(data.columns)
-        if missing:
-            raise ValueError(f"Missing required columns: {missing}")
+
+        if strict:
+            required_columns = ['nmv', 'price', 'quantity', 'fee']
+            missing = set(required_columns) - set(data.columns)
+            if missing:
+                raise ValueError(f"Missing required columns: {missing}")
     
     def _validate_stats(self, stats: list[dict[str, Any]]) -> None:
         """Validate stats list."""

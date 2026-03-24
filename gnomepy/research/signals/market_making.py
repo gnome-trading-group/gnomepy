@@ -1,13 +1,10 @@
 from abc import abstractmethod
-from typing import TYPE_CHECKING
+from gnomepy.backtest.recorder import GenericRecorder
 from gnomepy.data.types import SchemaType
 from gnomepy.registry.types import Listing
 from gnomepy.research.types import Intent
 from gnomepy.research.signals import PositionAwareSignal
 import numpy as np
-
-if TYPE_CHECKING:
-    from gnomepy.backtest.recorder import MarketRecorder
 
 
 class MarketMakingSignal(PositionAwareSignal):
@@ -28,6 +25,7 @@ class MarketMakingSignal(PositionAwareSignal):
             max_inventory: float | None = None,
             liquidation_threshold: float = 0.8,
             use_market_orders_for_liquidation: bool = True,
+            model_value_recorder: GenericRecorder | None = None
     ):
         """Initialize a market making signal.
 

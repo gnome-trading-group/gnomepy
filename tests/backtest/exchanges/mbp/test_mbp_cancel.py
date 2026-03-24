@@ -5,7 +5,7 @@ from gnomepy.backtest.latency import LatencyModel
 from gnomepy.backtest.queues.base import QueueModel
 from gnomepy.data.types import (
     Order, OrderType, TimeInForce, OrderStatus, ExecType,
-    MBP10, MBP1, BidAskPair
+    MBP10, MBP1, BidAskPair, CancelOrder
 )
 from tests.backtest.exchanges.mbp.test_mbp_book import (
     DummyQueueModel, make_order, make_trade, make_bid_ask_pair
@@ -343,7 +343,7 @@ def test_cancel_order(
         client_oid_to_cancel = orders[0].client_oid
     
     # Perform cancellation
-    result = exchange.cancel_order(client_oid_to_cancel)
+    result = exchange.cancel_order(CancelOrder(client_oid=client_oid_to_cancel, exchange_id=1, security_id=1))
     
     # Verify result
     assert len(result) == 1
@@ -372,13 +372,13 @@ def test_cancel_order_multiple_cancellations():
     ])
     
     # First cancellation should succeed
-    result1 = exchange.cancel_order("ORDER_1")
+    result1 = exchange.cancel_order(CancelOrder(client_oid="ORDER_1", exchange_id=1, security_id=1))
     assert len(result1) == 1
     assert result1[0].exec_type == ExecType.CANCELED
     assert result1[0].order_status == OrderStatus.CANCELED
     
     # Second cancellation should fail
-    result2 = exchange.cancel_order("ORDER_1")
+    result2 = exchange.cancel_order(CancelOrder(client_oid="ORDER_1", exchange_id=1, security_id=1))
     assert len(result2) == 1
     assert result2[0].exec_type == ExecType.REJECTED
     assert result2[0].order_status == OrderStatus.REJECTED
@@ -402,7 +402,7 @@ def test_cancel_order_after_partial_fill():
     local_order.remaining = 5  # Simulate 5 units filled
     
     # Cancel the partially filled order
-    result = exchange.cancel_order("ORDER_1")
+    result = exchange.cancel_order(CancelOrder(client_oid="ORDER_1", exchange_id=1, security_id=1))
     
     assert len(result) == 1
     assert result[0].exec_type == ExecType.CANCELED
@@ -416,7 +416,7 @@ def test_cancel_order_empty_string():
         make_order(price=100, size=10, side="B", client_oid="ORDER_1")
     ])
     
-    result = exchange.cancel_order("")
+    result = exchange.cancel_order(CancelOrder(client_oid="", exchange_id=1, security_id=1))
     
     assert len(result) == 1
     assert result[0].exec_type == ExecType.REJECTED

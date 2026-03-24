@@ -63,17 +63,6 @@ class Backtest:
                 if self.schema_type not in exchange.get_supported_schemas():
                     raise ValueError(f"Exchange ID {exchange_id} does not support the provided schema type")
 
-        for listing in self.listings:
-            available_data = self.market_data_client.has_available_data(
-                exchange_id=listing.exchange_id,
-                security_id=listing.security_id,
-                start_datetime=self.start_datetime,
-                end_datetime=self.end_datetime,
-                schema_type=self.schema_type,
-            )
-            if not available_data:
-                raise ValueError(f"Listing ID {listing.listing_id} does not have data in the provided time range")
-
     def prepare_data(self):
         self.queue = queue.PriorityQueue()
         for listing in self.listings:
