@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
 from gnomepy.java.schemas import JavaSchema
+from gnomepy.signals.registrable import Registrable
 
 
-class VolatilitySignal(ABC):
+class VolatilitySignal(Registrable):
     """Base class for volatility estimates measured in basis points.
 
     A 50 bps volatility means "expected price variation of ~50 bps

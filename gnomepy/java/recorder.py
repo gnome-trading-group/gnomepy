@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -7,16 +9,17 @@ from gnomepy.java.statics import Scales
 
 
 class BacktestResults:
-    """Results from a backtest run, wrapping the Java BacktestRecorder.
+    """Data access layer for backtest recorder output.
 
-    Provides efficient conversion of columnar Java arrays into numpy arrays
-    and pandas DataFrames for analysis.
+    Converts columnar Java arrays into cached pandas DataFrames.
+    For analysis and reporting, use BacktestReport(results).
 
     Usage:
         results = backtest.run()
-        print(results.summary())
-        df = results.execution_records_df()
-        pnl = results.compute_pnl()
+        market_df = results.market_records_df()
+        exec_df = results.execution_records_df()
+        intent_df = results.intent_records_df()
+        results.save("/tmp/my_backtest")
     """
 
     @property
@@ -29,6 +32,9 @@ class BacktestResults:
 
     def __init__(self, java_recorder):
         self._java = java_recorder
+        self._cached_market_df = None
+        self._cached_exec_df = None
+        self._cached_intent_df = None
 
     @property
     def market_record_count(self) -> int:
@@ -38,8 +44,15 @@ class BacktestResults:
     def execution_record_count(self) -> int:
         return int(self._java.getExecutionRecordCount())
 
+    @property
+    def intent_record_count(self) -> int:
+        return int(self._java.getIntentRecordCount())
+
     def market_records_df(self, scale_prices: bool = True) -> pd.DataFrame:
         """Convert Java market record arrays to a pandas DataFrame."""
+        if self._cached_market_df is not None:
+            return self._cached_market_df
+
         n = self.market_record_count
         if n == 0:
             return pd.DataFrame()
@@ -53,24 +66,30 @@ class BacktestResults:
             "best_ask_price": np.array(j.getMarketBestAskPrices()[:n], dtype=np.int64),
             "best_bid_size": np.array(j.getMarketBestBidSizes()[:n], dtype=np.int64),
             "best_ask_size": np.array(j.getMarketBestAskSizes()[:n], dtype=np.int64),
+            "mid_price": np.array(j.getMarketMidPrices()[:n], dtype=np.int64),
+            "spread": np.array(j.getMarketSpreads()[:n], dtype=np.int64),
             "last_trade_price": np.array(j.getMarketLastTradePrices()[:n], dtype=np.int64),
             "last_trade_size": np.array(j.getMarketLastTradeSizes()[:n], dtype=np.int64),
-            "sequence_number": np.array(j.getMarketSequenceNumbers()[:n], dtype=np.int64),
         })
 
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df = df.set_index("timestamp")
 
         if scale_prices:
-            for col in ["best_bid_price", "best_ask_price", "last_trade_price"]:
+            for col in ["best_bid_price", "best_ask_price", "mid_price", "spread",
+                        "last_trade_price"]:
                 df[col] = df[col] / self.PRICE_SCALE
             for col in ["best_bid_size", "best_ask_size", "last_trade_size"]:
                 df[col] = df[col] / self.SIZE_SCALE
 
+        self._cached_market_df = df
         return df
 
     def execution_records_df(self, scale_prices: bool = True) -> pd.DataFrame:
         """Convert Java execution record arrays to a pandas DataFrame."""
+        if self._cached_exec_df is not None:
+            return self._cached_exec_df
+
         n = self.execution_record_count
         if n == 0:
             return pd.DataFrame()
@@ -81,14 +100,14 @@ class BacktestResults:
             "timestamp_recv": np.array(j.getExecTimestampRecvs()[:n], dtype=np.int64),
             "exchange_id": np.array(j.getExecExchangeIds()[:n], dtype=np.int32),
             "security_id": np.array(j.getExecSecurityIds()[:n], dtype=np.int32),
+            "strategy_id": np.array(j.getExecStrategyIds()[:n], dtype=np.int32),
             "client_oid": list(j.getExecClientOids()[:n]),
             "side": list(j.getExecSides()[:n]),
             "exec_type": list(j.getExecExecTypes()[:n]),
-            "order_status": list(j.getExecOrderStatuses()[:n]),
             "filled_qty": np.array(j.getExecFilledQtys()[:n], dtype=np.int64),
             "fill_price": np.array(j.getExecFillPrices()[:n], dtype=np.int64),
-            "cumulative_qty": np.array(j.getExecCumulativeQtys()[:n], dtype=np.int64),
-            "leaves_qty": np.array(j.getExecLeavesQtys()[:n], dtype=np.int64),
+            "order_price": np.array(j.getExecOrderPrices()[:n], dtype=np.int64),
+            "order_size": np.array(j.getExecOrderSizes()[:n], dtype=np.int64),
             "fee": np.array(j.getExecFees()[:n], dtype=np.float64),
         })
 
@@ -97,119 +116,77 @@ class BacktestResults:
         df = df.set_index("timestamp_event")
 
         if scale_prices:
-            df["fill_price"] = df["fill_price"] / self.PRICE_SCALE
-            df["fee"] = df["fee"] / (self.PRICE_SCALE * self.SIZE_SCALE)
-            for col in ["filled_qty", "cumulative_qty", "leaves_qty"]:
+            for col in ["fill_price", "order_price"]:
+                df[col] = df[col] / self.PRICE_SCALE
+            for col in ["filled_qty", "order_size"]:
                 df[col] = df[col] / self.SIZE_SCALE
+            df["fee"] = df["fee"] / (self.PRICE_SCALE * self.SIZE_SCALE)
 
+        self._cached_exec_df = df
         return df
 
-    def compute_pnl(self, scale_prices: bool = True) -> pd.DataFrame:
-        """Compute PnL by merging market and execution data.
+    def intent_records_df(self, scale_prices: bool = True) -> pd.DataFrame:
+        """Convert Java intent record arrays to a pandas DataFrame."""
+        if self._cached_intent_df is not None:
+            return self._cached_intent_df
 
-        Produces a time-series DataFrame with columns:
-        - price: mid price from market data
-        - quantity: net position (cumulative fills)
-        - fee: cumulative fees
-        - holding_pnl: PnL from price movement on existing position
-        - trade_pnl: PnL from spread capture on new fills
-        - pnl: total PnL (holding + trade - fees)
-        - nmv: net market value (quantity * price)
-        """
-        market_df = self.market_records_df(scale_prices=scale_prices)
-        exec_df = self.execution_records_df(scale_prices=scale_prices)
-
-        if market_df.empty:
+        n = self.intent_record_count
+        if n == 0:
             return pd.DataFrame()
 
-        # Compute mid price from best bid/ask
-        df = market_df[["best_bid_price", "best_ask_price"]].copy()
-        valid_book = (df["best_bid_price"] > 0) & (df["best_ask_price"] > 0)
-        df["price"] = np.where(
-            valid_book,
-            (df["best_bid_price"] + df["best_ask_price"]) / 2.0,
-            np.nan,
-        )
-        df["price"] = df["price"].ffill().bfill()
-        df = df[["price"]].copy()
+        j = self._java
+        df = pd.DataFrame({
+            "timestamp": np.array(j.getIntentTimestamps()[:n], dtype=np.int64),
+            "exchange_id": np.array(j.getIntentExchangeIds()[:n], dtype=np.int32),
+            "security_id": np.array(j.getIntentSecurityIds()[:n], dtype=np.int64),
+            "strategy_id": np.array(j.getIntentStrategyIds()[:n], dtype=np.int32),
+            "bid_price": np.array(j.getIntentBidPrices()[:n], dtype=np.int64),
+            "bid_size": np.array(j.getIntentBidSizes()[:n], dtype=np.int64),
+            "ask_price": np.array(j.getIntentAskPrices()[:n], dtype=np.int64),
+            "ask_size": np.array(j.getIntentAskSizes()[:n], dtype=np.int64),
+            "take_side": list(j.getIntentTakeSides()[:n]),
+            "take_size": np.array(j.getIntentTakeSizes()[:n], dtype=np.int64),
+            "take_limit_price": np.array(j.getIntentTakeLimitPrices()[:n], dtype=np.int64),
+        })
 
-        # Merge execution data
-        df["quantity"] = 0.0
-        df["fee"] = 0.0
-        df["fill_price"] = 0.0
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.set_index("timestamp")
 
-        if not exec_df.empty:
-            fills = exec_df[exec_df["exec_type"].isin(["FILL", "PARTIAL_FILL"])].copy()
-            if not fills.empty:
-                fills["signed_qty"] = fills.apply(
-                    lambda r: r["filled_qty"] if r["side"] == "Bid" else -r["filled_qty"],
-                    axis=1,
-                )
+        if scale_prices:
+            for col in ["bid_price", "ask_price", "take_limit_price"]:
+                df[col] = df[col] / self.PRICE_SCALE
+            for col in ["bid_size", "ask_size", "take_size"]:
+                df[col] = df[col] / self.SIZE_SCALE
 
-                market_times = df.index.asi8
-                net_position = 0.0
-                for _, fill in fills.iterrows():
-                    fill_ns = fill.name.value
-                    pos = np.searchsorted(market_times, fill_ns)
-                    if pos >= len(market_times):
-                        pos = len(market_times) - 1
-                    elif pos > 0:
-                        before = market_times[pos - 1]
-                        after = market_times[pos]
-                        if abs(fill_ns - before) < abs(fill_ns - after):
-                            pos = pos - 1
-                    df.iloc[pos, df.columns.get_loc("fee")] += fill["fee"]
-                    df.iloc[pos, df.columns.get_loc("fill_price")] = fill["fill_price"]
-                    net_position += fill["signed_qty"]
-                    df.iloc[pos, df.columns.get_loc("quantity")] = net_position
-
-        # Forward-fill position
-        df["quantity"] = df["quantity"].replace(0, np.nan).ffill().fillna(0)
-        df["fee"] = df["fee"].cumsum()
-
-        # Compute PnL components
-        prev_qty = df["quantity"].shift(1).fillna(0)
-        prev_price = df["price"].shift(1)
-        price_change = df["price"] - prev_price
-
-        df["holding_pnl"] = (prev_qty * price_change).fillna(0)
-        qty_change = df["quantity"] - prev_qty
-        df["trade_pnl"] = (qty_change * (df["price"] - df["fill_price"].replace(0, np.nan).ffill().fillna(df["price"]))).fillna(0)
-        df["pnl"] = (df["holding_pnl"] + df["trade_pnl"]).cumsum() - df["fee"]
-        df["nmv"] = df["quantity"] * df["price"]
-
+        self._cached_intent_df = df
         return df
 
-    def summary(self) -> dict:
-        """Summary statistics for the backtest run."""
-        pnl_df = self.compute_pnl()
+    def save(self, directory: str | Path) -> None:
+        """Save all recorder data to Parquet files in the given directory.
+
+        Creates three files:
+          - market_records.parquet
+          - execution_records.parquet
+          - intent_records.parquet
+        """
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+
+        market_df = self.market_records_df()
+        if not market_df.empty:
+            market_df.to_parquet(directory / "market_records.parquet")
+
         exec_df = self.execution_records_df()
-
-        result = {
-            "market_records": self.market_record_count,
-            "execution_records": self.execution_record_count,
-        }
-
-        if not pnl_df.empty:
-            result.update({
-                "total_pnl": float(pnl_df["pnl"].iloc[-1]) if len(pnl_df) > 0 else 0.0,
-                "total_fees": float(pnl_df["fee"].iloc[-1]) if len(pnl_df) > 0 else 0.0,
-                "max_nmv": float(pnl_df["nmv"].abs().max()),
-                "final_quantity": float(pnl_df["quantity"].iloc[-1]) if len(pnl_df) > 0 else 0.0,
-            })
-
         if not exec_df.empty:
-            fills = exec_df[exec_df["exec_type"].isin(["FILL", "PARTIAL_FILL"])]
-            result.update({
-                "num_fills": len(fills),
-                "num_cancels": len(exec_df[exec_df["exec_type"] == "CANCEL"]),
-                "num_rejects": len(exec_df[exec_df["exec_type"] == "REJECT"]),
-            })
+            exec_df.to_parquet(directory / "execution_records.parquet")
 
-        return result
+        intent_df = self.intent_records_df()
+        if not intent_df.empty:
+            intent_df.to_parquet(directory / "intent_records.parquet")
 
     def __repr__(self) -> str:
         return (
             f"BacktestResults(market_records={self.market_record_count}, "
-            f"execution_records={self.execution_record_count})"
+            f"execution_records={self.execution_record_count}, "
+            f"intent_records={self.intent_record_count})"
         )

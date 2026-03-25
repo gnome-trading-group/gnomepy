@@ -34,6 +34,7 @@ class Intent:
 
     exchange_id: int
     security_id: int
+    strategy_id: int = 0
     bid_price: int = 0
     bid_size: int = 0
     ask_price: int = 0
@@ -77,6 +78,8 @@ class RiskConfig:
     """Configuration for OMS risk policies."""
 
     max_notional_value: int | None = None
+    default_tick_size: int = 1_000_000_000  # $1 tick (scaled by PRICE_SCALE)
+    tick_sizes: dict[int, int] | None = None  # securityId → tick size overrides
 
 
 class OmsView:
@@ -140,7 +143,7 @@ def _tracked_order_from_java(tracked) -> TrackedOrderInfo:
         price=int(tracked.getOriginalOrder().price()),
         size=int(tracked.getOriginalOrder().size()),
         state=str(tracked.getState().name()),
-        cumulative_qty=int(tracked.getCumulativeQty()),
+        cumulative_qty=int(tracked.getFilledQty()),
         leaves_qty=int(tracked.getLeavesQty()),
         avg_fill_price=int(tracked.getAvgFillPrice()),
     )
@@ -174,7 +177,15 @@ def _build_java_oms(risk_config: RiskConfig, oid_generator=None):
         _counter = [0]
         def oid_generator():
             _counter[0] += 1
-            return f"oms-{_counter[0]}"
+            return jpype.JLong(_counter[0])
 
-    return OMS(engine, oid_generator)
+    java_oms = OMS(engine, oid_generator, jpype.JLong(risk_config.default_tick_size))
+
+    # Set per-security tick size overrides
+    if risk_config.tick_sizes:
+        resolver = java_oms.getIntentResolver()
+        for sec_id, tick in risk_config.tick_sizes.items():
+            resolver.setTickSize(jpype.JLong(sec_id), jpype.JLong(tick))
+
+    return java_oms
 

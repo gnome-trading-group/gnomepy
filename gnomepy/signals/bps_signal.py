@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
 from gnomepy.java.schemas import JavaSchema
+from gnomepy.signals.registrable import Registrable
 
 
-class BpsSignal(ABC):
+class BpsSignal(Registrable):
     """Base class for directional signals measured in basis points.
 
     A +10 bps signal means "price will move up ~10 bps from current level."

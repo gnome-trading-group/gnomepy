@@ -39,6 +39,7 @@ def _create_java_strategy(py_strategy: Strategy, adapter):
         if has_quote and has_take:
             ji.setQuoteAndTake(
                 int(intent.exchange_id), jpype.JLong(intent.security_id),
+                int(intent.strategy_id),
                 jpype.JLong(intent.bid_price), jpype.JLong(intent.bid_size),
                 jpype.JLong(intent.ask_price), jpype.JLong(intent.ask_size),
                 intent.take_side.to_java(), jpype.JLong(intent.take_size),
@@ -47,12 +48,14 @@ def _create_java_strategy(py_strategy: Strategy, adapter):
         elif has_take:
             ji.setTake(
                 int(intent.exchange_id), jpype.JLong(intent.security_id),
+                int(intent.strategy_id),
                 intent.take_side.to_java(), jpype.JLong(intent.take_size),
                 intent.take_order_type.to_java(), jpype.JLong(intent.take_limit_price),
             )
         else:
             ji.setQuote(
                 int(intent.exchange_id), jpype.JLong(intent.security_id),
+                int(intent.strategy_id),
                 jpype.JLong(intent.bid_price), jpype.JLong(intent.bid_size),
                 jpype.JLong(intent.ask_price), jpype.JLong(intent.ask_size),
             )
@@ -74,7 +77,7 @@ def _create_java_strategy(py_strategy: Strategy, adapter):
                 intent_array[i] = _to_java_intent(py_intent)
 
             # Java handles everything: resolve → validate → track → LocalMessage
-            return adapter.processIntents(intent_array, len(intents))
+            return adapter.processIntents(timestamp, intent_array, len(intents))
 
         @JOverride
         def onExecutionReport(self, timestamp, report):
@@ -92,13 +95,13 @@ def _create_java_strategy(py_strategy: Strategy, adapter):
 def _build_exchange_map(configs: list[ExchangeConfig]):
     """Build Map<Integer, Map<Integer, SimulatedExchange>> from Python configs."""
     HashMap = jpype.JClass("java.util.HashMap")
-    MBPSimulatedExchange = jpype.JClass(
-        "group.gnometrading.backtest.exchange.MBPSimulatedExchange"
+    MbpSimulatedExchange = jpype.JClass(
+        "group.gnometrading.backtest.exchange.MbpSimulatedExchange"
     )
 
     outer = HashMap()
     for cfg in configs:
-        exchange = MBPSimulatedExchange(
+        exchange = MbpSimulatedExchange(
             cfg.fee_model._to_java(),
             cfg.network_latency._to_java(),
             cfg.order_processing_latency._to_java(),
@@ -201,6 +204,13 @@ class Backtest:
         # Build exchange map
         exchange_map = _build_exchange_map(self._exchanges)
 
+        # Create recorder (before adapter so it can be passed in)
+        if self._record:
+            JavaRecorder = jpype.JClass(
+                "group.gnometrading.backtest.recorder.BacktestRecorder"
+            )
+            self._recorder = JavaRecorder()
+
         # Always create OMS + backtest adapter
         from gnomepy.java.oms import _build_java_oms, OmsView, RiskConfig
 
@@ -211,7 +221,7 @@ class Backtest:
         OmsBacktestAdapter = jpype.JClass(
             "group.gnometrading.backtest.oms.OmsBacktestAdapter"
         )
-        adapter = OmsBacktestAdapter(java_oms)
+        adapter = OmsBacktestAdapter(java_oms, self._recorder) if self._recorder else OmsBacktestAdapter(java_oms)
 
         # Create Java strategy proxy
         java_strategy = _create_java_strategy(self._strategy, adapter)
@@ -238,12 +248,8 @@ class Backtest:
             str(self._bucket),
         )
 
-        # Attach recorder
-        if self._record:
-            JavaRecorder = jpype.JClass(
-                "group.gnometrading.backtest.recorder.BacktestRecorder"
-            )
-            self._recorder = JavaRecorder()
+        # Attach recorder to driver (for market data recording)
+        if self._recorder is not None:
             self._driver.setRecorder(self._recorder)
 
     def run(self) -> BacktestResults | None:
