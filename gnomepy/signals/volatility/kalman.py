@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 
 from gnomepy.java.schemas import JavaSchema
-from gnomepy.signals.volatility_signal import VolatilitySignal
+from gnomepy.signals.volatility.base import VolatilitySignal
 
 
 class AdaptiveKalmanVolatility(VolatilitySignal):
@@ -52,11 +52,9 @@ class AdaptiveKalmanVolatility(VolatilitySignal):
             self._last_price = mid
             return
 
-        # Log return approximation
         log_return = (mid - self._last_price) / self._last_price
         self._last_price = mid
 
-        # Observation: squared return
         z = log_return * log_return
         self._tick_count += 1
 
@@ -66,22 +64,17 @@ class AdaptiveKalmanVolatility(VolatilitySignal):
             self._R = z
             return
 
-        # Predict
         x_pred = self._x
         p_pred = self._P + self.Q
 
-        # Innovation
         innovation = z - x_pred
         S = p_pred + self._R
 
-        # Adaptive R
         r_candidate = innovation * innovation - p_pred
         self._R = self.alpha * self._R + (1.0 - self.alpha) * max(r_candidate, self.r_floor)
 
-        # Gain
         K = p_pred / S if S > 0 else 0.0
 
-        # Update
         self._x = x_pred + K * innovation
         self._P = (1.0 - K) * p_pred
 
@@ -132,7 +125,6 @@ class AdaptiveKalmanVolatility(VolatilitySignal):
     def get_version(self) -> str:
         return self._version
 
-    # Inspection
     @property
     def variance_estimate(self) -> float:
         return self._x

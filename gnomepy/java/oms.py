@@ -98,6 +98,11 @@ class OmsView:
             return None
         return _position_from_java(pos)
 
+    def get_effective_quantity(self, strategy_id: int, exchange_id: int, security_id: int) -> int:
+        """Net position + inflight orders (what position will be if all pending orders fill)."""
+        return int(self._java.getEffectiveQuantity(
+            int(strategy_id), int(exchange_id), jpype.JLong(security_id)))
+
     def get_all_positions(self) -> list[PositionInfo]:
         result = []
         self._java.forEachPosition(lambda p: result.append(_position_from_java(p)))

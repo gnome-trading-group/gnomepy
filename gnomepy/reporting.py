@@ -37,7 +37,9 @@ class BacktestReport:
         - price: mid price (forward-filled)
         - quantity: net position (cumulative signed fills)
         - fee: cumulative fees
-        - pnl: cumulative mark-to-market PnL minus fees
+        - spread_capture: cumulative PnL from filling at favorable prices vs mid
+        - holding_pnl: cumulative PnL from price movement on existing position
+        - pnl: total PnL (holding + spread_capture - fees)
         - nmv: net market value (quantity * price)
         """
         if self._cached_pnl_df is not None:
@@ -53,48 +55,55 @@ class BacktestReport:
         df = df.rename(columns={"mid_price": "price"})
         df["price"] = df["price"].replace(0, np.nan).ffill().bfill()
 
-        df["quantity"] = 0.0
-        df["fee"] = 0.0
+        # Initialize per-tick changes to zero
+        qty_changes = pd.Series(0.0, index=df.index)
+        fee_changes = pd.Series(0.0, index=df.index)
+        spread_changes = pd.Series(0.0, index=df.index)
 
         if not exec_df.empty:
-            fills = exec_df[exec_df["exec_type"].isin(["FILL", "PARTIAL_FILL"])].copy()
+            fills = exec_df[
+                exec_df["exec_type"].isin(["FILL", "PARTIAL_FILL"])
+                & (exec_df["fill_price"] > 0)
+                & (exec_df["filled_qty"] > 0)
+                & (exec_df["side"].isin(["Bid", "Ask"]))
+            ].copy()
             if not fills.empty:
                 fills["signed_qty"] = np.where(
                     fills["side"] == "Bid", fills["filled_qty"], -fills["filled_qty"]
                 )
 
-                fills_reset = fills[["signed_qty", "fee"]].reset_index()
-                fills_reset["timestamp_event"] = fills_reset["timestamp_event"].astype(np.int64)
-                market_reset = df[[]].reset_index()
-                market_reset["timestamp"] = market_reset["timestamp"].astype(np.int64)
+                market_times = df.index.asi8
+                prices = df["price"].values
+                for _, fill in fills.iterrows():
+                    fill_ns = fill.name.value
+                    # Forward: first market tick at or after the fill
+                    pos = np.searchsorted(market_times, fill_ns, side="left")
+                    if pos >= len(market_times):
+                        pos = len(market_times) - 1
+                    qty_changes.iloc[pos] += fill["signed_qty"]
+                    fee_changes.iloc[pos] += fill["fee"]
+                    # Spread capture: signed_qty * (mid - fill_price)
+                    # Buy below mid = positive, sell above mid = positive
+                    spread_changes.iloc[pos] += fill["signed_qty"] * (prices[pos] - fill["fill_price"])
 
-                merged = pd.merge_asof(
-                    fills_reset.sort_values("timestamp_event"),
-                    market_reset.sort_values("timestamp"),
-                    left_on="timestamp_event",
-                    right_on="timestamp",
-                    direction="nearest",
-                )
-
-                merged["timestamp"] = pd.to_datetime(merged["timestamp"])
-                grouped = merged.groupby("timestamp").agg(
-                    signed_qty=("signed_qty", "sum"),
-                    fee=("fee", "sum"),
-                ).reindex(df.index, fill_value=0.0)
-
-                df["quantity"] = grouped["signed_qty"].cumsum()
-                df["fee"] = grouped["fee"].cumsum()
+        df["quantity"] = qty_changes.cumsum()
+        df["fee"] = fee_changes.cumsum()
+        df["spread_capture"] = spread_changes.cumsum()
 
         prev_qty = df["quantity"].shift(1, fill_value=0.0)
         price_change = df["price"].diff().fillna(0.0)
-        df["pnl"] = (prev_qty * price_change).cumsum() - df["fee"]
+        df["holding_pnl"] = (prev_qty * price_change).cumsum()
+        df["pnl"] = df["holding_pnl"] + df["spread_capture"] - df["fee"]
         df["nmv"] = df["quantity"] * df["price"]
 
         self._cached_pnl_df = df
         return df
 
     def _get_fills(self) -> pd.DataFrame:
-        """Get fills (FILL + PARTIAL_FILL) from execution records."""
+        """Get valid fills (FILL + PARTIAL_FILL) from execution records.
+
+        Filters out records with invalid data (zero/negative prices, missing side).
+        """
         if self._cached_fills_df is not None:
             return self._cached_fills_df
 
@@ -103,28 +112,94 @@ class BacktestReport:
             self._cached_fills_df = pd.DataFrame()
             return self._cached_fills_df
 
-        fills = exec_df[exec_df["exec_type"].isin(["FILL", "PARTIAL_FILL"])].copy()
+        fills = exec_df[
+            exec_df["exec_type"].isin(["FILL", "PARTIAL_FILL"])
+            & (exec_df["fill_price"] > 0)
+            & (exec_df["filled_qty"] > 0)
+            & (exec_df["side"].isin(["Bid", "Ask"]))
+        ].copy()
         self._cached_fills_df = fills
         return fills
 
     def summary(self) -> dict:
-        """Minimal summary statistics for the backtest run."""
+        """Summary statistics including microstructure quality metrics."""
         pnl_df = self.compute_pnl()
         fills = self._get_fills()
+        market_df = self.results.market_records_df()
 
-        return {
+        result = {
             "total_pnl": float(pnl_df["pnl"].iloc[-1]) if not pnl_df.empty else 0.0,
             "total_fees": float(pnl_df["fee"].iloc[-1]) if not pnl_df.empty else 0.0,
+            "spread_capture": float(pnl_df["spread_capture"].iloc[-1]) if not pnl_df.empty else 0.0,
+            "holding_pnl": float(pnl_df["holding_pnl"].iloc[-1]) if not pnl_df.empty else 0.0,
             "num_fills": len(fills),
             "final_quantity": float(pnl_df["quantity"].iloc[-1]) if not pnl_df.empty else 0.0,
         }
 
+        if not fills.empty and not pnl_df.empty:
+            # Duration
+            duration_sec = (fills.index[-1] - fills.index[0]).total_seconds()
+            duration_min = max(duration_sec / 60, 1e-9)
+
+            # 1. Fill rate — fills per intent
+            intent_count = self.results.intent_record_count
+            result["fills_per_minute"] = round(len(fills) / duration_min, 1)
+            result["fill_rate_pct"] = round(len(fills) / max(1, intent_count) * 100, 2)
+
+            # 2. Fill size distribution
+            result["avg_fill_size"] = round(float(fills["filled_qty"].mean()), 6)
+            result["median_fill_size"] = round(float(fills["filled_qty"].median()), 6)
+
+            # 3. Adverse selection — % of fills immediately underwater
+            market_times = pnl_df.index.asi8
+            prices = pnl_df["price"].values
+            underwater = 0
+            for _, fill in fills.iterrows():
+                fill_ns = fill.name.value
+                pos = np.searchsorted(market_times, fill_ns)
+                if pos >= len(market_times):
+                    pos = len(market_times) - 1
+                elif pos > 0 and abs(fill_ns - market_times[pos - 1]) < abs(fill_ns - market_times[pos]):
+                    pos = pos - 1
+                mid = prices[pos]
+                if fill["side"] == "Bid" and fill["fill_price"] > mid:
+                    underwater += 1
+                elif fill["side"] == "Ask" and fill["fill_price"] < mid:
+                    underwater += 1
+            result["adverse_selection_pct"] = round(underwater / len(fills) * 100, 1)
+
+            # 4. Spread capture per fill vs market spread
+            avg_spread = float(market_df["spread"].mean()) if not market_df.empty else 0.0
+            sc_per_fill = float(pnl_df["spread_capture"].iloc[-1]) / len(fills) if len(fills) > 0 else 0.0
+            result["avg_spread_capture_per_fill"] = round(sc_per_fill, 4)
+            result["avg_market_spread"] = round(avg_spread, 4)
+            result["capture_vs_spread_pct"] = round(sc_per_fill / avg_spread * 100, 1) if avg_spread > 0 else 0.0
+
+        return result
+
+    def _add_price_overlay(self, fig: go.Figure) -> None:
+        """Add a grey price line on a secondary y-axis."""
+        pnl_df = self.compute_pnl()
+        fig.add_trace(go.Scatter(
+            x=pnl_df.index, y=pnl_df["price"],
+            mode="lines", name="Price",
+            line=dict(color="rgba(180, 180, 180, 0.4)", width=1),
+            yaxis="y2",
+        ))
+        fig.update_layout(
+            yaxis2=dict(
+                overlaying="y", side="right",
+                showgrid=False,
+                title=dict(text="Price", font=dict(color="rgba(180, 180, 180, 0.6)")),
+                tickfont=dict(color="rgba(180, 180, 180, 0.6)"),
+            ),
+        )
+
     # --- Individual plot methods ---
 
-    def plot_price(self) -> go.Figure:
-        """Mid price with fill markers."""
+    def plot_price(self, show_fills: bool = False) -> go.Figure:
+        """Mid price with optional fill markers."""
         pnl_df = self.compute_pnl()
-        fills = self._get_fills()
 
         fig = go.Figure()
 
@@ -135,32 +210,32 @@ class BacktestReport:
             line=dict(color="#636EFA", width=1),
         ))
 
-        # Buy fills
-        if not fills.empty:
-            buys = fills[fills["side"] == "Bid"]
-            if not buys.empty:
-                fig.add_trace(go.Scatter(
-                    x=buys.index, y=buys["fill_price"],
-                    mode="markers", name="Buy Fill",
-                    marker=dict(
-                        symbol="triangle-up", color="#00CC96",
-                        size=buys["filled_qty"] / buys["filled_qty"].max() * 12 + 4,
-                        line=dict(width=1, color="darkgreen"),
-                    ),
-                ))
+        if show_fills:
+            fills = self._get_fills()
+            if not fills.empty:
+                buys = fills[fills["side"] == "Bid"]
+                if not buys.empty:
+                    fig.add_trace(go.Scatter(
+                        x=buys.index, y=buys["fill_price"],
+                        mode="markers", name="Buy Fill",
+                        marker=dict(
+                            symbol="triangle-up", color="#00CC96",
+                            size=buys["filled_qty"] / buys["filled_qty"].max() * 12 + 4,
+                            line=dict(width=1, color="darkgreen"),
+                        ),
+                    ))
 
-            # Sell fills
-            sells = fills[fills["side"] == "Ask"]
-            if not sells.empty:
-                fig.add_trace(go.Scatter(
-                    x=sells.index, y=sells["fill_price"],
-                    mode="markers", name="Sell Fill",
-                    marker=dict(
-                        symbol="triangle-down", color="#EF553B",
-                        size=sells["filled_qty"] / sells["filled_qty"].max() * 12 + 4,
-                        line=dict(width=1, color="darkred"),
-                    ),
-                ))
+                sells = fills[fills["side"] == "Ask"]
+                if not sells.empty:
+                    fig.add_trace(go.Scatter(
+                        x=sells.index, y=sells["fill_price"],
+                        mode="markers", name="Sell Fill",
+                        marker=dict(
+                            symbol="triangle-down", color="#EF553B",
+                            size=sells["filled_qty"] / sells["filled_qty"].max() * 12 + 4,
+                            line=dict(width=1, color="darkred"),
+                        ),
+                    ))
 
         fig.update_layout(title="Price & Fills", yaxis_title="Price", xaxis_title="Time")
         return fig
@@ -188,7 +263,46 @@ class BacktestReport:
             fill="tonexty", fillcolor="rgba(239, 85, 59, 0.15)",
         ))
 
+        self._add_price_overlay(fig)
         fig.update_layout(title="Cumulative PnL", yaxis_title="PnL", xaxis_title="Time")
+        return fig
+
+    def plot_pnl_decomposition(self) -> go.Figure:
+        """PnL decomposition: spread capture vs holding PnL vs fees."""
+        pnl_df = self.compute_pnl()
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=pnl_df.index, y=pnl_df["holding_pnl"],
+            mode="lines", name="Holding PnL",
+            line=dict(color="#636EFA", width=1),
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=pnl_df.index, y=pnl_df["spread_capture"],
+            mode="lines", name="Spread Capture",
+            line=dict(color="#00CC96", width=1),
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=pnl_df.index, y=-pnl_df["fee"],
+            mode="lines", name="Fees (negative)",
+            line=dict(color="#EF553B", width=1),
+        ))
+
+        fig.add_trace(go.Scatter(
+            x=pnl_df.index, y=pnl_df["pnl"],
+            mode="lines", name="Total PnL",
+            line=dict(color="white", width=2, dash="dot"),
+        ))
+
+        self._add_price_overlay(fig)
+        fig.update_layout(
+            title="PnL Decomposition",
+            yaxis_title="PnL",
+            xaxis_title="Time",
+        )
         return fig
 
     def plot_position(self) -> go.Figure:
@@ -205,6 +319,7 @@ class BacktestReport:
             fillcolor="rgba(171, 99, 250, 0.15)",
         ))
 
+        self._add_price_overlay(fig)
         fig.update_layout(title="Position", yaxis_title="Quantity", xaxis_title="Time")
         return fig
 
@@ -235,6 +350,7 @@ class BacktestReport:
             font=dict(color="#EF553B"),
         )
 
+        self._add_price_overlay(fig)
         fig.update_layout(title="Drawdown", yaxis_title="Drawdown", xaxis_title="Time")
         return fig
 
@@ -318,6 +434,190 @@ class BacktestReport:
         fig.update_layout(title="Fill Scatter", yaxis_title="Price", xaxis_title="Time")
         return fig
 
+    def plot_quote_vs_spread(self) -> go.Figure:
+        """Quoted spread vs market spread over time."""
+        market_df = self.results.market_records_df()
+        intent_df = self.results.intent_records_df()
+
+        if market_df.empty or intent_df.empty:
+            return go.Figure()
+
+        fig = go.Figure()
+
+        # Market spread
+        fig.add_trace(go.Scatter(
+            x=market_df.index, y=market_df["spread"],
+            mode="lines", name="Market Spread",
+            line=dict(color="#636EFA", width=1),
+        ))
+
+        # Quoted spread from intents
+        quoted_spread = intent_df["ask_price"] - intent_df["bid_price"]
+        valid = (intent_df["bid_size"] > 0) & (intent_df["ask_size"] > 0)
+        quoted_spread = quoted_spread[valid]
+
+        if not quoted_spread.empty:
+            fig.add_trace(go.Scatter(
+                x=quoted_spread.index, y=quoted_spread,
+                mode="lines", name="Quoted Spread",
+                line=dict(color="#00CC96", width=1),
+            ))
+
+            # Ratio line on secondary axis
+            # Align market spread to intent timestamps using merge_asof
+            qs_reset = quoted_spread.reset_index()
+            qs_reset.columns = ["timestamp", "quoted_spread"]
+            qs_reset["timestamp"] = qs_reset["timestamp"].astype(np.int64)
+            ms_reset = market_df[["spread"]].reset_index()
+            ms_reset.columns = ["timestamp", "market_spread"]
+            ms_reset["timestamp"] = ms_reset["timestamp"].astype(np.int64)
+            merged = pd.merge_asof(
+                qs_reset.sort_values("timestamp"),
+                ms_reset.sort_values("timestamp"),
+                on="timestamp", direction="nearest")
+            merged["timestamp"] = pd.to_datetime(merged["timestamp"])
+            ratio = merged.set_index("timestamp")
+            ratio["ratio"] = ratio["quoted_spread"] / ratio["market_spread"].replace(0, np.nan)
+            fig.add_trace(go.Scatter(
+                x=ratio.index, y=ratio["ratio"],
+                mode="lines", name="Quote/Market Ratio",
+                line=dict(color="#FFA15A", width=1, dash="dot"),
+                yaxis="y2",
+            ))
+            fig.update_layout(
+                yaxis2=dict(
+                    overlaying="y", side="right",
+                    showgrid=False,
+                    title=dict(text="Ratio", font=dict(color="#FFA15A")),
+                    tickfont=dict(color="#FFA15A"),
+                ),
+            )
+
+        fig.update_layout(title="Quoted vs Market Spread", yaxis_title="Spread", xaxis_title="Time")
+        return fig
+
+    def quote_quality(self) -> pd.DataFrame:
+        """Statistics on quote placement relative to the market.
+
+        Returns a DataFrame with metrics for bid and ask sides:
+        - distance_mean: avg distance from best bid/ask (positive = behind, negative = inside)
+        - distance_median: median distance
+        - pct_at_best: % of time quoting at the best level
+        - pct_inside: % of time quoting inside the spread
+        - pct_behind: % of time quoting behind the best level
+        - quoted_spread_mean: avg quoted spread
+        - market_spread_mean: avg market spread
+        - spread_ratio_mean: avg quoted/market spread ratio
+        """
+        market_df = self.results.market_records_df()
+        intent_df = self.results.intent_records_df()
+
+        if market_df.empty or intent_df.empty:
+            return pd.DataFrame()
+
+        # Align intents with market data
+        intent_reset = intent_df[["bid_price", "bid_size", "ask_price", "ask_size"]].reset_index()
+        intent_reset["timestamp"] = intent_reset["timestamp"].astype(np.int64)
+        market_reset = market_df[["best_bid_price", "best_ask_price", "spread"]].reset_index()
+        market_reset["timestamp"] = market_reset["timestamp"].astype(np.int64)
+        aligned = pd.merge_asof(
+            intent_reset.sort_values("timestamp"),
+            market_reset.sort_values("timestamp"),
+            on="timestamp", direction="nearest")
+
+        bid_valid = aligned["bid_size"] > 0
+        ask_valid = aligned["ask_size"] > 0
+
+        bid_dist = (aligned["best_bid_price"] - aligned["bid_price"])[bid_valid]
+        ask_dist = (aligned["ask_price"] - aligned["best_ask_price"])[ask_valid]
+
+        quoted_spread = (aligned["ask_price"] - aligned["bid_price"])[bid_valid & ask_valid]
+        market_spread = aligned["spread"][bid_valid & ask_valid]
+
+        def side_stats(dist, label):
+            if dist.empty:
+                return {}
+            return {
+                "side": label,
+                "distance_mean": round(float(dist.mean()), 4),
+                "distance_median": round(float(dist.median()), 4),
+                "pct_at_best": round(float((dist == 0).mean() * 100), 1),
+                "pct_inside": round(float((dist < 0).mean() * 100), 1),
+                "pct_behind": round(float((dist > 0).mean() * 100), 1),
+            }
+
+        rows = []
+        rows.append(side_stats(bid_dist, "Bid"))
+        rows.append(side_stats(ask_dist, "Ask"))
+
+        if not quoted_spread.empty and not market_spread.empty:
+            ratio = quoted_spread / market_spread.replace(0, np.nan)
+            rows.append({
+                "side": "Spread",
+                "distance_mean": round(float(quoted_spread.mean()), 4),
+                "distance_median": round(float(quoted_spread.median()), 4),
+                "pct_at_best": round(float(ratio.mean()), 2),
+                "pct_inside": round(float(market_spread.mean()), 4),
+                "pct_behind": None,
+            })
+            # Rename columns for spread row
+            rows[-1] = {
+                "side": "Spread",
+                "quoted_spread_mean": round(float(quoted_spread.mean()), 4),
+                "market_spread_mean": round(float(market_spread.mean()), 4),
+                "spread_ratio_mean": round(float(ratio.mean()), 2),
+            }
+
+        return pd.DataFrame(rows)
+
+    def fill_quality(self) -> pd.DataFrame:
+        """Per-fill analysis showing fill distance from best bid/ask and spread capture.
+
+        Returns a DataFrame with one row per fill:
+        - side, fill_price, filled_qty, fee
+        - best_bid, best_ask at time of fill
+        - distance: how far the fill was from the best level (positive = behind)
+        - mid_at_fill: mid price at fill time
+        - spread_capture: signed_qty * (mid - fill_price)
+        """
+        fills = self._get_fills()
+        market_df = self.results.market_records_df()
+
+        if fills.empty or market_df.empty:
+            return pd.DataFrame()
+
+        fills_reset = fills[["side", "fill_price", "filled_qty", "fee"]].reset_index()
+        fills_reset["timestamp_event"] = fills_reset["timestamp_event"].astype(np.int64)
+        market_reset = market_df[["best_bid_price", "best_ask_price", "mid_price"]].reset_index()
+        market_reset["timestamp"] = market_reset["timestamp"].astype(np.int64)
+
+        merged = pd.merge_asof(
+            fills_reset.sort_values("timestamp_event"),
+            market_reset.sort_values("timestamp"),
+            left_on="timestamp_event",
+            right_on="timestamp",
+            direction="forward",
+        )
+
+        # Distance from best level
+        merged["distance"] = np.where(
+            merged["side"] == "Bid",
+            merged["best_bid_price"] - merged["fill_price"],  # bid: positive = behind best bid
+            merged["fill_price"] - merged["best_ask_price"],  # ask: positive = behind best ask
+        )
+
+        # Spread capture per fill
+        merged["spread_capture"] = np.where(
+            merged["side"] == "Bid",
+            merged["filled_qty"] * (merged["mid_price"] - merged["fill_price"]),
+            -merged["filled_qty"] * (merged["mid_price"] - merged["fill_price"]),
+        )
+
+        merged["timestamp_event"] = pd.to_datetime(merged["timestamp_event"])
+        return merged[["timestamp_event", "side", "fill_price", "filled_qty", "fee",
+                        "best_bid_price", "best_ask_price", "mid_price",
+                        "distance", "spread_capture"]].set_index("timestamp_event")
+
     # --- HTML report ---
 
     def generate_html(self, path: str | Path) -> None:
@@ -347,10 +647,12 @@ class BacktestReport:
         plots = [
             self.plot_price(),
             self.plot_pnl(),
+            self.plot_pnl_decomposition(),
             self.plot_position(),
             self.plot_drawdown(),
             self.plot_spread(),
             self.plot_fees(),
+            self.plot_quote_vs_spread(),
             self.plot_fills(),
         ]
 

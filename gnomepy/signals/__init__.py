@@ -1,13 +1,24 @@
 from gnomepy.signals.registrable import Registrable
-from gnomepy.signals.bps_signal import BpsSignal
-from gnomepy.signals.volatility_signal import VolatilitySignal
-from gnomepy.signals.registry import SignalRegistry
-from gnomepy.signals.kalman_volatility import AdaptiveKalmanVolatility
+from gnomepy.signals.fill_rate_signal import FillRateSignal
+
+from gnomepy.signals.volatility import VolatilitySignal, AdaptiveKalmanVolatility, SpreadVolatility
+from gnomepy.signals.fair_value import FairValueModel, MidFairValue, MicropriceFairValue, DampenedFairValue, WeightedMicropriceFairValue
 
 __all__ = [
     "Registrable",
-    "BpsSignal",
+    "FillRateSignal",
     "VolatilitySignal",
-    "SignalRegistry",
     "AdaptiveKalmanVolatility",
+    "SpreadVolatility",
+    "FairValueModel",
+    "MidFairValue",
+    "MicropriceFairValue",
+    "DampenedFairValue",
+    "WeightedMicropriceFairValue",
 ]
+
+
+def get_registry(*args, **kwargs):
+    """Lazy import of SignalRegistry to avoid requiring boto3 at import time."""
+    from gnomepy.signals.registry import SignalRegistry
+    return SignalRegistry(*args, **kwargs)

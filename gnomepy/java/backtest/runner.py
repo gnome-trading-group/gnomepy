@@ -81,9 +81,10 @@ def _create_java_strategy(py_strategy: Strategy, adapter):
 
         @JOverride
         def onExecutionReport(self, timestamp, report):
-            adapter.processExecutionReport(report)
+            messages = adapter.processExecutionReport(report)
             py_report = ExecutionReport._from_java(report)
             py_strategy.on_execution_report(int(timestamp), py_report)
+            return messages
 
         @JOverride
         def simulateProcessingTime(self):
@@ -187,7 +188,7 @@ class Backtest:
             for cfg in self._exchanges:
                 entries.extend(
                     client.get_java_entries(
-                        cfg.exchange_id, cfg.security_id,
+                        cfg.security_id, cfg.exchange_id,
                         self._schema_type, start, end,
                     )
                 )
@@ -252,17 +253,65 @@ class Backtest:
         if self._recorder is not None:
             self._driver.setRecorder(self._recorder)
 
-    def run(self) -> BacktestResults | None:
-        """Prepare data and fully execute the backtest."""
+    def run(self, progress: bool = True) -> BacktestResults | None:
+        """Prepare data and fully execute the backtest.
+
+        Args:
+            progress: If True, print progress updates during execution.
+        """
         from gnomepy.java.recorder import BacktestResults
 
         self._build_driver()
         self._driver.prepareData()
-        self._driver.fullyExecute()
+
+        if not progress:
+            self._driver.fullyExecute()
+        else:
+            self._run_with_progress()
 
         if self._recorder is not None:
             return BacktestResults(self._recorder)
         return None
+
+    def _run_with_progress(self):
+        """Execute backtest with progress reporting."""
+        import sys
+        import time
+
+        start = self._start_date
+        end = self._end_date
+        total_sec = (end - start).total_seconds()
+        if total_sec <= 0:
+            self._driver.fullyExecute()
+            return
+
+        # Convert to nanosecond timestamps (UTC)
+        import pytz
+        epoch = datetime(1970, 1, 1, tzinfo=pytz.UTC)
+        start_ns = int((start.replace(tzinfo=pytz.UTC) - epoch).total_seconds() * 1_000_000_000)
+        end_ns = int((end.replace(tzinfo=pytz.UTC) - epoch).total_seconds() * 1_000_000_000)
+
+        # Execute in 1-minute sim-time chunks
+        chunk_ns = 60_000_000_000
+        current_ns = start_ns
+        t0 = time.time()
+
+        while current_ns < end_ns:
+            current_ns += chunk_ns
+            self._driver.executeUntil(jpype.JLong(min(current_ns, end_ns)))
+
+            elapsed = time.time() - t0
+            pct = min((current_ns - start_ns) / (end_ns - start_ns) * 100, 100)
+            events = int(self._driver.getEventsProcessed())
+            print(f"\rBacktest: {pct:.0f}% | events: {events:,} | {elapsed:.1f}s", end="")
+            sys.stdout.flush()
+
+        # Process any remaining events beyond end timestamp
+        self._driver.fullyExecute()
+        elapsed = time.time() - t0
+        events = int(self._driver.getEventsProcessed())
+        print(f"\rBacktest: 100% | events: {events:,} | {elapsed:.1f}s")
+        sys.stdout.flush()
 
     def run_until(self, timestamp: int) -> BacktestResults | None:
         """Run the backtest until a specific timestamp."""
