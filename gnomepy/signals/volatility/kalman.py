@@ -4,7 +4,7 @@ import json
 import math
 from pathlib import Path
 
-from gnomepy.java.schemas import JavaSchema
+from gnomepy.java.schemas import Schema
 from gnomepy.signals.volatility.base import VolatilitySignal
 
 
@@ -40,7 +40,7 @@ class AdaptiveKalmanVolatility(VolatilitySignal):
         self._version = version
         self.reset()
 
-    def update(self, timestamp: int, data: JavaSchema):
+    def update(self, timestamp: int, data: Schema):
         bid = data.bid_price(0)
         ask = data.ask_price(0)
         if bid <= 0 or ask <= 0:

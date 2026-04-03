@@ -1,6 +1,6 @@
 from gnomepy.java._jvm import ensure_jvm_started, shutdown_jvm, is_jvm_started, JVMContext
 from gnomepy.java.enums import Side, OrderType, TimeInForce, ExecType, OrderStatus, SchemaType
-from gnomepy.java.schemas import JavaSchema, wrap_schema
+from gnomepy.java.schemas import Schema, wrap_schema
 from gnomepy.java.market_data import MarketDataClient
 from gnomepy.java.backtest import (
     Strategy,
@@ -29,7 +29,7 @@ __all__ = [
     "ExecType",
     "OrderStatus",
     "SchemaType",
-    "JavaSchema",
+    "Schema",
     "wrap_schema",
     "MarketDataClient",
     "Strategy",

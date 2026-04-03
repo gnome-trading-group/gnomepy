@@ -3,24 +3,46 @@ from __future__ import annotations
 from enum import Enum
 
 
+# Maps Java enum constant names to their JPype attribute names when they conflict with Python keywords.
+JPYPE_KEYWORD_MAP = {"None": "None_"}
+
+
 def _java_enum(java_class_name: str, java_value_name: str):
     """Lazily resolve a Java enum value via JPype."""
     import jpype
     cls = jpype.JClass(java_class_name)
-    return getattr(cls, java_value_name)
+    return getattr(cls, JPYPE_KEYWORD_MAP.get(java_value_name, java_value_name))
+
+class Action(Enum):
+    ADD = "Add"
+    CANCEL = "Cancel"
+    MODIFY = "Modify"
+    CLEAR = "Clear"
+    TRADE = "Trade"
+    FILL = "Fill"
+    NONE = "None_"
+
+    def to_java(self):
+        return _java_enum("group.gnometrading.schemas.Action", self.value)
+
+    @classmethod
+    def from_java(cls, java_enum) -> Action:
+        name = str(java_enum.name())
+        return cls(JPYPE_KEYWORD_MAP.get(name, name))
 
 
 class Side(Enum):
     BID = "Bid"
     ASK = "Ask"
-    NONE = "None"
+    NONE = "None_"
 
     def to_java(self):
         return _java_enum("group.gnometrading.schemas.Side", self.value)
 
     @classmethod
     def from_java(cls, java_enum) -> Side:
-        return cls(str(java_enum.name()))
+        name = str(java_enum.name())
+        return cls(JPYPE_KEYWORD_MAP.get(name, name))
 
 
 class OrderType(Enum):
@@ -37,7 +59,6 @@ class OrderType(Enum):
 
 class TimeInForce(Enum):
     GOOD_TILL_CANCELED = "GOOD_TILL_CANCELED"
-    GOOD_TILL_CROSSING = "GOOD_TILL_CROSSING"
     IMMEDIATE_OR_CANCELED = "IMMEDIATE_OR_CANCELED"
     FILL_OR_KILL = "FILL_OR_KILL"
 

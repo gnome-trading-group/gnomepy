@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 
-from gnomepy.java.schemas import JavaSchema
+from gnomepy.java.schemas import Schema
 from gnomepy.signals.registrable import Registrable
 
 
@@ -16,7 +16,7 @@ class VolatilitySignal(Registrable):
     """
 
     @abstractmethod
-    def update(self, timestamp: int, data: JavaSchema):
+    def update(self, timestamp: int, data: Schema):
         """Feed market data for the current tick."""
         ...
 

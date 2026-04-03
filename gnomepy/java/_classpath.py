@@ -5,14 +5,7 @@ from pathlib import Path
 
 GNOME_JARS_ENV = "GNOME_JARS"
 GNOME_ROOT_ENV = "GNOME_ROOT"
-
-# Maven projects whose uber JARs we look for (in priority order).
-# gnome-backtest-all.jar transitively includes schemas, strategies, market-data, core, etc.
-_UBER_JAR_PROJECTS = [
-    "gnome-backtest",
-    "gnome-market-data",
-]
-
+TARGET_JAR = "gnome-backtest"
 
 def discover_classpath(gnome_root: str | Path | None = None) -> list[str]:
     """Discover uber JARs for the GNOME Java libraries.
@@ -49,21 +42,16 @@ def discover_classpath(gnome_root: str | Path | None = None) -> list[str]:
 
 
 def _scan_root(root: Path) -> list[str]:
-    """Scan a GNOME root directory for uber JARs."""
+    """Scan a GNOME root directory for target JARs."""
     jars = []
-    for project in _UBER_JAR_PROJECTS:
-        target = root / project / "target"
-        if not target.is_dir():
-            continue
+    target = root / TARGET_JAR / "target"
+    if target.is_dir():
         for jar in sorted(target.glob("*-all.jar"), reverse=True):
             jars.append(str(jar))
             break  # take the most recent one per project
-    if not jars:
-        # Also look for any shaded JARs
-        for project in _UBER_JAR_PROJECTS:
-            target = root / project / "target"
-            if not target.is_dir():
-                continue
+    else:
+        target = root / TARGET_JAR / "target"
+        if target.is_dir():
             for jar in sorted(target.glob("*.jar"), reverse=True):
                 if "original" not in jar.name and "sources" not in jar.name:
                     jars.append(str(jar))
@@ -71,6 +59,6 @@ def _scan_root(root: Path) -> list[str]:
     if not jars:
         raise FileNotFoundError(
             f"No uber JARs found under {root}. "
-            "Build the Java projects first: cd gnome-backtest && mvn package -DskipTests"
+            f"Build the Java projects first: cd {TARGET_JAR} && mvn package -DskipTests"
         )
     return jars

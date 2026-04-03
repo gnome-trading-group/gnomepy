@@ -7,9 +7,8 @@ import pandas as pd
 
 from gnomepy.java._jvm import ensure_jvm_started
 from gnomepy.java.enums import SchemaType
-from gnomepy.java.schemas import JavaSchema, wrap_schema
+from gnomepy.java.schemas import Schema, wrap_schema
 
-# Lazily resolved Java classes
 _MarketDataEntry = None
 _EntryType = None
 _LocalDateTime = None
@@ -23,26 +22,8 @@ def _resolve_classes():
     if _MarketDataEntry is not None:
         return
 
-    # MarketDataEntry may be at different package paths depending on the JAR
-    _resolved_pkg = None
-    for pkg in [
-        "group.gnometrading.collector.MarketDataEntry",
-        "group.gnometrading.MarketDataEntry",
-    ]:
-        try:
-            _MarketDataEntry = jpype.JClass(pkg)
-            _resolved_pkg = pkg
-            break
-        except Exception:
-            continue
-
-    if _MarketDataEntry is None:
-        raise ImportError(
-            "Cannot find MarketDataEntry class. Ensure the gnome-market-data or "
-            "gnome-backtest uber JAR is on the classpath."
-        )
-
-    _EntryType = jpype.JClass(_resolved_pkg + "$EntryType")
+    _MarketDataEntry = jpype.JClass("group.gnometrading.data.MarketDataEntry")
+    _EntryType = jpype.JClass("group.gnometrading.data.MarketDataEntry$EntryType")
     _LocalDateTime = jpype.JClass("java.time.LocalDateTime")
     _S3Client = jpype.JClass("software.amazon.awssdk.services.s3.S3Client")
 
@@ -98,7 +79,7 @@ class MarketDataClient:
         schema_type: SchemaType,
         start: datetime,
         end: datetime,
-    ) -> list[JavaSchema]:
+    ) -> list[Schema]:
         """Load market data from S3 for a time range.
 
         Iterates minute-by-minute over the range, loading aggregated entries.
@@ -111,7 +92,7 @@ class MarketDataClient:
             end: End datetime (exclusive).
 
         Returns:
-            List of JavaSchema wrappers around the loaded data.
+            List of Schema wrappers around the loaded data.
         """
         java_schema_type = schema_type.to_java()
         results = []

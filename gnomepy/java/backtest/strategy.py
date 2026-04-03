@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 from gnomepy.java.backtest.orders import ExecutionReport
 from gnomepy.java.oms import Intent
-from gnomepy.java.schemas import JavaSchema
+from gnomepy.java.schemas import Schema
 
 
 class Strategy(ABC):
@@ -30,7 +30,7 @@ class Strategy(ABC):
 
     @abstractmethod
     def on_market_data(
-        self, timestamp: int, data: JavaSchema
+        self, timestamp: int, data: Schema
     ) -> list[Intent]:
         """Called on each market data update. Return desired state as Intents."""
         ...

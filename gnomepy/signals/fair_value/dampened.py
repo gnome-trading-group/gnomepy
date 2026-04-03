@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gnomepy.java.schemas import JavaSchema
+from gnomepy.java.schemas import Schema
 from gnomepy.signals.fair_value.base import FairValueModel
 
 
@@ -30,7 +30,7 @@ class DampenedFairValue(FairValueModel):
         self._fair_value = 0
         self._ready = False
 
-    def update(self, timestamp: int, data: JavaSchema) -> None:
+    def update(self, timestamp: int, data: Schema) -> None:
         bid = data.bid_price(0)
         ask = data.ask_price(0)
         if bid <= 0 or ask <= 0:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gnomepy.java.schemas import JavaSchema
+from gnomepy.java.schemas import Schema
 from gnomepy.signals.fair_value.base import FairValueModel
 
 
@@ -23,7 +23,7 @@ class MicropriceFairValue(FairValueModel):
         self._fair_value = 0
         self._ready = False
 
-    def update(self, timestamp: int, data: JavaSchema) -> None:
+    def update(self, timestamp: int, data: Schema) -> None:
         bid = data.bid_price(0)
         ask = data.ask_price(0)
         bid_size = data.bid_size(0)
@@ -92,7 +92,7 @@ class WeightedMicropriceFairValue(FairValueModel):
         # Precompute weights
         self._weights = [decay ** i for i in range(self.num_levels)]
 
-    def update(self, timestamp: int, data: JavaSchema) -> None:
+    def update(self, timestamp: int, data: Schema) -> None:
         numerator = 0.0
         denominator = 0.0
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 
-from gnomepy.java.schemas import JavaSchema
+from gnomepy.java.schemas import Schema
 from gnomepy.signals.registrable import Registrable
 
 
@@ -14,7 +14,7 @@ class FairValueModel(Registrable):
     """
 
     @abstractmethod
-    def update(self, timestamp: int, data: JavaSchema) -> None:
+    def update(self, timestamp: int, data: Schema) -> None:
         """Feed market data for the current tick."""
         ...
 

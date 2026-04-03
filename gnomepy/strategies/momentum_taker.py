@@ -4,7 +4,7 @@ from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.backtest.orders import ExecutionReport
 from gnomepy.java.enums import Side, OrderType
 from gnomepy.java.oms import Intent
-from gnomepy.java.schemas import JavaSchema
+from gnomepy.java.schemas import Schema
 
 
 class MomentumTaker(Strategy):
@@ -43,7 +43,7 @@ class MomentumTaker(Strategy):
         self.ticks_since_trade = 0
         self.fills: list[ExecutionReport] = []
 
-    def on_market_data(self, timestamp: int, data: JavaSchema) -> list[Intent]:
+    def on_market_data(self, timestamp: int, data: Schema) -> list[Intent]:
         bid = data.bid_price(0)
         ask = data.ask_price(0)
         if bid <= 0 or ask <= 0:
