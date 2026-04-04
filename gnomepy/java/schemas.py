@@ -86,14 +86,6 @@ class Schema:
         self._java.buffer.getBytes(0, byte_array, 0, size)
         return bytes([b & 0xFF for b in byte_array])
 
-    def to_dict(self) -> dict:
-        return {
-            "schema_type": self.schema_type.value,
-            "event_timestamp": self.event_timestamp,
-            "sequence_number": self.sequence_number,
-        }
-
-
 class MboSchema(Schema):
     _java_class = "group.gnometrading.schemas.MBOSchema"
 
@@ -193,7 +185,6 @@ class MboSchema(Schema):
 
     def to_dict(self) -> dict:
         return {
-            **super().to_dict(),
             "exchange_id": self.exchange_id,
             "security_id": self.security_id,
             "timestamp_event": self.timestamp_event,
@@ -328,7 +319,6 @@ class Mbp10Schema(Schema):
 
     def to_dict(self) -> dict:
         d = {
-            **super().to_dict(),
             "exchange_id": self.exchange_id,
             "security_id": self.security_id,
             "timestamp_event": self.timestamp_event,
@@ -524,7 +514,6 @@ class BboSchema(Schema):
 
     def to_dict(self) -> dict:
         return {
-            **super().to_dict(),
             "exchange_id": self.exchange_id,
             "security_id": self.security_id,
             "timestamp_event": self.timestamp_event,
@@ -646,7 +635,6 @@ class TradesSchema(Schema):
 
     def to_dict(self) -> dict:
         return {
-            **super().to_dict(),
             "exchange_id": self.exchange_id,
             "security_id": self.security_id,
             "timestamp_event": self.timestamp_event,
@@ -734,7 +722,6 @@ class OhlcvSchema(Schema):
 
     def to_dict(self) -> dict:
         return {
-            **super().to_dict(),
             "exchange_id": self.exchange_id,
             "security_id": self.security_id,
             "timestamp_event": self.timestamp_event,
