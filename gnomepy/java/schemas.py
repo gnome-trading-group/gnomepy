@@ -95,6 +95,8 @@ class Schema:
 
 
 class MboSchema(Schema):
+    _java_class = "group.gnometrading.schemas.MBOSchema"
+
     def __init__(
         self,
         java_schema=None,
@@ -117,7 +119,7 @@ class MboSchema(Schema):
             return
 
         ensure_jvm_started()
-        schema = jpype.JClass("group.gnometrading.schemas.MBOSchema")()
+        schema = jpype.JClass(self._java_class)()
         enc = schema.encoder
         if exchange_id is not None:
             enc.exchangeId(int(exchange_id))
@@ -207,6 +209,7 @@ class MboSchema(Schema):
 
 
 class Mbp10Schema(Schema):
+    _java_class = "group.gnometrading.schemas.MBP10Schema"
     NUM_LEVELS = 10
 
     def __init__(
@@ -232,7 +235,7 @@ class Mbp10Schema(Schema):
             return
 
         ensure_jvm_started()
-        schema = jpype.JClass("group.gnometrading.schemas.MBP10Schema")()
+        schema = jpype.JClass(self._java_class)()
         enc = schema.encoder
         if exchange_id is not None:
             enc.exchangeId(int(exchange_id))
@@ -350,6 +353,7 @@ class Mbp10Schema(Schema):
 
 class Mbp1Schema(Mbp10Schema):
     """MBP1 has the same decoder layout as MBP10 but with a single level."""
+    _java_class = "group.gnometrading.schemas.MBP1Schema"
     NUM_LEVELS = 1
 
     def __init__(
@@ -375,7 +379,7 @@ class Mbp1Schema(Mbp10Schema):
             return
 
         ensure_jvm_started()
-        schema = jpype.JClass("group.gnometrading.schemas.MBP1Schema")()
+        schema = jpype.JClass(self._java_class)()
         enc = schema.encoder
         if exchange_id is not None:
             enc.exchangeId(int(exchange_id))
@@ -410,7 +414,6 @@ class BboSchema(Schema):
         self,
         java_schema=None,
         *,
-        java_class: str = "group.gnometrading.schemas.BBO1SSchema",
         exchange_id: int | None = None,
         security_id: int | None = None,
         timestamp_event: int | None = None,
@@ -431,7 +434,7 @@ class BboSchema(Schema):
             return
 
         ensure_jvm_started()
-        schema = jpype.JClass(java_class)()
+        schema = jpype.JClass(type(self)._java_class)()
         enc = schema.encoder
         if exchange_id is not None:
             enc.exchangeId(int(exchange_id))
@@ -540,16 +543,16 @@ class BboSchema(Schema):
 
 
 class Bbo1sSchema(BboSchema):
-    def __init__(self, java_schema=None, **kwargs):
-        super().__init__(java_schema, java_class="group.gnometrading.schemas.BBO1SSchema", **kwargs)
+    _java_class = "group.gnometrading.schemas.BBO1SSchema"
 
 
 class Bbo1mSchema(BboSchema):
-    def __init__(self, java_schema=None, **kwargs):
-        super().__init__(java_schema, java_class="group.gnometrading.schemas.BBO1MSchema", **kwargs)
+    _java_class = "group.gnometrading.schemas.BBO1MSchema"
 
 
 class TradesSchema(Schema):
+    _java_class = "group.gnometrading.schemas.TradesSchema"
+
     def __init__(
         self,
         java_schema=None,
@@ -571,7 +574,7 @@ class TradesSchema(Schema):
             return
 
         ensure_jvm_started()
-        schema = jpype.JClass("group.gnometrading.schemas.TradesSchema")()
+        schema = jpype.JClass(self._java_class)()
         enc = schema.encoder
         if exchange_id is not None:
             enc.exchangeId(int(exchange_id))
@@ -663,7 +666,6 @@ class OhlcvSchema(Schema):
         self,
         java_schema=None,
         *,
-        java_class: str = "group.gnometrading.schemas.OHLCV1SSchema",
         exchange_id: int | None = None,
         security_id: int | None = None,
         timestamp_event: int | None = None,
@@ -678,7 +680,7 @@ class OhlcvSchema(Schema):
             return
 
         ensure_jvm_started()
-        schema = jpype.JClass(java_class)()
+        schema = jpype.JClass(type(self)._java_class)()
         enc = schema.encoder
         if exchange_id is not None:
             enc.exchangeId(int(exchange_id))
@@ -745,18 +747,15 @@ class OhlcvSchema(Schema):
 
 
 class Ohlcv1sSchema(OhlcvSchema):
-    def __init__(self, java_schema=None, **kwargs):
-        super().__init__(java_schema, java_class="group.gnometrading.schemas.OHLCV1SSchema", **kwargs)
+    _java_class = "group.gnometrading.schemas.OHLCV1SSchema"
 
 
 class Ohlcv1mSchema(OhlcvSchema):
-    def __init__(self, java_schema=None, **kwargs):
-        super().__init__(java_schema, java_class="group.gnometrading.schemas.OHLCV1MSchema", **kwargs)
+    _java_class = "group.gnometrading.schemas.OHLCV1MSchema"
 
 
 class Ohlcv1hSchema(OhlcvSchema):
-    def __init__(self, java_schema=None, **kwargs):
-        super().__init__(java_schema, java_class="group.gnometrading.schemas.OHLCV1HSchema", **kwargs)
+    _java_class = "group.gnometrading.schemas.OHLCV1HSchema"
 
 
 # Schema type name → wrapper class
@@ -771,6 +770,11 @@ _SCHEMA_WRAPPERS: dict[str, type[Schema]] = {
     "OHLCV_1M": Ohlcv1mSchema,
     "OHLCV_1H": Ohlcv1hSchema,
 }
+
+
+def get_schema_class(schema_type: SchemaType) -> type[Schema]:
+    """Return the Python Schema subclass for a given SchemaType."""
+    return _SCHEMA_WRAPPERS[schema_type.name]
 
 
 def wrap_schema(java_schema) -> Schema:

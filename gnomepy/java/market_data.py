@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import jpype
-import pandas as pd
 
 from gnomepy.java._jvm import ensure_jvm_started
+from gnomepy.java.datastore import DataStore
 from gnomepy.java.enums import SchemaType
-from gnomepy.java.schemas import Schema, wrap_schema
+from gnomepy.java.schemas import wrap_schema
 
 _MarketDataEntry = None
 _EntryType = None
@@ -72,78 +72,6 @@ class MarketDataClient:
         self._bucket = bucket
         self._s3_client = s3_client or _create_default_s3_client()
 
-    def load(
-        self,
-        security_id: int,
-        exchange_id: int,
-        schema_type: SchemaType,
-        start: datetime,
-        end: datetime,
-    ) -> list[Schema]:
-        """Load market data from S3 for a time range.
-
-        Iterates minute-by-minute over the range, loading aggregated entries.
-
-        Args:
-            security_id: Security identifier.
-            exchange_id: Exchange identifier.
-            schema_type: Type of market data schema.
-            start: Start datetime (inclusive).
-            end: End datetime (exclusive).
-
-        Returns:
-            List of Schema wrappers around the loaded data.
-        """
-        java_schema_type = schema_type.to_java()
-        results = []
-        current = start.replace(second=0, microsecond=0)
-
-        while current < end:
-            java_dt = _to_java_datetime(current)
-            entry = _MarketDataEntry(
-                int(security_id),
-                int(exchange_id),
-                java_schema_type,
-                java_dt,
-                _EntryType.AGGREGATED,
-            )
-            try:
-                java_schemas = entry.loadFromS3(self._s3_client, self._bucket)
-                for js in java_schemas:
-                    results.append(wrap_schema(js))
-            except Exception as e:
-                msg = str(e)
-                if "NoSuchKey" in msg:
-                    continue  # Missing minute slot — expected
-                raise RuntimeError(
-                    f"Failed to load S3 key: {entry.getKey()} from bucket: {self._bucket}"
-                ) from e
-            current += timedelta(minutes=1)
-
-        return results
-
-    def load_dataframe(
-        self,
-        security_id: int,
-        exchange_id: int,
-        schema_type: SchemaType,
-        start: datetime,
-        end: datetime,
-    ) -> pd.DataFrame:
-        """Load market data and convert to a pandas DataFrame.
-
-        Args:
-            Same as load().
-
-        Returns:
-            DataFrame with one row per schema record.
-        """
-        schemas = self.load(security_id, exchange_id, schema_type, start, end)
-        if not schemas:
-            return pd.DataFrame()
-        rows = [s.to_dict() for s in schemas]
-        return pd.DataFrame(rows)
-
     def get_java_entries(
         self,
         security_id: int,
@@ -154,7 +82,7 @@ class MarketDataClient:
     ) -> list:
         """Get raw Java MarketDataEntry objects for use with BacktestDriver.
 
-        Returns a list of Java MarketDataEntry objects (not wrapped).
+        Returns a list of Java MarketDataEntry objects (not loaded).
         """
         java_schema_type = schema_type.to_java()
         entries = []
@@ -162,14 +90,49 @@ class MarketDataClient:
 
         while current < end:
             java_dt = _to_java_datetime(current)
-            entry = _MarketDataEntry(
+            entries.append(_MarketDataEntry(
                 int(security_id),
                 int(exchange_id),
                 java_schema_type,
                 java_dt,
                 _EntryType.AGGREGATED,
-            )
-            entries.append(entry)
+            ))
             current += timedelta(minutes=1)
 
         return entries
+
+    def load(
+        self,
+        security_id: int,
+        exchange_id: int,
+        schema_type: SchemaType,
+        start: datetime,
+        end: datetime,
+    ) -> DataStore:
+        """Load market data from S3 for a time range.
+
+        Args:
+            security_id: Security identifier.
+            exchange_id: Exchange identifier.
+            schema_type: Type of market data schema.
+            start: Start datetime (inclusive).
+            end: End datetime (exclusive).
+
+        Returns:
+            DataStore wrapping the loaded schemas.
+        """
+        entries = self.get_java_entries(security_id, exchange_id, schema_type, start, end)
+        results = []
+
+        for entry in entries:
+            try:
+                for js in entry.loadFromS3(self._s3_client, self._bucket):
+                    results.append(wrap_schema(js))
+            except Exception as e:
+                if "NoSuchKey" in str(e):
+                    continue  # Missing minute slot — expected
+                raise RuntimeError(
+                    f"Failed to load S3 key: {entry.getKey()} from bucket: {self._bucket}"
+                ) from e
+
+        return DataStore.from_schemas(results, schema_type)

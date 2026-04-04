@@ -1,3 +1,4 @@
+from gnomepy.java.datastore import DataStore
 from gnomepy.java.schemas import (
     Schema,
     MboSchema,
