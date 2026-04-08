@@ -8,18 +8,26 @@ can target any commit.
 ## Build
 
 The build context must contain **both** `gnomepy` and `gnome-backtest`
-sibling checkouts. From the parent of those repos:
+sibling checkouts. The Maven step needs GitHub Packages credentials to
+resolve the `gnome-parent` POM — export `GITHUB_ACTOR` (your GH
+username) and `GITHUB_TOKEN` (a classic PAT with `read:packages`),
+then run the helper script:
 
-The Maven step needs GitHub Packages credentials to resolve the
-`gnome-parent` POM. Export `GITHUB_ACTOR` (your GH username) and
-`GITHUB_TOKEN` (a PAT with `read:packages`) and pass them in:
+```sh
+./gnomepy/docker/backtest/build.sh
+```
+
+Optional env: `IMAGE_TAG`, `GNOME_BACKTEST_REF` (git ref to clone &
+build instead of the local sibling).
+
+Or invoke `docker build` directly:
 
 ```sh
 DOCKER_BUILDKIT=1 docker build \
   --build-arg GITHUB_ACTOR="$GITHUB_ACTOR" \
-  --secret id=github_token,env=GITHUB_TOKEN \
-  -f gnomepy/Dockerfile.research-backtest \
-  -t gnomepy-research-backtest \
+  --secret id=github_token,src=<(printf '%s' "$GITHUB_TOKEN") \
+  -f gnomepy/docker/backtest/Dockerfile \
+  -t gnomepy-backtest \
   .
 ```
 
@@ -33,8 +41,8 @@ docker run --rm \
   -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
   -v "$PWD/backtest.yaml:/work/backtest.yaml:ro" \
   -v "$PWD/out:/work/out" \
-  gnomepy-research-backtest \
-  --output /work/out/results.json
+  gnomepy-backtest \
+  --output /work/out/results
 ```
 
 Required env:
