@@ -89,8 +89,9 @@ class OmsView:
     during on_market_data() or on_execution_report() callbacks.
     """
 
-    def __init__(self, java_oms):
+    def __init__(self, java_oms, strategy_id: int = 0):
         self._java = java_oms
+        self._strategy_id = int(strategy_id)
 
     def get_position(self, exchange_id: int, security_id: int) -> PositionInfo | None:
         pos = self._java.getPosition(int(exchange_id), jpype.JLong(security_id))
@@ -98,10 +99,20 @@ class OmsView:
             return None
         return _position_from_java(pos)
 
-    def get_effective_quantity(self, strategy_id: int, exchange_id: int, security_id: int) -> int:
-        """Net position + inflight orders (what position will be if all pending orders fill)."""
+    def get_effective_quantity(
+        self,
+        exchange_id: int,
+        security_id: int,
+        strategy_id: int | None = None,
+    ) -> int:
+        """Net position + inflight orders (what position will be if all pending orders fill).
+
+        `strategy_id` defaults to the id this OmsView was bound to by the runner —
+        strategies should not need to pass it.
+        """
+        sid = self._strategy_id if strategy_id is None else int(strategy_id)
         return int(self._java.getEffectiveQuantity(
-            int(strategy_id), int(exchange_id), jpype.JLong(security_id)))
+            sid, int(exchange_id), jpype.JLong(security_id)))
 
     def get_all_positions(self) -> list[PositionInfo]:
         result = []

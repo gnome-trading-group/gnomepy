@@ -120,6 +120,67 @@ def _build_exchange_map(configs: list[ExchangeConfig]):
     return outer
 
 
+def _instantiate_java_strategy(class_name: str, strategy_args: dict):
+    """Resolve a Java FQN and instantiate it from kwargs.
+
+    Uses reflection on the class's constructors. The runner picks the
+    constructor whose parameter names exactly match the keys of
+    `strategy_args` and invokes it with the values in declared order.
+
+    Requires the strategy class to be compiled with `-parameters` (the
+    javac flag that retains parameter names in the class file). Without
+    it, reflected names degrade to "arg0/arg1/..." and matching will fail.
+
+    With `strategy_args` empty, uses the no-arg constructor.
+    """
+    try:
+        cls = jpype.JClass(class_name)
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to load Java strategy class {class_name!r}. "
+            "Make sure the JAR containing it is on the JVM classpath "
+            "(set GNOME_USER_JARS, pass extra_jars=, or use --jar)."
+        ) from e
+
+    if not strategy_args:
+        try:
+            return cls()
+        except Exception as e:
+            raise RuntimeError(
+                f"{class_name} has no no-arg constructor; "
+                "supply strategy_args matching one of its constructors."
+            ) from e
+
+    requested = set(strategy_args.keys())
+    constructors = list(cls.class_.getConstructors())
+    candidates = []
+    for ctor in constructors:
+        params = list(ctor.getParameters())
+        names = [str(p.getName()) for p in params]
+        if set(names) == requested:
+            candidates.append((ctor, names))
+
+    if not candidates:
+        available = [
+            [str(p.getName()) for p in ctor.getParameters()] for ctor in constructors
+        ]
+        raise RuntimeError(
+            f"No constructor on {class_name} matches keys "
+            f"{sorted(requested)}. Available constructors: {available}. "
+            "If parameter names show as 'arg0/arg1/...', the class was "
+            "compiled without -parameters; enable it in the maven-compiler-plugin."
+        )
+    if len(candidates) > 1:
+        raise RuntimeError(
+            f"Ambiguous: multiple constructors on {class_name} match "
+            f"{sorted(requested)}"
+        )
+
+    ctor, names = candidates[0]
+    ordered = [strategy_args[n] for n in names]
+    return ctor.newInstance(ordered)
+
+
 class Backtest:
     """Orchestrate a backtest with a Python strategy against Java simulation.
 
@@ -138,7 +199,7 @@ class Backtest:
 
     def __init__(
         self,
-        strategy: Strategy,
+        strategy: Strategy | str,
         schema_type: SchemaType,
         start_date: date | datetime,
         end_date: date | datetime,
@@ -148,10 +209,29 @@ class Backtest:
         s3_client=None,
         record: bool = True,
         risk_config=None,
+        strategy_args: dict | None = None,
+        extra_jars: list[str] | None = None,
     ):
-        ensure_jvm_started()
+        """Run a backtest with either a Python Strategy or a Java strategy class.
+
+        Args:
+            strategy: Either a `gnomepy.Strategy` instance (Python) or a
+                fully-qualified Java class name as a string (e.g.
+                ``"com.example.MyStrategy"``). For Java strategies, the class
+                must implement the Java ``BacktestStrategy`` interface and have
+                a no-arg constructor.
+            strategy_args: Optional kwargs passed to a Java strategy via a
+                ``configure(Map<String, Object>)`` method, if it exists.
+                Ignored for Python strategies (pass kwargs to ``__init__``
+                yourself).
+            extra_jars: Additional JAR paths to add to the JVM classpath
+                before starting it. Required when a Java strategy lives in a
+                JAR not already discovered by ``GNOME_JARS`` / ``GNOME_ROOT``.
+        """
+        ensure_jvm_started(extra_jars=extra_jars)
 
         self._strategy = strategy
+        self._strategy_args = strategy_args or {}
         self._schema_type = schema_type
         self._start_date = start_date
         self._end_date = end_date
@@ -217,15 +297,18 @@ class Backtest:
 
         risk_config = self._risk_config if self._risk_config is not None else RiskConfig()
         java_oms = _build_java_oms(risk_config)
-        self._strategy._oms_view = OmsView(java_oms)
 
         OmsBacktestAdapter = jpype.JClass(
             "group.gnometrading.backtest.oms.OmsBacktestAdapter"
         )
         adapter = OmsBacktestAdapter(java_oms, self._recorder) if self._recorder else OmsBacktestAdapter(java_oms)
 
-        # Create Java strategy proxy
-        java_strategy = _create_java_strategy(self._strategy, adapter)
+        # Resolve strategy: Python instance → JPype proxy, or native Java FQN → instantiate
+        if isinstance(self._strategy, str):
+            java_strategy = _instantiate_java_strategy(self._strategy, self._strategy_args)
+        else:
+            self._strategy._oms_view = OmsView(java_oms)
+            java_strategy = _create_java_strategy(self._strategy, adapter)
 
         # Create S3 client
         if self._s3_client is None:
