@@ -49,8 +49,7 @@ class Intent:
 class PositionInfo:
     """Python view of an OMS position."""
 
-    exchange_id: int
-    security_id: int
+    listing_id: int
     net_quantity: int
     avg_entry_price: int
     realized_pnl: float
@@ -78,8 +77,6 @@ class RiskConfig:
     """Configuration for OMS risk policies."""
 
     max_notional_value: int | None = None
-    default_tick_size: int = 1_000_000_000  # $1 tick (scaled by PRICE_SCALE)
-    tick_sizes: dict[int, int] | None = None  # securityId → tick size overrides
 
 
 class OmsView:
@@ -89,12 +86,18 @@ class OmsView:
     during on_market_data() or on_execution_report() callbacks.
     """
 
-    def __init__(self, java_oms, strategy_id: int = 0):
+    def __init__(self, java_oms, security_master, strategy_id: int = 0):
         self._java = java_oms
+        self._security_master = security_master
         self._strategy_id = int(strategy_id)
 
+    def _resolve_listing_id(self, exchange_id: int, security_id: int) -> int:
+        listing = self._security_master.getListing(int(exchange_id), int(security_id))
+        return int(listing.listingId())
+
     def get_position(self, exchange_id: int, security_id: int) -> PositionInfo | None:
-        pos = self._java.getPosition(int(exchange_id), jpype.JLong(security_id))
+        listing_id = self._resolve_listing_id(exchange_id, security_id)
+        pos = self._java.getPosition(int(listing_id))
         if pos is None:
             return None
         return _position_from_java(pos)
@@ -111,53 +114,65 @@ class OmsView:
         strategies should not need to pass it.
         """
         sid = self._strategy_id if strategy_id is None else int(strategy_id)
-        return int(self._java.getEffectiveQuantity(
-            sid, int(exchange_id), jpype.JLong(security_id)))
+        listing_id = self._resolve_listing_id(exchange_id, security_id)
+        return int(self._java.getEffectiveQuantity(sid, int(listing_id)))
 
     def get_all_positions(self) -> list[PositionInfo]:
         result = []
-        self._java.forEachPosition(lambda p: result.append(_position_from_java(p)))
+        self._java.getPositionTracker().forEachPosition(
+            lambda p: result.append(_position_from_java(p))
+        )
         return result
 
     def get_order(self, client_oid: str) -> TrackedOrderInfo | None:
-        tracked = self._java.getOrder(str(client_oid))
+        tracked = self._java.getOrder(jpype.JLong(int(client_oid)))
         if tracked is None:
             return None
         return _tracked_order_from_java(tracked)
 
     def get_open_orders(self) -> list[TrackedOrderInfo]:
         result = []
-        self._java.forEachOpenOrder(lambda o: result.append(_tracked_order_from_java(o)))
+
+        def _collect(o):
+            if not o.getState().isTerminal():
+                result.append(_tracked_order_from_java(o))
+
+        self._java.getOrderStateManager().forEachOrder(_collect)
         return result
 
     def get_open_orders_for(self, exchange_id: int, security_id: int) -> list[TrackedOrderInfo]:
         result = []
-        self._java.forEachOpenOrderFor(
-            int(exchange_id), jpype.JLong(security_id),
-            lambda o: result.append(_tracked_order_from_java(o)),
-        )
+
+        def _collect(o):
+            if (
+                not o.getState().isTerminal()
+                and int(o.getExchangeId()) == exchange_id
+                and int(o.getSecurityId()) == security_id
+            ):
+                result.append(_tracked_order_from_java(o))
+
+        self._java.getOrderStateManager().forEachOrder(_collect)
         return result
 
 
 def _position_from_java(pos) -> PositionInfo:
     return PositionInfo(
-        exchange_id=int(pos.getExchangeId()),
-        security_id=int(pos.getSecurityId()),
-        net_quantity=int(pos.getNetQuantity()),
+        listing_id=int(pos.listingId),
+        net_quantity=int(pos.netQuantity),
         avg_entry_price=int(pos.getAvgEntryPrice()),
-        realized_pnl=float(pos.getRealizedPnl()),
-        total_fees=float(pos.getTotalFees()),
+        realized_pnl=float(pos.realizedPnl),
+        total_fees=float(pos.totalFees),
     )
 
 
 def _tracked_order_from_java(tracked) -> TrackedOrderInfo:
     return TrackedOrderInfo(
-        client_oid=str(tracked.getClientOid()),
+        client_oid=str(tracked.getClientOidCounter()),
         exchange_id=int(tracked.getExchangeId()),
         security_id=int(tracked.getSecurityId()),
         side=Side.from_java(tracked.getSide()),
-        price=int(tracked.getOriginalOrder().price()),
-        size=int(tracked.getOriginalOrder().size()),
+        price=int(tracked.getPrice()),
+        size=int(tracked.getSize()),
         state=str(tracked.getState().name()),
         cumulative_qty=int(tracked.getFilledQty()),
         leaves_qty=int(tracked.getLeavesQty()),
@@ -165,43 +180,44 @@ def _tracked_order_from_java(tracked) -> TrackedOrderInfo:
     )
 
 
-def _build_java_oms(risk_config: RiskConfig, oid_generator=None):
+def _build_java_oms(risk_config: RiskConfig, security_master):
     """Build a Java OrderManagementSystem from a Python RiskConfig.
 
     Args:
         risk_config: Risk policy configuration.
-        oid_generator: Callable returning unique client OID strings.
-            If None, uses a counter-based default.
+        security_master: Java SecurityMaster instance (required for tick size and listing lookups).
     """
     RiskEngine = jpype.JClass("group.gnometrading.oms.risk.RiskEngine")
-    RiskPolicyClass = jpype.JClass("group.gnometrading.oms.risk.RiskPolicy")
+    OrderRiskPolicyClass = jpype.JClass("group.gnometrading.oms.risk.OrderRiskPolicy")
     OMS = jpype.JClass("group.gnometrading.oms.OrderManagementSystem")
+    NullLogger = jpype.JClass("group.gnometrading.logging.NullLogger")
+    SharedPositionBuffer = jpype.JClass("group.gnometrading.oms.position.SharedPositionBuffer")
+    RingBufferOrderStateManager = jpype.JClass(
+        "group.gnometrading.oms.state.RingBufferOrderStateManager"
+    )
+    DefaultPositionTracker = jpype.JClass("group.gnometrading.oms.position.DefaultPositionTracker")
 
     policy_list = []
 
     if risk_config.max_notional_value is not None:
-        MaxNotionalValuePolicy = jpype.JClass("group.gnometrading.oms.risk.MaxNotionalValuePolicy")
+        MaxNotionalValuePolicy = jpype.JClass(
+            "group.gnometrading.oms.risk.policy.MaxNotionalValuePolicy"
+        )
         policy_list.append(MaxNotionalValuePolicy(jpype.JLong(risk_config.max_notional_value)))
 
-    java_array = jpype.JArray(RiskPolicyClass)(len(policy_list))
-    for i, p in enumerate(policy_list):
-        java_array[i] = p
+    if policy_list:
+        java_array = jpype.JArray(OrderRiskPolicyClass)(len(policy_list))
+        for i, p in enumerate(policy_list):
+            java_array[i] = p
+        engine = RiskEngine.withOrderPolicies(java_array)
+    else:
+        engine = RiskEngine()
 
-    engine = RiskEngine(java_array)
-
-    if oid_generator is None:
-        _counter = [0]
-        def oid_generator():
-            _counter[0] += 1
-            return jpype.JLong(_counter[0])
-
-    java_oms = OMS(engine, oid_generator, jpype.JLong(risk_config.default_tick_size))
-
-    # Set per-security tick size overrides
-    if risk_config.tick_sizes:
-        resolver = java_oms.getIntentResolver()
-        for sec_id, tick in risk_config.tick_sizes.items():
-            resolver.setTickSize(jpype.JLong(sec_id), jpype.JLong(tick))
-
-    return java_oms
-
+    shared_buffer = SharedPositionBuffer(jpype.JInt(64))
+    return OMS(
+        NullLogger(),
+        RingBufferOrderStateManager(),
+        DefaultPositionTracker(shared_buffer),
+        engine,
+        security_master,
+    )

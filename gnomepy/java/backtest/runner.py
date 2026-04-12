@@ -204,6 +204,8 @@ class Backtest:
         start_date: date | datetime,
         end_date: date | datetime,
         exchanges: list[ExchangeConfig],
+        registry_url: str,
+        registry_api_key: str,
         entries: list | None = None,
         bucket: str = "gnome-market-data-prod",
         s3_client=None,
@@ -236,6 +238,8 @@ class Backtest:
         self._start_date = start_date
         self._end_date = end_date
         self._exchanges = exchanges
+        self._registry_url = registry_url
+        self._registry_api_key = registry_api_key
         self._entries = entries
         self._bucket = bucket
         self._s3_client = s3_client
@@ -295,8 +299,12 @@ class Backtest:
         # Always create OMS + backtest adapter
         from gnomepy.java.oms import _build_java_oms, OmsView, RiskConfig
 
+        RegistryConnection = jpype.JClass("group.gnometrading.RegistryConnection")
+        SecurityMaster = jpype.JClass("group.gnometrading.SecurityMaster")
+        security_master = SecurityMaster(RegistryConnection(self._registry_url, self._registry_api_key))
+
         risk_config = self._risk_config if self._risk_config is not None else RiskConfig()
-        java_oms = _build_java_oms(risk_config)
+        java_oms = _build_java_oms(risk_config, security_master)
 
         OmsBacktestAdapter = jpype.JClass(
             "group.gnometrading.backtest.oms.OmsBacktestAdapter"
@@ -307,7 +315,7 @@ class Backtest:
         if isinstance(self._strategy, str):
             java_strategy = _instantiate_java_strategy(self._strategy, self._strategy_args)
         else:
-            self._strategy._oms_view = OmsView(java_oms)
+            self._strategy._oms_view = OmsView(java_oms, security_master)
             java_strategy = _create_java_strategy(self._strategy, adapter)
 
         # Create S3 client
