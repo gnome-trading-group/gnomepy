@@ -11,80 +11,42 @@ from gnomepy.java.schemas import wrap_schema
 from gnomepy.java.backtest.orders import ExecutionReport
 from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.backtest.config import ExchangeConfig
-from gnomepy.java.oms import Intent
 
 
-def _create_java_strategy(py_strategy: Strategy, adapter):
-    """Create a JPype proxy that implements the Java BacktestStrategy interface.
+def _create_python_callback(py_strategy: Strategy):
+    """Create a JPype proxy that implements PythonStrategyAgent.PythonStrategyCallback.
+
+    The proxy is a pure pass-through: it delegates to the Python strategy and converts
+    Python Intent wrappers to Java ArrayList<Intent> for the Java side.
 
     Args:
         py_strategy: Python Strategy implementation.
-        adapter: Java OmsBacktestAdapter instance.
     """
 
     ArrayList = jpype.JClass("java.util.ArrayList")
 
-    _java_intent = None
+    def _to_java_list(intents):
+        lst = ArrayList()
+        if intents:
+            for intent in intents:
+                lst.add(intent.raw)
+        return lst
 
-    def _ensure_intent_class():
-        nonlocal _java_intent
-        if _java_intent is None:
-            _java_intent = jpype.JClass("group.gnometrading.oms.intent.Intent")
-
-    def _to_java_intent(intent):
-        _ensure_intent_class()
-        ji = _java_intent()
-        has_take = intent.take_size > 0 and intent.take_side is not None
-        has_quote = intent.bid_size > 0 or intent.ask_size > 0
-        if has_quote and has_take:
-            ji.setQuoteAndTake(
-                int(intent.exchange_id), jpype.JLong(intent.security_id),
-                int(intent.strategy_id),
-                jpype.JLong(intent.bid_price), jpype.JLong(intent.bid_size),
-                jpype.JLong(intent.ask_price), jpype.JLong(intent.ask_size),
-                intent.take_side.to_java(), jpype.JLong(intent.take_size),
-                intent.take_order_type.to_java(), jpype.JLong(intent.take_limit_price),
-            )
-        elif has_take:
-            ji.setTake(
-                int(intent.exchange_id), jpype.JLong(intent.security_id),
-                int(intent.strategy_id),
-                intent.take_side.to_java(), jpype.JLong(intent.take_size),
-                intent.take_order_type.to_java(), jpype.JLong(intent.take_limit_price),
-            )
-        else:
-            ji.setQuote(
-                int(intent.exchange_id), jpype.JLong(intent.security_id),
-                int(intent.strategy_id),
-                jpype.JLong(intent.bid_price), jpype.JLong(intent.bid_size),
-                jpype.JLong(intent.ask_price), jpype.JLong(intent.ask_size),
-            )
-        return ji
-
-    @JImplements("group.gnometrading.backtest.driver.BacktestStrategy")
+    @JImplements(
+        "group.gnometrading.backtest.driver.PythonStrategyAgent$PythonStrategyCallback"
+    )
     class _Proxy:
         @JOverride
-        def onMarketData(self, timestamp, data):
+        def onMarketData(self, data):
             wrapped = wrap_schema(data)
-            intents = py_strategy.on_market_data(int(timestamp), wrapped)
-            if not intents:
-                return ArrayList()
-
-            # Convert Python intents to Java array
-            _ensure_intent_class()
-            intent_array = jpype.JArray(_java_intent)(len(intents))
-            for i, py_intent in enumerate(intents):
-                intent_array[i] = _to_java_intent(py_intent)
-
-            # Java handles everything: resolve → validate → track → LocalMessage
-            return adapter.processIntents(timestamp, intent_array, len(intents))
+            intents = py_strategy.on_market_data(wrapped)
+            return _to_java_list(intents)
 
         @JOverride
-        def onExecutionReport(self, timestamp, report):
-            messages = adapter.processExecutionReport(report)
+        def onExecutionReport(self, report):
             py_report = ExecutionReport._from_java(report)
-            py_strategy.on_execution_report(int(timestamp), py_report)
-            return messages
+            intents = py_strategy.on_execution_report(py_report)
+            return _to_java_list(intents)
 
         @JOverride
         def simulateProcessingTime(self):
@@ -311,12 +273,18 @@ class Backtest:
         )
         adapter = OmsBacktestAdapter(java_oms, self._recorder) if self._recorder else OmsBacktestAdapter(java_oms)
 
-        # Resolve strategy: Python instance → JPype proxy, or native Java FQN → instantiate
+        position_view = java_oms.getPositionTracker().createPositionView(jpype.JInt(0))
+
+        # Resolve strategy: Python instance → PythonStrategyAgent, or native Java FQN → instantiate
+        PythonStrategyAgentClass = jpype.JClass(
+            "group.gnometrading.backtest.driver.PythonStrategyAgent"
+        )
         if isinstance(self._strategy, str):
             java_strategy = _instantiate_java_strategy(self._strategy, self._strategy_args)
         else:
             self._strategy._oms_view = OmsView(java_oms, security_master)
-            java_strategy = _create_java_strategy(self._strategy, adapter)
+            callback = _create_python_callback(self._strategy)
+            java_strategy = PythonStrategyAgentClass.create(position_view, callback)
 
         # Create S3 client
         if self._s3_client is None:
@@ -336,6 +304,7 @@ class Backtest:
             java_schema_type,
             java_strategy,
             exchange_map,
+            adapter,
             s3,
             str(self._bucket),
         )

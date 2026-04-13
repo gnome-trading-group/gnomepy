@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import jpype
 
 from gnomepy.java.enums import Side, OrderType
 
 
-@dataclass
 class Intent:
-    """Flat union intent — supports quoting, taking, or both simultaneously.
+    """Python wrapper around the Java SBE Intent message.
+
+    Supports quoting, taking, or both simultaneously.
 
     Quote fields (passive resting orders):
         bid_price/bid_size: desired bid. size=0 means cancel existing bid.
@@ -32,17 +33,98 @@ class Intent:
         Intent(1, 100)
     """
 
-    exchange_id: int
-    security_id: int
-    strategy_id: int = 0
-    bid_price: int = 0
-    bid_size: int = 0
-    ask_price: int = 0
-    ask_size: int = 0
-    take_side: Side | None = None
-    take_size: int = 0
-    take_order_type: OrderType | None = None
-    take_limit_price: int = 0
+    _java_class = None
+
+    @classmethod
+    def _ensure_class(cls):
+        if cls._java_class is None:
+            cls._java_class = jpype.JClass("group.gnometrading.schemas.Intent")
+
+    def __init__(
+        self,
+        exchange_id: int,
+        security_id: int,
+        strategy_id: int = 0,
+        *,
+        bid_price: int = 0,
+        bid_size: int = 0,
+        ask_price: int = 0,
+        ask_size: int = 0,
+        take_side: Side | None = None,
+        take_size: int = 0,
+        take_order_type: OrderType | None = None,
+        take_limit_price: int = 0,
+    ):
+        self._ensure_class()
+        self._java = self._java_class()
+        enc = self._java.encoder
+        enc.exchangeId(jpype.JInt(exchange_id))
+        enc.securityId(jpype.JLong(security_id))
+        enc.strategyId(jpype.JInt(strategy_id))
+        enc.bidPrice(jpype.JLong(bid_price))
+        enc.bidSize(jpype.JLong(bid_size))
+        enc.askPrice(jpype.JLong(ask_price))
+        enc.askSize(jpype.JLong(ask_size))
+        if take_size > 0 and take_side is not None:
+            enc.takeSide(take_side.to_java())
+            enc.takeSize(jpype.JLong(take_size))
+            enc.takeOrderType(take_order_type.to_java())
+            enc.takeLimitPrice(jpype.JLong(take_limit_price))
+
+    @property
+    def raw(self):
+        """The underlying Java SBE Intent object."""
+        return self._java
+
+    @property
+    def exchange_id(self) -> int:
+        return int(self._java.decoder.exchangeId())
+
+    @property
+    def security_id(self) -> int:
+        return int(self._java.decoder.securityId())
+
+    @property
+    def strategy_id(self) -> int:
+        return int(self._java.decoder.strategyId())
+
+    @property
+    def bid_price(self) -> int:
+        return int(self._java.decoder.bidPrice())
+
+    @property
+    def bid_size(self) -> int:
+        return int(self._java.decoder.bidSize())
+
+    @property
+    def ask_price(self) -> int:
+        return int(self._java.decoder.askPrice())
+
+    @property
+    def ask_size(self) -> int:
+        return int(self._java.decoder.askSize())
+
+    @property
+    def take_side(self) -> Side | None:
+        java_side = self._java.decoder.takeSide()
+        s = Side.from_java(java_side)
+        return None if s == Side.NONE else s
+
+    @property
+    def take_size(self) -> int:
+        return int(self._java.decoder.takeSize())
+
+    @property
+    def take_order_type(self) -> OrderType | None:
+        java_ot = self._java.decoder.takeOrderType()
+        name = str(java_ot.name())
+        if name == "NULL_VAL":
+            return None
+        return OrderType(name)
+
+    @property
+    def take_limit_price(self) -> int:
+        return int(self._java.decoder.takeLimitPrice())
 
 
 @dataclass

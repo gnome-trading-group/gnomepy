@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from gnomepy.java.enums import ExecType, OrderStatus, Side
+from gnomepy.java.statics import Scales
 
 
 @dataclass
@@ -25,18 +26,19 @@ class ExecutionReport:
 
     @classmethod
     def _from_java(cls, java_report) -> ExecutionReport:
+        dec = java_report.decoder
         return cls(
-            client_oid=str(java_report.clientOid),
-            side=Side.from_java(java_report.side),
-            exec_type=ExecType.from_java(java_report.execType),
-            order_status=OrderStatus.from_java(java_report.orderStatus),
-            filled_qty=int(java_report.filledQty),
-            fill_price=int(java_report.fillPrice),
-            cumulative_qty=int(java_report.cumulativeQty),
-            leaves_qty=int(java_report.leavesQty),
-            fee=float(java_report.fee),
-            timestamp_event=int(java_report.timestampEvent),
-            timestamp_recv=int(java_report.timestampRecv),
-            exchange_id=int(java_report.exchangeId),
-            security_id=int(java_report.securityId),
+            client_oid=str(java_report.getClientOidCounter()),
+            side=Side.NONE,
+            exec_type=ExecType.from_java(dec.execType()),
+            order_status=OrderStatus.from_java(dec.orderStatus()),
+            filled_qty=int(dec.filledQty()),
+            fill_price=int(dec.fillPrice()),
+            cumulative_qty=int(dec.cumulativeQty()),
+            leaves_qty=int(dec.leavesQty()),
+            fee=int(dec.fee()) / Scales.PRICE,
+            timestamp_event=int(dec.timestampEvent()),
+            timestamp_recv=int(dec.timestampRecv()),
+            exchange_id=int(dec.exchangeId()),
+            security_id=int(dec.securityId()),
         )

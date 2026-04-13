@@ -14,9 +14,13 @@ class Strategy(ABC):
     into orders (diffing against current open orders) and handles risk
     validation, order tracking, and position management.
 
+    Timestamps are available on the data objects themselves:
+        data.event_timestamp  — for market data
+        report.timestamp_recv — for execution reports
+
     Example:
         class MyMMStrategy(Strategy):
-            def on_market_data(self, timestamp, data):
+            def on_market_data(self, data):
                 mid = (data.bid_price(0) + data.ask_price(0)) // 2
                 return [Intent(
                     exchange_id=1, security_id=100,
@@ -24,22 +28,19 @@ class Strategy(ABC):
                     ask_price=mid + 50, ask_size=10,
                 )]
 
-            def on_execution_report(self, timestamp, report):
+            def on_execution_report(self, report):
                 print(f"Fill: {report.fill_price} x {report.filled_qty}")
+                return []
     """
 
     @abstractmethod
-    def on_market_data(
-        self, timestamp: int, data: Schema
-    ) -> list[Intent]:
+    def on_market_data(self, data: Schema) -> list[Intent]:
         """Called on each market data update. Return desired state as Intents."""
         ...
 
     @abstractmethod
-    def on_execution_report(
-        self, timestamp: int, report: ExecutionReport
-    ) -> None:
-        """Called when an execution report is received."""
+    def on_execution_report(self, report: ExecutionReport) -> list[Intent]:
+        """Called when an execution report is received. Return new Intents if desired."""
         ...
 
     _oms_view = None
