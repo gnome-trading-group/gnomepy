@@ -18,6 +18,13 @@ set -euo pipefail
 : "${GH_TOKEN:?GH_TOKEN is required}"
 : "${BACKTEST_CONFIG:?BACKTEST_CONFIG is required (path inside container)}"
 
+# If config is an S3 URI, download it to a local path.
+if [[ "$BACKTEST_CONFIG" == s3://* ]]; then
+  echo "entrypoint: downloading config from $BACKTEST_CONFIG"
+  aws s3 cp "$BACKTEST_CONFIG" /work/config.yaml --quiet
+  BACKTEST_CONFIG=/work/config.yaml
+fi
+
 if [[ ! -f "$BACKTEST_CONFIG" ]]; then
   echo "entrypoint: BACKTEST_CONFIG not found at $BACKTEST_CONFIG" >&2
   exit 1

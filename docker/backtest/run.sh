@@ -12,6 +12,8 @@
 #                    (default: example-backtest.yaml next to this script)
 #   IMAGE_TAG        image to run (default: gnomepy-backtest:latest)
 #   OUTPUT_DIR       host dir mounted at /work/out (default: ./out)
+#   JOB_ID           job id (default: generated UUIDv7)
+#   BACKTEST_BUCKET  s3 bucket for default output (default: gnome-research)
 #   SKIP_AWS=1       do not resolve/forward AWS credentials
 #
 # Extra args are forwarded to `gnomepy backtest`. `--output` may be either
@@ -63,6 +65,22 @@ IMAGE_TAG="${IMAGE_TAG:-gnomepy-backtest:latest}"
 OUTPUT_DIR="${OUTPUT_DIR:-$PWD/out}"
 mkdir -p "$OUTPUT_DIR"
 
+# UUIDv7 (time-ordered). Falls back to python if uuidgen not present.
+gen_uuid7() {
+  python3 - <<'PY'
+import os, secrets, time
+ms = int(time.time() * 1000) & 0xFFFFFFFFFFFF
+ra = secrets.randbits(12)
+rb = secrets.randbits(62)
+n = (ms << 80) | (0x7 << 76) | (ra << 64) | (0b10 << 62) | rb
+h = f"{n:032x}"
+print(f"{h[0:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}")
+PY
+}
+: "${JOB_ID:=$(gen_uuid7)}"
+: "${BACKTEST_BUCKET:=gnome-research}"
+echo "run.sh: job_id=$JOB_ID"
+
 TMPDIR_RUN="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_RUN"' EXIT
 
@@ -109,6 +127,18 @@ else
 fi
 CONFIG_ABS="$(cd "$(dirname "$CONFIG_LOCAL")" && pwd)/$(basename "$CONFIG_LOCAL")"
 
+# ---------- Default --output to s3://$BACKTEST_BUCKET/backtests/$JOB_ID/ --
+HAS_OUTPUT=0
+for a in "$@"; do
+  case "$a" in --output|-o|--output=*|-o=*) HAS_OUTPUT=1; break;; esac
+done
+if (( ! HAS_OUTPUT )); then
+  set -- "$@" --output "s3://$BACKTEST_BUCKET/backtests/$JOB_ID/"
+fi
+
+# Always forward the job id to the CLI so manifest matches the s3 prefix.
+set -- "$@" --job-id "$JOB_ID"
+
 # ---------- Rewrite --output if it's s3:// --------------------------------
 # Walk the forwarded args, replacing any s3:// --output with a container path
 # and remembering the URI for upload after the run.
@@ -127,7 +157,7 @@ while (( i < ${#args[@]} )); do
       fi
       if [[ "$val" == s3://* ]]; then
         OUTPUT_S3="$val"
-        FORWARDED_ARGS+=("$a" "/work/out/$(basename "$val")")
+        FORWARDED_ARGS+=("$a" "/work/out/$(basename "${val%/}")")
       else
         FORWARDED_ARGS+=("$a" "$val")
       fi
@@ -137,7 +167,7 @@ while (( i < ${#args[@]} )); do
       val="${a#*=}"
       if [[ "$val" == s3://* ]]; then
         OUTPUT_S3="$val"
-        FORWARDED_ARGS+=("--output" "/work/out/$(basename "$val")")
+        FORWARDED_ARGS+=("--output" "/work/out/$(basename "${val%/}")")
       else
         FORWARDED_ARGS+=("$a")
       fi
