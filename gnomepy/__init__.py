@@ -4,23 +4,31 @@ Public API:
 
     from gnomepy import (
         Strategy, Backtest, run_backtest,
-        Intent, ExecutionReport, OmsView, RiskConfig,
-        ExchangeConfig, StaticFeeConfig, StaticLatencyConfig,
+        BacktestConfig, ListingSimConfig, ExchangeProfileConfig,
+        StrategyConfig, RiskConfig, S3Config,
+        StaticFeeConfig, StaticLatencyConfig, GaussianLatencyConfig,
+        OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig,
+        Intent, ExecutionReport, OmsView,
         SchemaType, Side, Action,
         Mbp10Schema, ...
     )
 """
 from gnomepy.java.backtest.config import (
-    ExchangeConfig,
+    BacktestConfig,
+    ExchangeProfileConfig,
     GaussianLatencyConfig,
+    ListingSimConfig,
     OptimisticQueueConfig,
     ProbabilisticQueueConfig,
     RiskAverseQueueConfig,
+    RiskConfig,
+    S3Config,
     StaticFeeConfig,
     StaticLatencyConfig,
+    StrategyConfig,
 )
 from gnomepy.java.backtest.orders import ExecutionReport
-from gnomepy.java.backtest.runner import Backtest
+from gnomepy.java.backtest.runner import Backtest, run_backtest
 from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.datastore import DataStore
 from gnomepy.java.enums import (
@@ -36,7 +44,6 @@ from gnomepy.java.oms import (
     Intent,
     OmsView,
     PositionInfo,
-    RiskConfig,
     TrackedOrderInfo,
 )
 from gnomepy.java.recorder import BacktestResults
@@ -56,29 +63,34 @@ from gnomepy.java.schemas import (
     wrap_schema,
 )
 from gnomepy.java.statics import Scales
-from gnomepy.entrypoint import run_backtest
+from gnomepy.metadata import BacktestMetadata
+from gnomepy.utils import generate_backtest_id, uuid7
 
 __all__ = [
     # Top-level API
     "Strategy",
     "Backtest",
     "run_backtest",
-    # Orders / OMS
-    "Intent",
-    "ExecutionReport",
-    "OmsView",
-    "PositionInfo",
-    "TrackedOrderInfo",
+    # Backtest config
+    "BacktestConfig",
+    "ListingSimConfig",
+    "ExchangeProfileConfig",
+    "StrategyConfig",
     "RiskConfig",
-    "BacktestResults",
-    # Exchange config
-    "ExchangeConfig",
+    "S3Config",
     "StaticFeeConfig",
     "StaticLatencyConfig",
     "GaussianLatencyConfig",
     "OptimisticQueueConfig",
     "RiskAverseQueueConfig",
     "ProbabilisticQueueConfig",
+    # Orders / OMS
+    "Intent",
+    "ExecutionReport",
+    "OmsView",
+    "PositionInfo",
+    "TrackedOrderInfo",
+    "BacktestResults",
     # Enums
     "SchemaType",
     "Side",
@@ -103,4 +115,8 @@ __all__ = [
     "wrap_schema",
     "DataStore",
     "Scales",
+    # Metadata
+    "BacktestMetadata",
+    "generate_backtest_id",
+    "uuid7",
 ]

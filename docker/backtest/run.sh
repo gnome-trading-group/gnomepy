@@ -11,19 +11,16 @@
 #   BACKTEST_CONFIG  host path OR s3:// URI to a YAML config
 #                    (default: example-backtest.yaml next to this script)
 #   IMAGE_TAG        image to run (default: gnomepy-backtest:latest)
-#   OUTPUT_DIR       host dir mounted at /work/out (default: ./out)
-#   JOB_ID           job id (default: generated UUIDv7)
-#   BACKTEST_BUCKET  s3 bucket for default output (default: gnome-research)
+#   OUTPUT_DIR       host dir mounted at /work/out for local --output (default: ./out)
+#   BACKTEST_BUCKET  s3 bucket for default --s3-bucket (default: gnome-research)
 #   SKIP_AWS=1       do not resolve/forward AWS credentials
 #
-# Extra args are forwarded to `gnomepy backtest`. `--output` may be either
-# a local path or an s3:// URI; s3 paths are uploaded after the run.
+# Extra args are forwarded unchanged to `gnomepy backtest`.
 #
 # Examples:
-#   ./run.sh --output /work/out/results.json
-#   ./run.sh --output s3://my-bucket/backtests/run-42.json
-#   BACKTEST_CONFIG=s3://my-bucket/configs/momentum.yaml ./run.sh \
-#       --output s3://my-bucket/backtests/momentum.json
+#   ./run.sh
+#   ./run.sh --s3-bucket my-bucket
+#   BACKTEST_CONFIG=s3://my-bucket/configs/momentum.yaml ./run.sh
 
 set -euo pipefail
 
@@ -60,26 +57,11 @@ done
 set -- "${PASSTHROUGH[@]}"
 
 : "${BACKTEST_CONFIG:=$SCRIPT_DIR/example-backtest.yaml}"
+: "${BACKTEST_BUCKET:=gnome-research}"
 
 IMAGE_TAG="${IMAGE_TAG:-gnomepy-backtest:latest}"
 OUTPUT_DIR="${OUTPUT_DIR:-$PWD/out}"
 mkdir -p "$OUTPUT_DIR"
-
-# UUIDv7 (time-ordered). Falls back to python if uuidgen not present.
-gen_uuid7() {
-  python3 - <<'PY'
-import os, secrets, time
-ms = int(time.time() * 1000) & 0xFFFFFFFFFFFF
-ra = secrets.randbits(12)
-rb = secrets.randbits(62)
-n = (ms << 80) | (0x7 << 76) | (ra << 64) | (0b10 << 62) | rb
-h = f"{n:032x}"
-print(f"{h[0:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}")
-PY
-}
-: "${JOB_ID:=$(gen_uuid7)}"
-: "${BACKTEST_BUCKET:=gnome-research}"
-echo "run.sh: job_id=$JOB_ID"
 
 TMPDIR_RUN="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_RUN"' EXIT
@@ -112,7 +94,7 @@ if [[ -z "${SKIP_AWS:-}" ]]; then
   [[ -n "${AWS_SESSION_TOKEN:-}" ]] && AWS_ARGS+=(-e AWS_SESSION_TOKEN)
 fi
 
-# ---------- Resolve config (local or s3://) -------------------------------
+# ---------- Resolve config (local or s3://) --------------------------------
 if [[ "$BACKTEST_CONFIG" == s3://* ]]; then
   command -v aws >/dev/null 2>&1 || { echo "run.sh: aws CLI required for s3:// config" >&2; exit 1; }
   CONFIG_LOCAL="$TMPDIR_RUN/backtest.yaml"
@@ -127,62 +109,17 @@ else
 fi
 CONFIG_ABS="$(cd "$(dirname "$CONFIG_LOCAL")" && pwd)/$(basename "$CONFIG_LOCAL")"
 
-# ---------- Default --output to s3://$BACKTEST_BUCKET/backtests/$JOB_ID/ --
+# ---------- Default --s3-bucket if no output specified --------------------
 HAS_OUTPUT=0
 for a in "$@"; do
-  case "$a" in --output|-o|--output=*|-o=*) HAS_OUTPUT=1; break;; esac
+  case "$a" in --output|-o|--output=*|-o=*|--s3-bucket|--s3-bucket=*) HAS_OUTPUT=1; break;; esac
 done
 if (( ! HAS_OUTPUT )); then
-  set -- "$@" --output "s3://$BACKTEST_BUCKET/backtests/$JOB_ID/"
+  set -- "$@" --s3-bucket "$BACKTEST_BUCKET"
 fi
-
-# Always forward the job id to the CLI so manifest matches the s3 prefix.
-set -- "$@" --job-id "$JOB_ID"
-
-# ---------- Rewrite --output if it's s3:// --------------------------------
-# Walk the forwarded args, replacing any s3:// --output with a container path
-# and remembering the URI for upload after the run.
-OUTPUT_S3=""
-FORWARDED_ARGS=()
-i=0
-args=("$@")
-while (( i < ${#args[@]} )); do
-  a="${args[$i]}"
-  case "$a" in
-    --output|-o)
-      val="${args[$((i+1))]:-}"
-      if [[ -z "$val" ]]; then
-        echo "run.sh: --output requires a value" >&2
-        exit 1
-      fi
-      if [[ "$val" == s3://* ]]; then
-        OUTPUT_S3="$val"
-        FORWARDED_ARGS+=("$a" "/work/out/$(basename "${val%/}")")
-      else
-        FORWARDED_ARGS+=("$a" "$val")
-      fi
-      i=$((i+2))
-      ;;
-    --output=*|-o=*)
-      val="${a#*=}"
-      if [[ "$val" == s3://* ]]; then
-        OUTPUT_S3="$val"
-        FORWARDED_ARGS+=("--output" "/work/out/$(basename "${val%/}")")
-      else
-        FORWARDED_ARGS+=("$a")
-      fi
-      i=$((i+1))
-      ;;
-    *)
-      FORWARDED_ARGS+=("$a")
-      i=$((i+1))
-      ;;
-  esac
-done
 
 # ---------- Run the container ---------------------------------------------
 echo "run.sh: $IMAGE_TAG @ commit $RESEARCH_COMMIT"
-set +e
 docker run --rm \
   -e RESEARCH_COMMIT \
   -e GH_TOKEN \
@@ -191,23 +128,4 @@ docker run --rm \
   -v "$CONFIG_ABS:/work/backtest.yaml:ro" \
   -v "$OUTPUT_DIR:/work/out" \
   "$IMAGE_TAG" \
-  "${FORWARDED_ARGS[@]}"
-rc=$?
-set -e
-
-# ---------- Upload result if requested ------------------------------------
-if [[ -n "$OUTPUT_S3" && $rc -eq 0 ]]; then
-  local_result="$OUTPUT_DIR/$(basename "$OUTPUT_S3")"
-  dest="${OUTPUT_S3%/}"
-  if [[ -d "$local_result" ]]; then
-    echo "run.sh: uploading $local_result/ -> $dest/"
-    aws s3 cp "$local_result" "$dest/" --recursive --quiet
-  elif [[ -f "$local_result" ]]; then
-    echo "run.sh: uploading $local_result -> $OUTPUT_S3"
-    aws s3 cp "$local_result" "$OUTPUT_S3" --quiet
-  else
-    echo "run.sh: warning: expected result not found at $local_result" >&2
-  fi
-fi
-
-exit "$rc"
+  "$@"

@@ -55,8 +55,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1 \
-    GNOME_ROOT=/opt/gnome \
-    JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+    GNOME_ROOT=/opt/gnome
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
@@ -64,14 +63,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openjdk-21-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
+# Resolve JAVA_HOME dynamically so the image works on both amd64 and arm64.
+RUN ln -sf "$(dirname "$(dirname "$(readlink -f "$(which java)")")")" /usr/lib/jvm/current
+ENV JAVA_HOME=/usr/lib/jvm/current
+
 # JARs from stage 1. _classpath.py scans $GNOME_ROOT/gnome-backtest/target
 # for *-all.jar, so preserve that layout.
 RUN mkdir -p /opt/gnome/gnome-backtest/target
 COPY --from=jar-builder /build/gnome-backtest/target/*-all.jar /opt/gnome/gnome-backtest/target/
 
-# Install gnomepy itself (pinned to the working tree we are building from).
+# Install gnomepy dependencies first (cached until pyproject.toml/poetry.lock change).
+COPY gnomepy/pyproject.toml gnomepy/poetry.lock gnomepy/README.md /opt/gnomepy/
+RUN pip install poetry && \
+    cd /opt/gnomepy && \
+    poetry export -f requirements.txt --without-hashes -o /tmp/requirements.txt && \
+    pip install -r /tmp/requirements.txt && \
+    pip uninstall -y poetry && rm /tmp/requirements.txt
+
+# Install gnomepy source (--no-deps since deps are already installed above).
 COPY gnomepy /opt/gnomepy
-RUN pip install /opt/gnomepy
+RUN pip install --no-deps /opt/gnomepy
 
 COPY gnomepy/docker/backtest/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

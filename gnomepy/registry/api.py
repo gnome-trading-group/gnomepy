@@ -25,7 +25,7 @@ class RegistryClient:
             api_key: Optional[str] = None,
             api_key_environ_key: str = "GNOME_REGISTRY_API_KEY",
     ):
-        self.base_url = config.REGISTRY_API_URL
+        self.base_url = f"https://{config.REGISTRY_API_HOST}/api"
 
         if api_key is None:
             api_key = os.environ.get(api_key_environ_key)

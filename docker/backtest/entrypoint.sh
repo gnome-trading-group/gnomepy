@@ -5,24 +5,29 @@
 # Required env:
 #   RESEARCH_COMMIT  git SHA / ref of gnomepy-research to check out
 #   GH_TOKEN         GitHub token with read access to gnomepy-research
-#   BACKTEST_CONFIG  path (inside container) to YAML backtest config
+#   BACKTEST_CONFIG  s3:// URI or path (inside container) to YAML backtest config
 #
-# AWS_* env vars should also be passed if the backtest reads from S3.
+# AWS_* env vars must be passed for S3 access (config download, market data, results).
 #
-# Any extra args are forwarded to `gnomepy backtest`, e.g.:
-#   docker run ... gnomepy-research-backtest --output /work/out/results.json
+# Any extra args are forwarded to `gnomepy backtest`.
 
 set -euo pipefail
 
 : "${RESEARCH_COMMIT:?RESEARCH_COMMIT is required}"
 : "${GH_TOKEN:?GH_TOKEN is required}"
-: "${BACKTEST_CONFIG:?BACKTEST_CONFIG is required (path inside container)}"
+: "${BACKTEST_CONFIG:?BACKTEST_CONFIG is required}"
 
-# If config is an S3 URI, download it to a local path.
+LOCAL_CONFIG=/work/config.yaml
+
+# If config is an S3 URI, download it via boto3.
 if [[ "$BACKTEST_CONFIG" == s3://* ]]; then
   echo "entrypoint: downloading config from $BACKTEST_CONFIG"
-  aws s3 cp "$BACKTEST_CONFIG" /work/config.yaml --quiet
-  BACKTEST_CONFIG=/work/config.yaml
+  python3 - <<PY
+import boto3, sys
+bucket, key = "$BACKTEST_CONFIG"[5:].split("/", 1)
+boto3.client("s3").download_file(bucket, key, "$LOCAL_CONFIG")
+PY
+  BACKTEST_CONFIG=$LOCAL_CONFIG
 fi
 
 if [[ ! -f "$BACKTEST_CONFIG" ]]; then
@@ -49,4 +54,4 @@ pip install --quiet --no-deps "$REPO_DIR"
 unset GH_TOKEN
 
 echo "entrypoint: running gnomepy backtest"
-exec gnomepy backtest --config "$BACKTEST_CONFIG" "$@"
+gnomepy backtest --config "$BACKTEST_CONFIG" "$@"

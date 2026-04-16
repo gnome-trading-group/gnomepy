@@ -25,7 +25,6 @@ def ensure_jvm_started(
     jvm_path: str | None = None,
     jvm_args: list[str] | None = None,
     gnome_root: str | Path | None = None,
-    extra_jars: list[str] | None = None,
 ) -> None:
     """Start the JVM if not already running. Idempotent and thread-safe.
 
@@ -34,9 +33,6 @@ def ensure_jvm_started(
         jvm_path: Path to the JVM shared library. If None, JPype finds it.
         jvm_args: Extra JVM arguments. Merged with DEFAULT_JVM_ARGS.
         gnome_root: Root directory of GNOME repos for JAR discovery.
-        extra_jars: Additional JAR paths to append to the classpath
-            (e.g. compiled user strategy code). Ignored when `classpath`
-            is supplied explicitly.
     """
     if jpype.isJVMStarted():
         return
@@ -46,7 +42,7 @@ def ensure_jvm_started(
             return
 
         if classpath is None:
-            classpath = discover_classpath(gnome_root=gnome_root, extra_jars=extra_jars)
+            classpath = discover_classpath(gnome_root=gnome_root)
 
         args = list(DEFAULT_JVM_ARGS)
         if jvm_args:

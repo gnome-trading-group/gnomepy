@@ -1,20 +1,44 @@
 # Sample backtest config consumed by `gnomepy backtest --config ...`.
-strategy: gnomepy_research.strategies.momentum:MomentumTaker
-strategy_args:
-  exchange_id: 1
-  security_id: 1
-  size: 1
-  max_position: 5
-  threshold_bps: 2.0
-  ewma_alpha: 0.95
-  warmup_ticks: 100
-
-schema_type: MBP_10
-start_date: 2026-01-23T10:30:00Z
-end_date:   2026-01-23T11:00:00Z
-
-exchanges:
-  - exchange_id: 1
+strategy:
+  class_name: "gnomepy_research.strategies.momentum:MomentumTaker"
+  args:
+    exchange_id: 1
     security_id: 1
+    size: 1
+    max_position: 5
+    threshold_bps: 2.0
+    ewma_alpha: 0.95
+    warmup_ticks: 100
 
-bucket: gnome-market-data-prod
+start_date: "2026-01-23T10:30:00"
+end_date: "2026-01-23T11:00:00"
+
+listings:
+  - listing_id: 1
+    profile: default
+
+profiles:
+  default:
+    fee_model:
+      type: static
+      taker_fee: 0.0005
+      maker_fee: 0.0002
+    network_latency:
+      type: static
+      latency_nanos: 5000000
+    order_processing_latency:
+      type: static
+      latency_nanos: 1000000
+    queue_model:
+      type: risk_averse
+
+s3:
+  bucket: gnome-market-data-prod
+
+# Optional: number of book depth levels to record (1 = BBO only, max 10).
+# record_depth: 3
+
+# Optional: OMS risk parameters.
+# risk:
+#   policies:
+#     MAX_NOTIONAL: { maxNotionalValue: 1000000 }

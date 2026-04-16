@@ -31,30 +31,51 @@ DOCKER_BUILDKIT=1 docker build \
   .
 ```
 
+The image builds on both amd64 and arm64 (Apple Silicon).
+
 ## Run
+
+Use `run.sh` for the standard workflow — it resolves AWS credentials,
+defaults to `--s3-bucket gnome-research`, and forwards all flags to
+`gnomepy backtest` (Python generates the job ID and constructs the
+full S3 path):
+
+```sh
+RESEARCH_COMMIT=<git-sha> GH_TOKEN=$GH_TOKEN ./run.sh
+```
+
+Or invoke `docker run` directly:
 
 ```sh
 docker run --rm \
   -e RESEARCH_COMMIT=<git-sha> \
   -e GH_TOKEN=$GH_TOKEN \
   -e BACKTEST_CONFIG=/work/backtest.yaml \
-  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
+  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN -e AWS_REGION \
   -v "$PWD/backtest.yaml:/work/backtest.yaml:ro" \
-  -v "$PWD/out:/work/out" \
   gnomepy-backtest \
-  --output /work/out/results
+  --s3-bucket gnome-research
 ```
 
 Required env:
 
-| var             | meaning                                                     |
-| --------------- | ----------------------------------------------------------- |
-| `RESEARCH_COMMIT` | git SHA (or ref) of `gnomepy-research` to check out           |
-| `GH_TOKEN`        | GitHub token with read access to `gnomepy-research`           |
-| `BACKTEST_CONFIG` | path (inside container) to a YAML backtest config           |
+| var               | meaning                                                   |
+| ----------------- | --------------------------------------------------------- |
+| `RESEARCH_COMMIT` | git SHA (or ref) of `gnomepy-research` to check out      |
+| `GH_TOKEN`        | GitHub token with read access to `gnomepy-research`      |
+| `BACKTEST_CONFIG` | path (inside container) or `s3://` URI to a YAML config  |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | AWS credentials for S3 access |
 
-Optional: `AWS_*` for the S3 market-data bucket, plus any extra
-`gnomepy backtest` flags as positional args (e.g. `--output ...`).
+Optional: `AWS_SESSION_TOKEN` (for temporary credentials), `AWS_REGION`
+(default: `us-east-1`).
+
+For local output instead of S3, pass `--output /work/out/results` and
+mount a host directory at `/work/out`:
+
+```sh
+docker run --rm ... -v "$PWD/out:/work/out" gnomepy-backtest \
+  --output /work/out/results
+```
 
 A minimal sample config lives at `example-backtest.yaml`.
 
@@ -66,3 +87,5 @@ A minimal sample config lives at `example-backtest.yaml`.
 - `gnomepy-research` is installed with `--no-deps` so it cannot pull a
   different `gnomepy` over the baked-in one.
 - `GH_TOKEN` is unset before exec'ing the backtest.
+- Results are written directly to S3 by `gnomepy` via pyarrow — no
+  post-run upload step needed.

@@ -154,13 +154,6 @@ class TrackedOrderInfo:
     avg_fill_price: int
 
 
-@dataclass
-class RiskConfig:
-    """Configuration for OMS risk policies."""
-
-    max_notional_value: int | None = None
-
-
 class OmsView:
     """Read-only Python view of the Java OMS state.
 
@@ -259,47 +252,4 @@ def _tracked_order_from_java(tracked) -> TrackedOrderInfo:
         cumulative_qty=int(tracked.getFilledQty()),
         leaves_qty=int(tracked.getLeavesQty()),
         avg_fill_price=int(tracked.getAvgFillPrice()),
-    )
-
-
-def _build_java_oms(risk_config: RiskConfig, security_master):
-    """Build a Java OrderManagementSystem from a Python RiskConfig.
-
-    Args:
-        risk_config: Risk policy configuration.
-        security_master: Java SecurityMaster instance (required for tick size and listing lookups).
-    """
-    RiskEngine = jpype.JClass("group.gnometrading.oms.risk.RiskEngine")
-    OrderRiskPolicyClass = jpype.JClass("group.gnometrading.oms.risk.OrderRiskPolicy")
-    OMS = jpype.JClass("group.gnometrading.oms.OrderManagementSystem")
-    NullLogger = jpype.JClass("group.gnometrading.logging.NullLogger")
-    SharedPositionBuffer = jpype.JClass("group.gnometrading.oms.position.SharedPositionBuffer")
-    RingBufferOrderStateManager = jpype.JClass(
-        "group.gnometrading.oms.state.RingBufferOrderStateManager"
-    )
-    DefaultPositionTracker = jpype.JClass("group.gnometrading.oms.position.DefaultPositionTracker")
-
-    policy_list = []
-
-    if risk_config.max_notional_value is not None:
-        MaxNotionalValuePolicy = jpype.JClass(
-            "group.gnometrading.oms.risk.policy.MaxNotionalValuePolicy"
-        )
-        policy_list.append(MaxNotionalValuePolicy(jpype.JLong(risk_config.max_notional_value)))
-
-    if policy_list:
-        java_array = jpype.JArray(OrderRiskPolicyClass)(len(policy_list))
-        for i, p in enumerate(policy_list):
-            java_array[i] = p
-        engine = RiskEngine.withOrderPolicies(java_array)
-    else:
-        engine = RiskEngine()
-
-    shared_buffer = SharedPositionBuffer(jpype.JInt(64))
-    return OMS(
-        NullLogger(),
-        RingBufferOrderStateManager(),
-        DefaultPositionTracker(shared_buffer),
-        engine,
-        security_master,
     )
