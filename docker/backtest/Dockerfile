@@ -74,11 +74,11 @@ COPY --from=jar-builder /build/gnome-backtest/target/*-all.jar /opt/gnome/gnome-
 
 # Install gnomepy dependencies first (cached until pyproject.toml/poetry.lock change).
 COPY gnomepy/pyproject.toml gnomepy/poetry.lock gnomepy/README.md /opt/gnomepy/
-RUN pip install poetry && \
+RUN pip install poetry poetry-plugin-export && \
     cd /opt/gnomepy && \
     poetry export -f requirements.txt --without-hashes -o /tmp/requirements.txt && \
     pip install -r /tmp/requirements.txt && \
-    pip uninstall -y poetry && rm /tmp/requirements.txt
+    pip uninstall -y poetry poetry-plugin-export && rm /tmp/requirements.txt
 
 # Install gnomepy source (--no-deps since deps are already installed above).
 COPY gnomepy /opt/gnomepy

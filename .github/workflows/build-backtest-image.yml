@@ -8,6 +8,8 @@ on:
       - 'docker/backtest/**'
       - 'pyproject.toml'
       - 'poetry.lock'
+  repository_dispatch:
+    types: [gnome-backtest-updated]
 
 jobs:
   build-and-push:
@@ -35,12 +37,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT }}
         run: |
+          SHA=$(cd gnomepy && git rev-parse --short HEAD)
           docker build \
             --build-arg GITHUB_ACTOR=${{ github.actor }} \
             --secret id=github_token,env=GITHUB_TOKEN \
             -f gnomepy/docker/backtest/Dockerfile \
             -t gnomepy-backtest:latest \
+            -t gnomepy-backtest:$SHA \
             .
+          echo "SHA=$SHA" >> $GITHUB_ENV
 
       - name: Configure AWS credentials (dev)
         uses: aws-actions/configure-aws-credentials@v4
@@ -54,9 +59,11 @@ jobs:
 
       - name: Push to dev ECR
         run: |
-          IMAGE=${{ steps.login-ecr-dev.outputs.registry }}/gnomepy-backtest:latest
-          docker tag gnomepy-backtest:latest $IMAGE
-          docker push $IMAGE
+          REGISTRY=${{ steps.login-ecr-dev.outputs.registry }}
+          docker tag gnomepy-backtest:latest $REGISTRY/gnomepy-backtest:latest
+          docker tag gnomepy-backtest:$SHA $REGISTRY/gnomepy-backtest:$SHA
+          docker push $REGISTRY/gnomepy-backtest:latest
+          docker push $REGISTRY/gnomepy-backtest:$SHA
 
       - name: Configure AWS credentials (prod)
         uses: aws-actions/configure-aws-credentials@v4
@@ -70,6 +77,8 @@ jobs:
 
       - name: Push to prod ECR
         run: |
-          IMAGE=${{ steps.login-ecr-prod.outputs.registry }}/gnomepy-backtest:latest
-          docker tag gnomepy-backtest:latest $IMAGE
-          docker push $IMAGE
+          REGISTRY=${{ steps.login-ecr-prod.outputs.registry }}
+          docker tag gnomepy-backtest:latest $REGISTRY/gnomepy-backtest:latest
+          docker tag gnomepy-backtest:$SHA $REGISTRY/gnomepy-backtest:$SHA
+          docker push $REGISTRY/gnomepy-backtest:latest
+          docker push $REGISTRY/gnomepy-backtest:$SHA
