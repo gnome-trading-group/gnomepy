@@ -207,8 +207,8 @@ class Backtest:
         )
 
         # Build SecurityMaster
-        registry_host = self._registry_url or gnome_config.REGISTRY_API_HOST
-        registry_api_key = self._registry_api_key or os.environ.get("GNOME_REGISTRY_API_KEY", "")
+        registry_host = self._registry_url or os.environ.get("REGISTRY_URL", gnome_config.REGISTRY_API_HOST)
+        registry_api_key = self._registry_api_key or os.environ.get("REGISTRY_API_KEY", gnome_config.REGISTRY_API_KEY)
         RegistryConnection = jpype.JClass("group.gnometrading.RegistryConnection")
         SecurityMaster = jpype.JClass("group.gnometrading.SecurityMaster")
         security_master = SecurityMaster(RegistryConnection(registry_host, registry_api_key))

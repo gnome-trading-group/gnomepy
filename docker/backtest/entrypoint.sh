@@ -30,7 +30,7 @@ echo "entrypoint: run_id=${RUN_ID} array_index=${ARRAY_INDEX} region=${AWS_DEFAU
 
 echo "entrypoint: fetching gh-token from Secrets Manager"
 GH_TOKEN=$(python3 - <<'PY'
-import boto3, json, os
+import boto3, json
 client = boto3.client("secretsmanager")
 secret = client.get_secret_value(SecretId="gnomepy/gh-token")
 val = secret["SecretString"]
