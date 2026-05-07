@@ -8,84 +8,31 @@ can target any commit.
 ## Build
 
 The build context must contain **both** `gnomepy` and `gnome-backtest`
-sibling checkouts. The Maven step needs GitHub Packages credentials to
-resolve the `gnome-parent` POM — export `GITHUB_ACTOR` (your GH
-username) and `GITHUB_TOKEN` (a classic PAT with `read:packages`),
-then run the helper script:
+sibling checkouts. Export `GITHUB_ACTOR` (your GH username) and
+`GITHUB_TOKEN` (a classic PAT with `read:packages`), then run:
 
 ```sh
 ./gnomepy/docker/backtest/build.sh
 ```
 
-Optional env: `IMAGE_TAG`, `GNOME_BACKTEST_REF` (git ref to clone &
-build instead of the local sibling).
+Optional: `IMAGE_TAG`, `GNOME_BACKTEST_REF` (git ref to clone & build
+instead of the local sibling checkout).
 
-Or invoke `docker build` directly:
+## Runtime (AWS Batch)
 
-```sh
-DOCKER_BUILDKIT=1 docker build \
-  --build-arg GITHUB_ACTOR="$GITHUB_ACTOR" \
-  --secret id=github_token,src=<(printf '%s' "$GITHUB_TOKEN") \
-  -f gnomepy/docker/backtest/Dockerfile \
-  -t gnomepy-backtest \
-  .
-```
+The entrypoint expects these env vars (set by the Batch job definition):
 
-The image builds on both amd64 and arm64 (Apple Silicon).
+| var               | meaning                                           |
+| ----------------- | ------------------------------------------------- |
+| `RUN_ID`          | backtest run identifier                           |
+| `S3_BUCKET`       | S3 bucket for configs and results                 |
+| `RESEARCH_COMMIT` | git SHA or ref of `gnomepy-research` to check out |
 
-## Run
-
-Use `run.sh` for the standard workflow — it resolves AWS credentials,
-defaults to `--s3-bucket gnome-research`, and forwards all flags to
-`gnomepy backtest` (Python generates the job ID and constructs the
-full S3 path):
-
-```sh
-RESEARCH_COMMIT=<git-sha> GH_TOKEN=$GH_TOKEN ./run.sh
-```
-
-Or invoke `docker run` directly:
-
-```sh
-docker run --rm \
-  -e RESEARCH_COMMIT=<git-sha> \
-  -e GH_TOKEN=$GH_TOKEN \
-  -e BACKTEST_CONFIG=/work/backtest.yaml \
-  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN -e AWS_REGION \
-  -v "$PWD/backtest.yaml:/work/backtest.yaml:ro" \
-  gnomepy-backtest \
-  --s3-bucket gnome-research
-```
-
-Required env:
-
-| var               | meaning                                                   |
-| ----------------- | --------------------------------------------------------- |
-| `RESEARCH_COMMIT` | git SHA (or ref) of `gnomepy-research` to check out      |
-| `GH_TOKEN`        | GitHub token with read access to `gnomepy-research`      |
-| `BACKTEST_CONFIG` | path (inside container) or `s3://` URI to a YAML config  |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | AWS credentials for S3 access |
-
-Optional: `AWS_SESSION_TOKEN` (for temporary credentials), `AWS_REGION`
-(default: `us-east-1`).
-
-For local output instead of S3, pass `--output /work/out/results` and
-mount a host directory at `/work/out`:
-
-```sh
-docker run --rm ... -v "$PWD/out:/work/out" gnomepy-backtest \
-  --output /work/out/results
-```
-
-A minimal sample config lives at `example-backtest.yaml`.
+`AWS_BATCH_JOB_ARRAY_INDEX` is injected automatically by Batch (defaults to 0).
+`GH_TOKEN` is fetched from Secrets Manager (`gnomepy/gh-token`) at startup.
 
 ## Notes
 
-- `gnomepy` itself is installed from the working tree at build time,
-  so the image pins one specific gnomepy version. Rebuild the image to
-  bump it.
-- `gnomepy-research` is installed with `--no-deps` so it cannot pull a
-  different `gnomepy` over the baked-in one.
-- `GH_TOKEN` is unset before exec'ing the backtest.
-- Results are written directly to S3 by `gnomepy` via pyarrow — no
-  post-run upload step needed.
+- `gnomepy` is installed from the working tree at build time — rebuild the image to bump it.
+- `gnomepy-research` is installed with `--no-deps` so it cannot override the baked-in `gnomepy`.
+- `GH_TOKEN` is unset before the backtest runs.

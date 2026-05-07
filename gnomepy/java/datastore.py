@@ -95,7 +95,6 @@ class DataStore:
 
         df = pd.DataFrame(rows)
         msg = get_message(self._schema_type)
-        print(msg)
 
         if replace_nulls:
             for col, null_val in msg.null_fields.items():

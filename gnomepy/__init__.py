@@ -64,6 +64,9 @@ from gnomepy.java.schemas import (
 )
 from gnomepy.java.statics import Scales
 from gnomepy.metadata import BacktestMetadata
+from gnomepy.reporting import BacktestReport
+from gnomepy.reporting.metrics import Curves, build_curves, compute_sharpe
+from gnomepy.reporting.plots import ReportSection
 from gnomepy.utils import generate_backtest_id, uuid7
 
 __all__ = [
@@ -119,4 +122,10 @@ __all__ = [
     "BacktestMetadata",
     "generate_backtest_id",
     "uuid7",
+    # Reporting
+    "BacktestReport",
+    "Curves",
+    "build_curves",
+    "compute_sharpe",
+    "ReportSection",
 ]

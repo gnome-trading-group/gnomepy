@@ -1,0 +1,75 @@
+name: Build & Push Backtest Docker Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gnomepy/**'
+      - 'docker/backtest/**'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required for OIDC
+      contents: read
+
+    steps:
+      # Check out gnomepy into a subdir so the build context matches
+      # the Dockerfile's COPY paths (COPY gnomepy/... and COPY gnome-backtest/...)
+      - name: Checkout gnomepy
+        uses: actions/checkout@v4
+        with:
+          path: gnomepy
+
+      - name: Checkout gnome-backtest
+        uses: actions/checkout@v4
+        with:
+          repository: gnome-trading-group/gnome-backtest
+          token: ${{ secrets.GH_PAT }}
+          path: gnome-backtest
+
+      - name: Build image
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          docker build \
+            --build-arg GITHUB_ACTOR=${{ github.actor }} \
+            --secret id=github_token,env=GITHUB_TOKEN \
+            -f gnomepy/docker/backtest/Dockerfile \
+            -t gnomepy-backtest:latest \
+            .
+
+      - name: Configure AWS credentials (dev)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN_DEV }}
+          aws-region: us-east-1
+
+      - name: Login to ECR (dev)
+        id: login-ecr-dev
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push to dev ECR
+        run: |
+          IMAGE=${{ steps.login-ecr-dev.outputs.registry }}/gnomepy-backtest:latest
+          docker tag gnomepy-backtest:latest $IMAGE
+          docker push $IMAGE
+
+      - name: Configure AWS credentials (prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN_PROD }}
+          aws-region: us-east-1
+
+      - name: Login to ECR (prod)
+        id: login-ecr-prod
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push to prod ECR
+        run: |
+          IMAGE=${{ steps.login-ecr-prod.outputs.registry }}/gnomepy-backtest:latest
+          docker tag gnomepy-backtest:latest $IMAGE
+          docker push $IMAGE
