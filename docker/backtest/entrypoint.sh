@@ -23,11 +23,20 @@ CONFIG_S3_KEY="backtests/${RUN_ID}/jobs/${ARRAY_INDEX}/config.yaml"
 OUTPUT_PREFIX="s3://${S3_BUCKET}/backtests/${RUN_ID}/jobs/${ARRAY_INDEX}"
 LOCAL_CONFIG=/work/config.yaml
 
-echo "entrypoint: run_id=${RUN_ID} array_index=${ARRAY_INDEX}"
+# Resolve region from IMDSv2 (always available on EC2/Batch nodes).
+if [[ -z "${AWS_DEFAULT_REGION:-}" ]]; then
+  TOKEN=$(curl -sf -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+  AWS_DEFAULT_REGION=$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" \
+    "http://169.254.169.254/latest/meta-data/placement/region")
+  export AWS_DEFAULT_REGION
+fi
+
+echo "entrypoint: run_id=${RUN_ID} array_index=${ARRAY_INDEX} region=${AWS_DEFAULT_REGION}"
 
 echo "entrypoint: fetching gh-token from Secrets Manager"
 GH_TOKEN=$(python3 - <<'PY'
-import boto3, json
+import boto3, json, os
 client = boto3.client("secretsmanager")
 secret = client.get_secret_value(SecretId="gnomepy/gh-token")
 val = secret["SecretString"]

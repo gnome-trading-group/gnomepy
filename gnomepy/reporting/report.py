@@ -231,12 +231,12 @@ class BacktestReport:
         final_position = float(c.position.iloc[-1]) if not c.position.empty else 0.0
 
         if not c.pnl_by_symbol.empty:
-            final_pnl_by_symbol = {col: float(c.pnl_by_symbol[col].iloc[-1]) for col in c.pnl_by_symbol.columns}
+            final_pnl_by_symbol = {str(col): float(c.pnl_by_symbol[col].iloc[-1]) for col in c.pnl_by_symbol.columns}
         else:
             final_pnl_by_symbol = {}
 
         if not c.position_by_symbol.empty:
-            final_positions = {col: float(c.position_by_symbol[col].iloc[-1]) for col in c.position_by_symbol.columns}
+            final_positions = {str(col): float(c.position_by_symbol[col].iloc[-1]) for col in c.position_by_symbol.columns}
         else:
             final_positions = {}
 
