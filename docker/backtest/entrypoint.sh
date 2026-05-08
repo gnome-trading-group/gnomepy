@@ -8,9 +8,6 @@
 #   RESEARCH_COMMIT      git SHA / ref of gnomepy-research to check out
 #   AWS_DEFAULT_REGION   AWS region (injected by CDK job definition)
 #
-# For array jobs, AWS_BATCH_JOB_ARRAY_INDEX is set automatically by Batch.
-# For single jobs, it defaults to 0.
-#
 # GH_TOKEN is fetched from AWS Secrets Manager (secret name: gnomepy/gh-token).
 
 set -euo pipefail
@@ -19,7 +16,7 @@ set -euo pipefail
 : "${S3_BUCKET:?S3_BUCKET is required}"
 : "${RESEARCH_COMMIT:?RESEARCH_COMMIT is required}"
 
-ARRAY_INDEX="${AWS_BATCH_JOB_ARRAY_INDEX:-0}"
+ARRAY_INDEX="${JOB_INDEX:-0}"
 CONFIG_S3_KEY="backtests/${RUN_ID}/jobs/${ARRAY_INDEX}/config.yaml"
 OUTPUT_PREFIX="s3://${S3_BUCKET}/backtests/${RUN_ID}/jobs/${ARRAY_INDEX}"
 LOCAL_CONFIG=/work/config.yaml
