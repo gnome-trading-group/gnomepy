@@ -46,6 +46,9 @@ class BacktestMetadata:
     # Persistence
     data_scaled: bool = True
 
+    # Warnings from the run (e.g. missing S3 keys)
+    warnings: list[str] = field(default_factory=list)
+
     # Extensible
     extra: dict[str, Any] = field(default_factory=dict)
 

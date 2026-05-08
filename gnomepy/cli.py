@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from datetime import datetime, timezone
@@ -23,6 +24,7 @@ from gnomepy.utils import uuid7
 @click.group()
 def main() -> None:
     """gnomepy — backtesting infrastructure for the gnome trading system."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +107,10 @@ def backtest_run(
 
     if results is None:
         return
+
+    if results.metadata and results.metadata.warnings:
+        for w in results.metadata.warnings:
+            click.echo(f"warning: {w}", err=True)
 
     if results.metadata is not None:
         results.metadata.config_path = str(config)

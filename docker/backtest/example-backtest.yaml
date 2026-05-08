@@ -7,11 +7,12 @@ strategy:
     size: 1
     max_position: 5
     threshold_bps: 2.0
+#    ewma_alpha: [0.90, 0.95, 0.99]
     ewma_alpha: 0.95
     warmup_ticks: 100
 
-start_date: "2026-01-23T10:30:00"
-end_date: "2026-01-23T11:00:00"
+start_date: "2026-01-25T00:00:00"
+end_date: "2026-01-26T00:00:00"
 
 listings:
   - listing_id: 1

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +12,8 @@ import pytz
 from jpype import JImplements, JOverride
 
 from importlib.metadata import version as _pkg_version
+
+logger = logging.getLogger(__name__)
 
 from gnomepy.config import config as gnome_config
 from gnomepy.java._jvm import ensure_jvm_started
@@ -181,8 +183,11 @@ class Backtest:
         self._driver = None
         self._start_date = None
         self._end_date = None
+        self._warnings: list[str] = []
+        self._warning_handler = None
 
     def _build_driver(self):
+        self._install_warning_handler()
         BacktestDriverFactory = jpype.JClass(
             "group.gnometrading.backtest.config.BacktestDriverFactory"
         )
@@ -269,6 +274,22 @@ class Backtest:
         callback = _create_python_callback(py_strategy)
         return PythonStrategyAgent.create(position_view, callback)
 
+    def add_warning(self, message: str) -> None:
+        """Add an arbitrary warning to be included in backtest results and metadata."""
+        self._warnings.append(message)
+
+    def _install_warning_handler(self) -> None:
+        WarningHandler = jpype.JClass("group.gnometrading.backtest.recorder.WarningHandler")
+        self._warning_handler = WarningHandler()
+        jpype.JClass("java.util.logging.Logger").getLogger("group.gnometrading").addHandler(self._warning_handler)
+
+    def _collect_java_warnings(self) -> None:
+        if self._warning_handler is None:
+            return
+        for msg in self._warning_handler.getMessages():
+            self.add_warning(str(msg))
+        self._warning_handler.clearMessages()
+
     def run(self, progress: bool = True) -> BacktestResults | None:
         """Prepare data and fully execute the backtest."""
         t0 = time.time()
@@ -280,6 +301,7 @@ class Backtest:
         else:
             self._run_with_progress()
 
+        self._collect_java_warnings()
         wall_time = time.time() - t0
         event_count = int(self._driver.getEventsProcessed())
 
@@ -325,6 +347,7 @@ class Backtest:
             preset_name=getattr(self, "_preset_name", None),
             config=getattr(self, "_preset_config", None),
             gnomepy_version=gnomepy_version,
+            warnings=self._warnings,
         )
 
     def _run_with_progress(self):
@@ -339,7 +362,7 @@ class Backtest:
         start_ns = int((start.replace(tzinfo=pytz.UTC) - epoch).total_seconds() * 1_000_000_000)
         end_ns = int((end.replace(tzinfo=pytz.UTC) - epoch).total_seconds() * 1_000_000_000)
 
-        chunk_ns = 60_000_000_000
+        chunk_ns = 10 * 60_000_000_000 # 10 minutes
         current_ns = start_ns
         t0 = time.time()
 
@@ -349,14 +372,12 @@ class Backtest:
             elapsed = time.time() - t0
             pct = min((current_ns - start_ns) / (end_ns - start_ns) * 100, 100)
             events = int(self._driver.getEventsProcessed())
-            print(f"\rBacktest: {pct:.0f}% | events: {events:,} | {elapsed:.1f}s", end="")
-            sys.stdout.flush()
+            logger.info("Backtest: %d%% | events: %s | %.1fs", pct, f"{events:,}", elapsed)
 
         self._driver.fullyExecute()
         elapsed = time.time() - t0
         events = int(self._driver.getEventsProcessed())
-        print(f"\rBacktest: 100% | events: {events:,} | {elapsed:.1f}s")
-        sys.stdout.flush()
+        logger.info("Backtest: 100%% | events: %s | %.1fs", f"{events:,}", elapsed)
 
     def run_until(self, timestamp: int) -> BacktestResults | None:
         """Run the backtest until a specific nanosecond timestamp."""

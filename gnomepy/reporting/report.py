@@ -259,6 +259,7 @@ class BacktestReport:
             "sortino": sharpe["sortino"],
             "sharpe_std": sharpe["sharpe_std"],
             "pct_positive_buckets": sharpe["pct_positive_buckets"],
+            "warnings": self._results.metadata.warnings if self._results and self._results.metadata else [],
         }
 
     def summary_df(self) -> pd.Series:
