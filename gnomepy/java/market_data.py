@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 
 import jpype
@@ -61,7 +62,7 @@ class MarketDataClient:
         )
     """
 
-    def __init__(self, bucket: str = "gnome-market-data-prod", s3_client=None):
+    def __init__(self, bucket: str | None = None, s3_client=None):
         """
         Args:
             bucket: S3 bucket name containing market data.
@@ -69,7 +70,7 @@ class MarketDataClient:
         """
         ensure_jvm_started()
         _resolve_classes()
-        self._bucket = bucket
+        self._bucket = bucket or f"gnome-market-data-{os.getenv('STAGE', 'prod').lower()}"
         self._s3_client = s3_client or _create_default_s3_client()
 
     def get_java_entries(

@@ -11,8 +11,8 @@ strategy:
     ewma_alpha: 0.95
     warmup_ticks: 100
 
-start_date: "2026-01-25T00:00:00"
-end_date: "2026-01-26T00:00:00"
+start_date: "2026-01-21T00:00:00"
+end_date: "2026-01-22T00:00:00"
 
 listings:
   - listing_id: 1
@@ -32,9 +32,6 @@ profiles:
       latency_nanos: 1000000
     queue_model:
       type: risk_averse
-
-s3:
-  bucket: gnome-market-data-prod
 
 # Optional: number of book depth levels to record (1 = BBO only, max 10).
 # record_depth: 3

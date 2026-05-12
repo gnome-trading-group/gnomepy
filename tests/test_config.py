@@ -14,7 +14,6 @@ from gnomepy.java.backtest.config import (
     ProbabilisticQueueConfig,
     RiskAverseQueueConfig,
     RiskConfig,
-    S3Config,
     StaticFeeConfig,
     StaticLatencyConfig,
     StrategyConfig,
@@ -111,16 +110,6 @@ class TestRiskConfig:
         assert "MAX_NOTIONAL" in cfg.policies
 
 
-class TestS3Config:
-    def test_default_bucket(self):
-        cfg = S3Config()
-        assert cfg.bucket == "gnome-market-data-prod"
-
-    def test_custom_bucket(self):
-        cfg = S3Config(bucket="my-bucket")
-        assert cfg.bucket == "my-bucket"
-
-
 class TestBacktestConfig:
     def _minimal(self):
         return BacktestConfig(
@@ -140,7 +129,6 @@ class TestBacktestConfig:
         cfg = self._minimal()
         assert cfg.strategy is None
         assert isinstance(cfg.risk, RiskConfig)
-        assert isinstance(cfg.s3, S3Config)
         assert cfg.record is True
         assert cfg.record_depth == 1
 

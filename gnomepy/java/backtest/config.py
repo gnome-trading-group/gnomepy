@@ -159,17 +159,6 @@ class RiskConfig:
 
 
 @dataclass
-class S3Config:
-    bucket: str = "gnome-market-data-prod"
-
-    def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.backtest.config.S3Config")
-        obj = cls()
-        obj.bucket = str(self.bucket)
-        return obj
-
-
-@dataclass
 class BacktestConfig:
     """Full backtest configuration.
 
@@ -190,7 +179,6 @@ class BacktestConfig:
     profiles: dict[str, ExchangeProfileConfig]
     strategy: StrategyConfig | None = None
     risk: RiskConfig = field(default_factory=RiskConfig)
-    s3: S3Config = field(default_factory=S3Config)
     record: bool = True
     record_depth: int = 1
 
@@ -228,7 +216,6 @@ class BacktestConfig:
         if self.strategy is not None:
             obj.strategy = self.strategy._to_java()
         obj.risk = self.risk._to_java()
-        obj.s3 = self.s3._to_java()
         obj.record = self.record
         obj.recordDepth = jpype.JInt(self.record_depth)
 
