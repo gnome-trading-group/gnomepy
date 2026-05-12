@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from gnomepy.auth import login as _auth_login
 from gnomepy.auth import logout as _auth_logout
 from gnomepy.java.backtest.runner import run_backtest
 from gnomepy.remote import cancel_backtest, get_backtest, list_backtests, submit_backtest
-from gnomepy.sweep import expand_sweep, sweep_params
+from gnomepy.sweep import expand_sweep, get_param_value, sweep_params
 from gnomepy.utils import uuid7
 
 
@@ -93,18 +94,19 @@ def backtest_run(
     if strategy_path and java_strategy:
         raise click.UsageError("pass either --strategy or --java-strategy, not both")
 
-    job_id = job_id or uuid7()
-    click.echo(f"job_id: {job_id}")
-
     strategy = strategy_path or java_strategy or None
+    parsed = yaml.safe_load(Path(config).read_text())
+    params = sweep_params(parsed)
 
-    results = run_backtest(
-        config,
-        strategy=strategy,
-        backtest_id=job_id,
-        progress=not no_progress,
-    )
+    if not params:
+        _run_single(config, strategy, output, job_id or uuid7(), no_progress)
+    else:
+        _run_sweep(config, parsed, params, strategy, output, job_id, no_progress)
 
+
+def _run_single(config: str, strategy, output: str | None, job_id: str, no_progress: bool) -> None:
+    click.echo(f"job_id: {job_id}")
+    results = run_backtest(config, strategy=strategy, backtest_id=job_id, progress=not no_progress)
     if results is None:
         return
 
@@ -140,6 +142,106 @@ def backtest_run(
         (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         click.echo(f"results saved to {out_dir}")
         _generate_report(results, str(out_dir))
+
+
+def _run_sweep(
+    config: str,
+    parsed: dict,
+    params: dict,
+    strategy,
+    output: str | None,
+    sweep_id: str | None,
+    no_progress: bool,
+) -> None:
+    configs = expand_sweep(parsed)
+    sweep_id = sweep_id or uuid7()
+    click.echo(f"sweep_id: {sweep_id}")
+    click.echo(f"sweep: {len(configs)} jobs across {list(params.keys())}")
+    for param, values in params.items():
+        click.echo(f"  {param}: {values}")
+
+    is_s3 = output is not None and output.startswith("s3://")
+    out_base: Path | str = output if is_s3 else (Path(output) if output else Path.cwd() / sweep_id)
+
+    jobs_summary = []
+    for i, cfg in enumerate(configs):
+        this_job_id = f"{sweep_id}-{i:04d}"
+        click.echo(f"[{i + 1}/{len(configs)}] {this_job_id}")
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+        try:
+            yaml.dump(cfg, tmp, default_flow_style=False)
+            tmp.close()
+
+            results = run_backtest(tmp.name, strategy=strategy, backtest_id=this_job_id, progress=not no_progress)
+
+            job_entry: dict = {
+                "job_index": i,
+                "job_id": this_job_id,
+                "config_params": {k: get_param_value(cfg, k) for k in params},
+                "status": "COMPLETED" if results is not None else "NO_RESULTS",
+            }
+
+            if results is not None:
+                if results.metadata:
+                    results.metadata.config_path = str(config)
+                    try:
+                        results.metadata.gnomepy_research_version = _pkg_version("gnomepy_research")
+                    except Exception:
+                        pass
+                    results.metadata.gnomepy_research_commit = os.environ.get("RESEARCH_COMMIT")
+
+                if is_s3:
+                    job_out_str = f"{out_base}/jobs/{i:04d}"
+                    results.save(job_out_str)
+                    _generate_report(results, job_out_str)
+                else:
+                    job_out = out_base / "jobs" / f"{i:04d}"
+                    results.save(job_out)
+                    shutil.copyfile(tmp.name, job_out / "config.yaml")
+                    meta = results.metadata
+                    manifest = {
+                        "job_id": this_job_id,
+                        "job_index": i,
+                        "sweep_id": sweep_id,
+                        "created_at": meta.created_at if meta else datetime.now(timezone.utc).isoformat(),
+                        "gnomepy_version": meta.gnomepy_version if meta else None,
+                        "gnomepy_research_version": meta.gnomepy_research_version if meta else None,
+                        "gnomepy_research_commit": meta.gnomepy_research_commit if meta else None,
+                        "config": "config.yaml",
+                        "config_params": job_entry["config_params"],
+                    }
+                    (job_out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+                    _generate_report(results, str(job_out))
+                    job_entry["output"] = str(job_out)
+
+            jobs_summary.append(job_entry)
+
+        except Exception as e:
+            click.echo(f"  error: {e}", err=True)
+            jobs_summary.append({
+                "job_index": i,
+                "job_id": this_job_id,
+                "config_params": {k: get_param_value(cfg, k) for k in params},
+                "status": "FAILED",
+                "error": str(e),
+            })
+        finally:
+            os.unlink(tmp.name)
+
+    completed = sum(1 for j in jobs_summary if j["status"] == "COMPLETED")
+
+    if not is_s3:
+        summary = {
+            "sweep_id": sweep_id,
+            "job_count": len(configs),
+            "completed_count": completed,
+            "sweep_params": {k: [str(v) for v in vals] for k, vals in params.items()},
+            "jobs": jobs_summary,
+        }
+        out_base.mkdir(parents=True, exist_ok=True)
+        (out_base / "sweep_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+
+    click.echo(f"sweep complete: {completed}/{len(configs)} completed, results saved to {out_base}")
 
 
 def _generate_report(results, base_path: str) -> None:

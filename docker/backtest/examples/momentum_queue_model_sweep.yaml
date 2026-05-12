@@ -1,0 +1,46 @@
+# Sweep over queue model assumptions to measure fill-model sensitivity.
+# 4 jobs: optimistic, risk-averse, and two probabilistic cancel-ahead rates.
+# Use this to bound the range of outcomes depending on how aggressively you
+# assume queue position is maintained after a market data update.
+
+strategy:
+  class_name: "gnomepy_research.strategies.momentum:MomentumTaker"
+  args:
+    exchange_id: 1
+    security_id: 1
+    size: 100000
+    max_position: 5
+    threshold_bps: 2.0
+    ewma_alpha: 0.95
+    warmup_ticks: 100
+    stop_loss_bps: 10.0
+    take_profit_bps: 15.0
+    cooldown_ticks: 50
+    processing_time_ns: 500000
+
+start_date: "2026-01-01T00:00:00"
+end_date: "2026-01-03T00:00:00"
+
+listings:
+  - listing_id: 1
+    profile: default
+
+profiles:
+  default:
+    fee_model:
+      type: static
+      taker_fee: 0.0005
+      maker_fee: 0.0002
+    network_latency:
+      type: static
+      latency_nanos: 5000000
+    order_processing_latency:
+      type: static
+      latency_nanos: 1000000
+    queue_model:
+      - type: optimistic
+      - type: risk_averse
+      - type: probabilistic
+        cancel_ahead_probability: 0.3
+      - type: probabilistic
+        cancel_ahead_probability: 0.7

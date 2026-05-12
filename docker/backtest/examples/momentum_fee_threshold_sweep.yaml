@@ -1,0 +1,41 @@
+# Joint sweep over entry threshold and taker fee.
+# 3 x 3 = 9 jobs.
+# Use this to find the minimum threshold needed to remain profitable at each
+# fee tier, e.g. when comparing venue costs or VIP rebate tiers.
+
+strategy:
+  class_name: "gnomepy_research.strategies.momentum:MomentumTaker"
+  args:
+    exchange_id: 1
+    security_id: 1
+    size: 100000
+    max_position: 5
+    threshold_bps: [1.0, 2.0, 3.0]
+    ewma_alpha: 0.95
+    warmup_ticks: 100
+    stop_loss_bps: 10.0
+    take_profit_bps: 15.0
+    cooldown_ticks: 50
+    processing_time_ns: 500000
+
+start_date: "2026-01-01T00:00:00"
+end_date: "2026-01-03T00:00:00"
+
+listings:
+  - listing_id: 1
+    profile: default
+
+profiles:
+  default:
+    fee_model:
+      type: static
+      taker_fee: [0.0002, 0.0005, 0.001]
+      maker_fee: 0.0002
+    network_latency:
+      type: static
+      latency_nanos: 5000000
+    order_processing_latency:
+      type: static
+      latency_nanos: 1000000
+    queue_model:
+      type: risk_averse
