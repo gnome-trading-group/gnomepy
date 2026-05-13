@@ -8,17 +8,22 @@ import pandas as pd
 if TYPE_CHECKING:
     from gnomepy.explorer.data import WindowedData
 
-EVENT_COLUMNS = [
-    {"name": "Time", "id": "time", "type": "text"},
-    {"name": "Type", "id": "type", "type": "text"},
-    {"name": "Src", "id": "source", "type": "text"},
-    {"name": "Side", "id": "side", "type": "text"},
-    {"name": "Price", "id": "price", "type": "numeric", "format": {"specifier": ".6f"}},
-    {"name": "Qty", "id": "qty", "type": "numeric", "format": {"specifier": ".4f"}},
-    {"name": "Fee", "id": "fee", "type": "numeric", "format": {"specifier": ".6f"}},
-    {"name": "Slip bps", "id": "slippage_bps", "type": "numeric", "format": {"specifier": ".2f"}},
-    {"name": "Status", "id": "status", "type": "text"},
-]
+def build_event_columns(price_decimals: int = 2) -> list[dict]:
+    price_spec = f".{price_decimals}f"
+    return [
+        {"name": "Time", "id": "time", "type": "text"},
+        {"name": "Type", "id": "type", "type": "text"},
+        {"name": "OType", "id": "order_type", "type": "text"},
+        {"name": "OID", "id": "oid", "type": "text"},
+        {"name": "Src", "id": "source", "type": "text"},
+        {"name": "Side", "id": "side", "type": "text"},
+        {"name": "Price", "id": "price", "type": "numeric", "format": {"specifier": price_spec}},
+        {"name": "Qty", "id": "qty", "type": "numeric", "format": {"specifier": price_spec}},
+        {"name": "Fee", "id": "fee", "type": "numeric", "format": {"specifier": price_spec}},
+        {"name": "Slip bps", "id": "slippage_bps", "type": "numeric", "format": {"specifier": ".2f"}},
+        {"name": "Slip $", "id": "slippage_usd", "type": "numeric", "format": {"specifier": price_spec}},
+        {"name": "Status", "id": "status", "type": "text"},
+    ]
 
 
 def build_event_records(
@@ -48,18 +53,20 @@ def _fill_records(fills: pd.DataFrame, source: str) -> list[dict]:
         return []
     rows = []
     for ts, row in fills.iterrows():
-        side = str(row.get("side", ""))
         rows.append({
             "_ts": ts.value,
             "timestamp_iso": ts.isoformat(),
             "time": _ts_str(ts),
             "type": "fill",
+            "order_type": None,
+            "oid": str(int(row["client_oid"])) if "client_oid" in row else None,
             "source": source,
-            "side": side,
+            "side": str(row.get("side", "")),
             "price": float(row.get("fill_price", 0)),
             "qty": float(row.get("fill_qty", 0)),
             "fee": float(row.get("fee", 0)),
             "slippage_bps": float(row["slippage_bps"]) if "slippage_bps" in row else None,
+            "slippage_usd": float(row["slippage_usd"]) if "slippage_usd" in row else None,
             "status": None,
         })
     return rows
@@ -88,12 +95,15 @@ def _intent_records(intents: pd.DataFrame, source: str) -> list[dict]:
             "timestamp_iso": ts.isoformat(),
             "time": _ts_str(ts),
             "type": "intent",
+            "order_type": None,
+            "oid": None,
             "source": source,
             "side": side,
             "price": float(price),
             "qty": float(qty),
             "fee": None,
             "slippage_bps": None,
+            "slippage_usd": None,
             "status": None,
         })
     return rows
@@ -110,12 +120,15 @@ def _order_records(orders: pd.DataFrame, source: str) -> list[dict]:
             "timestamp_iso": ts.isoformat(),
             "time": _ts_str(ts),
             "type": "order",
+            "order_type": str(row.get("order_type", "")) or None,
+            "oid": str(int(row["client_oid"])) if "client_oid" in row else None,
             "source": source,
             "side": str(row.get("side", "")),
             "price": avg_fill if avg_fill > 0 else float(row.get("submit_price", 0)),
             "qty": float(row.get("filled_qty", 0)) or float(row.get("submit_size", 0)),
             "fee": float(row.get("total_fee", 0)),
             "slippage_bps": None,
+            "slippage_usd": None,
             "status": str(row.get("final_status", "")),
         })
     return rows

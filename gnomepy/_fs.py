@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import urlparse
 
+import boto3
 import pandas as pd
 import pyarrow as pa
 import pyarrow.fs as pafs
@@ -12,7 +14,27 @@ import pyarrow.parquet as pq
 def resolve_fs(uri: str) -> tuple[pafs.FileSystem, str]:
     """Return (FileSystem, normalized_path) for a local path or s3:// URI."""
     if uri.startswith("s3://"):
-        return pafs.FileSystem.from_uri(uri)
+        parsed = urlparse(uri)
+        bucket = parsed.netloc
+        key = parsed.path.lstrip("/")
+        path = f"{bucket}/{key}" if key else bucket
+
+        session = boto3.Session()
+        credentials = session.get_credentials()
+        if credentials is None:
+            raise EnvironmentError(
+                "No AWS credentials found. Configure via environment variables, "
+                "~/.aws/credentials, AWS_PROFILE, or IAM role."
+            )
+        frozen = credentials.get_frozen_credentials()
+
+        fs = pafs.S3FileSystem(
+            access_key=frozen.access_key,
+            secret_key=frozen.secret_key,
+            session_token=frozen.token,
+            region=session.region_name or "us-east-1",
+        )
+        return fs, path
     return pafs.LocalFileSystem(), str(Path(uri).resolve())
 
 

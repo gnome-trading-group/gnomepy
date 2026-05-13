@@ -35,14 +35,16 @@ def build_price_figure(
     cursor_ts: pd.Timestamp | None = None,
     t_start: pd.Timestamp | None = None,
     t_end: pd.Timestamp | None = None,
+    price_decimals: int = 2,
 ) -> go.Figure:
     fig = go.Figure()
     layout = dict(CHART_LAYOUT_BASE)
     layout["title"] = {"text": "Price & Book", "font": {"size": 12}}
+    layout["yaxis"] = {**layout.get("yaxis", {}), "tickformat": f".{price_decimals}f"}
 
-    _add_price_traces(fig, windowed_a, label="", is_comparison_b=False)
+    _add_price_traces(fig, windowed_a, label="", is_comparison_b=False, price_decimals=price_decimals)
     if windowed_b is not None:
-        _add_price_traces(fig, windowed_b, label=" B", is_comparison_b=True)
+        _add_price_traces(fig, windowed_b, label=" B", is_comparison_b=True, price_decimals=price_decimals)
 
     if cursor_ts is not None:
         fig.add_vline(
@@ -52,6 +54,53 @@ def build_price_figure(
 
     if t_start is not None and t_end is not None:
         layout["xaxis"] = {**layout.get("xaxis", {}), "range": [t_start.isoformat(), t_end.isoformat()]}
+        layout["uirevision"] = f"{t_start.value}-{t_end.value}"
+
+    fig.update_layout(**layout)
+    return fig
+
+
+def build_spread_figure(
+    windowed_a: WindowedData,
+    windowed_b: WindowedData | None = None,
+    cursor_ts: pd.Timestamp | None = None,
+    t_start: pd.Timestamp | None = None,
+    t_end: pd.Timestamp | None = None,
+    price_decimals: int = 2,
+) -> go.Figure:
+    fig = go.Figure()
+    layout = dict(CHART_LAYOUT_BASE)
+    layout["title"] = {"text": "Spread ($)", "font": {"size": 12}}
+    layout["yaxis"] = {**layout.get("yaxis", {}), "tickformat": f".{price_decimals}f"}
+
+    for windowed, label, is_b in [(windowed_a, "", False), (windowed_b, " B", True)]:
+        if windowed is None:
+            continue
+        mkt = windowed.market
+        if mkt.empty or "bid_price_0" not in mkt.columns or "ask_price_0" not in mkt.columns:
+            continue
+        spread = (mkt["ask_price_0"] - mkt["bid_price_0"]).astype(float)
+        color = ASK_LINE_COLOR if not is_b else BID_LINE_COLOR
+        fig.add_trace(go.Scattergl(
+            x=spread.index,
+            y=spread,
+            mode="lines",
+            name=f"Spread{label}",
+            line={"color": color, "width": 1},
+            opacity=0.6 if is_b else 1.0,
+            hovertemplate=f"Spread: %{{y:.{price_decimals}f}}<extra></extra>",
+            showlegend=True,
+        ))
+
+    if cursor_ts is not None:
+        fig.add_vline(
+            x=cursor_ts.isoformat(),
+            line={"color": CURSOR_COLOR, "width": 1.5, "dash": "dot"},
+        )
+
+    if t_start is not None and t_end is not None:
+        layout["xaxis"] = {**layout.get("xaxis", {}), "range": [t_start.isoformat(), t_end.isoformat()]}
+        layout["uirevision"] = f"{t_start.value}-{t_end.value}"
 
     fig.update_layout(**layout)
     return fig
@@ -62,6 +111,7 @@ def _add_price_traces(
     windowed: WindowedData,
     label: str,
     is_comparison_b: bool,
+    price_decimals: int = 2,
 ) -> None:
     mkt = windowed.market
     fills = windowed.fills
@@ -76,7 +126,6 @@ def _add_price_traces(
     mid_dash = "dash" if is_comparison_b else "solid"
     mid_width = 1 if is_comparison_b else 1.5
 
-    # Mid price line
     fig.add_trace(go.Scattergl(
         x=mkt.index,
         y=mkt["mid_price"],
@@ -84,16 +133,17 @@ def _add_price_traces(
         name=f"Mid{label}",
         line={"color": MID_COLOR, "width": mid_width, "dash": mid_dash},
         opacity=mid_opacity,
+        hovertemplate=f"Mid: %{{y:.{price_decimals}f}}<extra></extra>",
         showlegend=True,
     ))
 
     if not is_deep or depth == 1:
-        _add_bbo_band(fig, mkt, label, is_comparison_b)
+        _add_bbo_band(fig, mkt, label, is_comparison_b, price_decimals)
     else:
         _add_depth_levels(fig, mkt, depth, label, is_comparison_b)
 
     _add_intent_traces(fig, intents, mkt, label, is_comparison_b)
-    _add_fill_markers(fig, fills, label, is_comparison_b)
+    _add_fill_markers(fig, fills, label, is_comparison_b, price_decimals)
 
 
 def _add_bbo_band(
@@ -101,6 +151,7 @@ def _add_bbo_band(
     mkt: pd.DataFrame,
     label: str,
     is_b: bool,
+    price_decimals: int = 2,
 ) -> None:
     alpha_mult = 0.5 if is_b else 1.0
     bid_fill = _alpha(BID_FILL_COLOR, alpha_mult)
@@ -115,18 +166,20 @@ def _add_bbo_band(
         mode="lines",
         name=f"Bid{label}",
         line={"color": BID_LINE_COLOR, "width": 0.5},
-        showlegend=False,
+        hovertemplate=f"Bid: %{{y:.{price_decimals}f}}<extra></extra>",
+        showlegend=True,
         opacity=0.7 if is_b else 1.0,
     ))
     fig.add_trace(go.Scattergl(
         x=mkt.index,
         y=mkt["ask_price_0"],
         mode="lines",
-        name=f"Spread{label}",
+        name=f"Ask{label}",
         line={"color": ASK_LINE_COLOR, "width": 0.5},
         fill="tonexty",
         fillcolor=ask_fill if not is_b else bid_fill,
-        showlegend=False,
+        hovertemplate=f"Ask: %{{y:.{price_decimals}f}}<extra></extra>",
+        showlegend=True,
         opacity=0.7 if is_b else 1.0,
     ))
 
@@ -214,6 +267,7 @@ def _add_fill_markers(
     fills: pd.DataFrame,
     label: str,
     is_b: bool,
+    price_decimals: int = 2,
 ) -> None:
     if fills.empty:
         return
@@ -231,7 +285,7 @@ def _add_fill_markers(
     price_col = "fill_price" if "fill_price" in fills.columns else fills.columns[0]
 
     if not buys.empty:
-        hover = _fill_hover(buys)
+        hover = _fill_hover(buys, price_decimals)
         fig.add_trace(go.Scattergl(
             x=buys.index, y=buys[price_col],
             mode="markers",
@@ -242,7 +296,7 @@ def _add_fill_markers(
             showlegend=True,
         ))
     if not sells.empty:
-        hover = _fill_hover(sells)
+        hover = _fill_hover(sells, price_decimals)
         fig.add_trace(go.Scattergl(
             x=sells.index, y=sells[price_col],
             mode="markers",
@@ -254,16 +308,17 @@ def _add_fill_markers(
         ))
 
 
-def _fill_hover(fills: pd.DataFrame) -> list[str]:
+def _fill_hover(fills: pd.DataFrame, price_decimals: int = 2) -> list[str]:
     rows = []
+    fmt = f".{price_decimals}f"
     for _, r in fills.iterrows():
-        parts = [f"Price: {r.get('fill_price', ''):.6f}"]
+        parts = [f"Price: {r.get('fill_price', ''):{fmt}}"]
         if "fill_qty" in r:
-            parts.append(f"Qty: {r['fill_qty']:.4f}")
+            parts.append(f"Qty: {r['fill_qty']:{fmt}}")
         if "fee" in r:
-            parts.append(f"Fee: {r['fee']:.6f}")
+            parts.append(f"Fee: {r['fee']:{fmt}}")
         if "slippage_bps" in r:
-            parts.append(f"Slip: {r['slippage_bps']:.2f} bps")
+            parts.append(f"Slip: {r['slippage_bps']:.2f} bps  (${r['slippage_usd']:{fmt}})" if "slippage_usd" in r else f"Slip: {r['slippage_bps']:.2f} bps")
         rows.append("<br>".join(parts))
     return rows
 

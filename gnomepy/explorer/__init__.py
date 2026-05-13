@@ -24,6 +24,7 @@ def launch_explorer(
     port: int = 8050,
     open_browser: bool = True,
     debug: bool = False,
+    price_decimals: int = 2,
 ) -> None:
     """Load results and launch the Dash backtest explorer in a local browser."""
     print("Loading backtest data…")
@@ -34,7 +35,7 @@ def launch_explorer(
     if store_b:
         print(f"  B: {store_b.summary_label()}")
 
-    app = create_app(store_a, store_b)
+    app = create_app(store_a, store_b, price_decimals=price_decimals)
 
     if open_browser:
         url = f"http://localhost:{port}"

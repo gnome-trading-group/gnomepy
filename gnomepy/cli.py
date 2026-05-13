@@ -54,32 +54,34 @@ def logout() -> None:
 
 @main.command()
 @click.argument("path", required=False, default=None)
+@click.option("--compare", default=None, metavar="PATH_OR_RUN_ID", help="Second backtest path or run_id for side-by-side comparison")
+@click.option("--compare-job", "compare_job_index", default=0, show_default=True, help="Job index for the comparison run (used when --compare is a run_id)")
 @click.option("--run-id", default=None, metavar="RUN_ID", help="Explore a remote run by run_id (looks up S3 path automatically)")
 @click.option("--job", "job_index", default=0, show_default=True, help="Job index within a remote run (used with --run-id)")
-@click.option("--compare", default=None, metavar="PATH_OR_RUN_ID", help="Second backtest path or run_id for comparison mode")
-@click.option("--compare-job", "compare_job_index", default=0, show_default=True, help="Job index for the comparison run (used when --compare is a run_id)")
 @click.option("--port", default=8050, show_default=True, help="Port for the Dash server")
 @click.option("--no-browser", is_flag=True, help="Do not auto-open the browser")
 @click.option("--debug", is_flag=True, hidden=True)
+@click.option("--price-decimals", "price_decimals", default=2, show_default=True, help="Decimal places for price display (e.g. 8 for BTC)")
 def explore(
     path: str | None,
-    run_id: str | None,
-    job_index: int,
     compare: str | None,
     compare_job_index: int,
+    run_id: str | None,
+    job_index: int,
     port: int,
     no_browser: bool,
     debug: bool,
+    price_decimals: int,
 ) -> None:
     """Launch the interactive backtest explorer.
 
     Accepts a local directory, an S3 URI, or a remote run_id:
 
     \b
+      gnomepy explore --run-id <run_id_a> --compare <run_id_b>
+      gnomepy explore --run-id <run_id> [--job 2]
       gnomepy explore ./019e2174-...
       gnomepy explore s3://gnome-research-prod/backtests/<run_id>/jobs/0
-      gnomepy explore --run-id <run_id> [--job 2]
-      gnomepy explore --run-id <run_id> --compare <run_id_b>
     """
     from gnomepy.java.recorder import BacktestResults
     from gnomepy.explorer import launch_explorer
@@ -95,7 +97,7 @@ def explore(
         path_b = compare if _is_local_or_s3(compare) else _s3_path_for_run(compare, compare_job_index)
         results_b = BacktestResults.from_parquet(path_b)
 
-    launch_explorer(results_a, results_b=results_b, port=port, open_browser=not no_browser, debug=debug)
+    launch_explorer(results_a, results_b=results_b, port=port, open_browser=not no_browser, debug=debug, price_decimals=price_decimals)
 
 
 def _is_local_or_s3(path: str) -> bool:

@@ -20,8 +20,8 @@ from gnomepy.explorer.data import (
     ComparisonStore,
     ExplorerDataStore,
 )
-from gnomepy.explorer.panels.event_log import EVENT_COLUMNS, build_event_records
-from gnomepy.explorer.panels.price import build_price_figure
+from gnomepy.explorer.panels.event_log import build_event_columns, build_event_records
+from gnomepy.explorer.panels.price import build_price_figure, build_spread_figure
 from gnomepy.explorer.panels.pnl import build_pnl_figure
 from gnomepy.explorer.panels.signals import build_signals_figure, get_signal_options
 from gnomepy.explorer.styles import (
@@ -41,12 +41,12 @@ from gnomepy.explorer.styles import (
 _STORE_A: ExplorerDataStore | None = None
 _STORE_B: ExplorerDataStore | None = None
 _COMPARISON: ComparisonStore | None = None
+_PRICE_DECIMALS: int = 2
 
 _SPEED_INTERVALS = {1: 600, 5: 120, 10: 60}
 
 _CHART_CONFIG = {
-    "displayModeBar": True,
-    "modeBarButtonsToRemove": ["toImage", "sendDataToCloud", "lasso2d", "select2d"],
+    "displayModeBar": False,
     "scrollZoom": True,
     "doubleClick": "reset+autosize",
     "responsive": True,
@@ -56,11 +56,13 @@ _CHART_CONFIG = {
 def create_app(
     store_a: ExplorerDataStore,
     store_b: ExplorerDataStore | None = None,
+    price_decimals: int = 2,
 ) -> dash.Dash:
-    global _STORE_A, _STORE_B, _COMPARISON
+    global _STORE_A, _STORE_B, _COMPARISON, _PRICE_DECIMALS
     _STORE_A = store_a
     _STORE_B = store_b
     _COMPARISON = ComparisonStore(store_a, store_b) if store_b else None
+    _PRICE_DECIMALS = price_decimals
 
     app = dash.Dash(
         __name__,
@@ -92,7 +94,7 @@ def create_app(
 
             _build_header(store_a, store_b),
             _build_config_diff_section(),
-            _build_nav_bar(slider_marks, signal_options, default_signals, has_signals),
+            _build_nav_bar(slider_marks, signal_options, default_signals, has_signals, price_decimals),
             _build_window_label(),
 
             dbc.Row(dbc.Col(
@@ -101,15 +103,20 @@ def create_app(
             ), className="g-0 mt-1"),
 
             dbc.Row(dbc.Col(
+                dcc.Graph(id="spread-chart", config=_CHART_CONFIG, style={"height": "12vh"}),
+                width=12,
+            ), className="g-0"),
+
+            dbc.Row(dbc.Col(
                 dcc.Graph(id="signals-chart", config=_CHART_CONFIG, style={"height": "20vh"}),
                 width=12,
-            ), id="signals-row", className="g-0 mt-1",
+            ), id="signals-row", className="g-0",
                 style={"display": "block" if has_signals else "none"}),
 
             dbc.Row(dbc.Col(
                 dcc.Graph(id="pnl-chart", config=_CHART_CONFIG, style={"height": "25vh"}),
                 width=12,
-            ), className="g-0 mt-1"),
+            ), className="g-0"),
 
             dbc.Row(dbc.Col(
                 _build_event_table(),
@@ -120,7 +127,7 @@ def create_app(
         style={"backgroundColor": BG, "minHeight": "100vh", "padding": "8px"},
     )
 
-    _register_callbacks(app, t_min, t_max, has_signals, default_signals)
+    _register_callbacks(app, t_min, t_max, has_signals, default_signals, price_decimals)
     return app
 
 
@@ -158,6 +165,7 @@ def _build_nav_bar(
     signal_options: list[dict],
     default_signals: list[str],
     has_signals: bool,
+    price_decimals: int = 2,
 ) -> dbc.Row:
     step_buttons = dbc.ButtonGroup([
         dbc.Button("|◀", id="btn-first", n_clicks=0, size="sm", outline=True, color="secondary"),
@@ -223,6 +231,16 @@ def _build_nav_bar(
             speed_select,
         ], style={"display": "flex", "alignItems": "center", "gap": "4px"}), width="auto"),
         dbc.Col(html.Div(signals_row, style={"display": "flex", "alignItems": "center", "gap": "4px"}), width="auto"),
+        dbc.Col(html.Div([
+            html.Span("Decimals:", style={"color": TEXT_MUTED, "fontSize": "12px", "marginRight": "4px"}),
+            dcc.Input(
+                id="price-decimals-input",
+                type="number", min=0, max=12, step=1,
+                value=price_decimals,
+                debounce=True,
+                style={"width": "52px", "fontSize": "12px", "backgroundColor": "#161b22", "color": TEXT, "border": f"1px solid {BORDER}", "borderRadius": "4px", "padding": "2px 4px"},
+            ),
+        ], style={"display": "flex", "alignItems": "center", "gap": "4px"}), width="auto"),
         dbc.Col(reset_btn, width="auto", className="ms-auto"),
     ], align="center", className="g-2")
 
@@ -252,7 +270,7 @@ def _build_window_label() -> html.Div:
 def _build_event_table() -> dash_table.DataTable:
     return dash_table.DataTable(
         id="event-table",
-        columns=EVENT_COLUMNS,
+        columns=build_event_columns(_PRICE_DECIMALS),
         data=[],
         page_size=100,
         page_action="native",
@@ -260,7 +278,8 @@ def _build_event_table() -> dash_table.DataTable:
         filter_action="native",
         row_selectable="single",
         selected_rows=[],
-        style_table={"overflowX": "auto", "maxHeight": "22vh", "overflowY": "scroll"},
+        fixed_rows={"headers": True},
+        style_table={"overflowX": "auto", "height": "22vh", "overflowY": "auto"},
         style_header=TABLE_HEADER_STYLE,
         style_cell=TABLE_CELL_STYLE,
         style_data=TABLE_STYLE,
@@ -273,6 +292,8 @@ def _build_event_table() -> dash_table.DataTable:
         style_cell_conditional=[
             {"if": {"column_id": "time"}, "textAlign": "left", "minWidth": "110px"},
             {"if": {"column_id": "type"}, "textAlign": "left", "minWidth": "55px"},
+            {"if": {"column_id": "order_type"}, "textAlign": "left", "minWidth": "65px"},
+            {"if": {"column_id": "oid"}, "textAlign": "right", "minWidth": "50px"},
             {"if": {"column_id": "source"}, "textAlign": "center", "minWidth": "40px"},
             {"if": {"column_id": "side"}, "textAlign": "left", "minWidth": "60px"},
             {"if": {"column_id": "status"}, "textAlign": "left", "minWidth": "80px"},
@@ -383,6 +404,7 @@ def _register_callbacks(
     t_max: pd.Timestamp,
     has_signals: bool,
     default_signals: list[str],
+    price_decimals: int = 2,
 ) -> None:
 
     @app.callback(
@@ -390,6 +412,7 @@ def _register_callbacks(
         Output("cursor-pos", "data"),
         [
             Input("price-chart", "relayoutData"),
+            Input("spread-chart", "relayoutData"),
             Input("pnl-chart", "relayoutData"),
             Input("signals-chart", "relayoutData"),
             Input("time-slider", "value"),
@@ -411,7 +434,7 @@ def _register_callbacks(
         prevent_initial_call=True,
     )
     def master_time_control(
-        price_relayout, pnl_relayout, signals_relayout,
+        price_relayout, spread_relayout, pnl_relayout, signals_relayout,
         slider_value,
         first_clicks, prev_clicks, next_clicks, last_clicks, reset_clicks,
         play_intervals,
@@ -421,9 +444,10 @@ def _register_callbacks(
         triggered_id = ctx.triggered_id
         t_start, t_end = _window_from_store(current_window, t_min, t_max)
 
-        if triggered_id in ("price-chart", "pnl-chart", "signals-chart"):
+        if triggered_id in ("price-chart", "spread-chart", "pnl-chart", "signals-chart"):
             relayout = {
                 "price-chart": price_relayout,
+                "spread-chart": spread_relayout,
                 "pnl-chart": pnl_relayout,
                 "signals-chart": signals_relayout,
             }[triggered_id]
@@ -505,29 +529,59 @@ def _register_callbacks(
         Output("price-chart", "figure"),
         Input("time-window", "data"),
         Input("cursor-pos", "data"),
+        Input("price-decimals-input", "value"),
         prevent_initial_call=False,
     )
-    def render_price(window_data, cursor_pos):
+    def render_price(window_data, cursor_pos, decimals):
         t_start, t_end = _window_from_store(window_data, t_min, t_max)
         cursor_ts = pd.Timestamp(cursor_pos) if cursor_pos else None
+        pd_ = int(decimals) if decimals is not None else price_decimals
 
         windowed_a = _STORE_A.window(t_start, t_end)
         windowed_b = _STORE_B.window(t_start, t_end) if _STORE_B else None
 
-        return build_price_figure(windowed_a, windowed_b, cursor_ts, t_start, t_end)
+        return build_price_figure(windowed_a, windowed_b, cursor_ts, t_start, t_end, pd_)
+
+    @app.callback(
+        Output("spread-chart", "figure"),
+        Input("time-window", "data"),
+        Input("cursor-pos", "data"),
+        Input("price-decimals-input", "value"),
+        prevent_initial_call=False,
+    )
+    def render_spread(window_data, cursor_pos, decimals):
+        t_start, t_end = _window_from_store(window_data, t_min, t_max)
+        cursor_ts = pd.Timestamp(cursor_pos) if cursor_pos else None
+        pd_ = int(decimals) if decimals is not None else price_decimals
+
+        windowed_a = _STORE_A.window(t_start, t_end)
+        windowed_b = _STORE_B.window(t_start, t_end) if _STORE_B else None
+
+        return build_spread_figure(windowed_a, windowed_b, cursor_ts, t_start, t_end, pd_)
+
+    @app.callback(
+        Output("event-table", "columns"),
+        Input("price-decimals-input", "value"),
+        prevent_initial_call=False,
+    )
+    def update_table_columns(decimals):
+        pd_ = int(decimals) if decimals is not None else price_decimals
+        return build_event_columns(pd_)
 
     @app.callback(
         Output("pnl-chart", "figure"),
         Input("time-window", "data"),
         Input("cursor-pos", "data"),
+        Input("price-decimals-input", "value"),
         prevent_initial_call=False,
     )
-    def render_pnl(window_data, cursor_pos):
+    def render_pnl(window_data, cursor_pos, decimals):
         t_start, t_end = _window_from_store(window_data, t_min, t_max)
         cursor_ts = pd.Timestamp(cursor_pos) if cursor_pos else None
         pnl_delta = _COMPARISON.pnl_delta(t_start, t_end) if _COMPARISON else None
+        pd_ = int(decimals) if decimals is not None else price_decimals
 
-        return build_pnl_figure(_STORE_A, _STORE_B, t_start, t_end, cursor_ts, pnl_delta)
+        return build_pnl_figure(_STORE_A, _STORE_B, t_start, t_end, cursor_ts, pnl_delta, pd_)
 
     if has_signals:
         @app.callback(

@@ -35,7 +35,7 @@ CURSOR_COLOR = "rgba(255, 215, 0, 0.7)"
 SIGNAL_COLORS = ["#d29922", "#a371f7", "#79c0ff", "#56d364", "#ff7b72", "#ffa657"]
 DEPTH_ALPHA = [0.9, 0.6, 0.4, 0.28, 0.18, 0.12, 0.08, 0.06, 0.04, 0.03]
 
-CHART_MARGIN = {"l": 55, "r": 15, "t": 25, "b": 20}
+CHART_MARGIN = {"l": 80, "r": 15, "t": 25, "b": 0}
 CHART_FONT = {"family": "JetBrains Mono, monospace", "color": TEXT, "size": 11}
 PLOTLY_TEMPLATE = "plotly_dark"
 
@@ -48,7 +48,7 @@ CHART_LAYOUT_BASE = {
     "showlegend": True,
     "legend": {"orientation": "h", "yanchor": "bottom", "y": 1.01, "xanchor": "right", "x": 1},
     "xaxis": {"showgrid": True, "gridcolor": BORDER, "zeroline": False},
-    "yaxis": {"showgrid": True, "gridcolor": BORDER, "zeroline": False},
+    "yaxis": {"showgrid": True, "gridcolor": BORDER, "zeroline": False, "automargin": False},
     "hovermode": "x unified",
     "uirevision": "lock",
 }

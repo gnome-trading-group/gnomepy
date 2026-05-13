@@ -123,6 +123,7 @@ def _compute_fill_slippage(fills: pd.DataFrame) -> pd.DataFrame:
     is_bid = fills["side"].str.upper().str.contains("BID")
     signed_slip = (fills["fill_price"].astype(float) - mid) * is_bid.map({True: 1.0, False: -1.0})
     fills["slippage_bps"] = (signed_slip / mid * 10_000).round(2)
+    fills["slippage_usd"] = signed_slip * fills["fill_qty"].astype(float)
     return fills
 
 

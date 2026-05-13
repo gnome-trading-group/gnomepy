@@ -22,6 +22,9 @@ from gnomepy.explorer.styles import (
     POSITION_B_COLOR,
 )
 
+FEES_LINE_COLOR = "rgba(210, 153, 34, 0.45)"
+FEES_FILL_COLOR = "rgba(210, 153, 34, 0.08)"
+
 if TYPE_CHECKING:
     from gnomepy.explorer.data import ExplorerDataStore
 
@@ -33,6 +36,7 @@ def build_pnl_figure(
     t_end: pd.Timestamp,
     cursor_ts: pd.Timestamp | None = None,
     pnl_delta: pd.Series | None = None,
+    price_decimals: int = 2,
 ) -> go.Figure:
     fig = make_subplots(
         rows=2, cols=1,
@@ -43,6 +47,7 @@ def build_pnl_figure(
     )
 
     _add_pnl_traces(fig, store_a, t_start, t_end, label="A" if store_b else "", color=PNL_A_COLOR, row=1)
+    _add_fees_trace(fig, store_a, t_start, t_end, price_decimals)
     _add_position_traces(fig, store_a, t_start, t_end, label="A" if store_b else "", color=POSITION_A_COLOR, row=2)
 
     if store_b is not None:
@@ -72,6 +77,7 @@ def build_pnl_figure(
                 row=row, col=1,
             )
 
+    tick_fmt = f".{price_decimals}f"
     fig.update_layout(
         template=PLOTLY_TEMPLATE,
         paper_bgcolor=PANEL_BG,
@@ -81,11 +87,22 @@ def build_pnl_figure(
         showlegend=True,
         legend={"orientation": "h", "yanchor": "bottom", "y": 1.01, "xanchor": "right", "x": 1},
         hovermode="x unified",
-        uirevision="lock",
+        uirevision=f"{t_start.value}-{t_end.value}",
+        yaxis3={
+            "overlaying": "y",
+            "side": "right",
+            "showgrid": False,
+            "showticklabels": False,
+            "ticks": "",
+            "zeroline": False,
+            "automargin": False,
+            "fixedrange": True,
+        },
     )
     fig.update_xaxes(showgrid=True, gridcolor=BORDER, zeroline=False, range=x_range)
-    fig.update_yaxes(showgrid=True, gridcolor=BORDER, zeroline=False)
-    fig.update_yaxes(tickprefix="$", row=1, col=1)
+    fig.update_yaxes(showgrid=True, gridcolor=BORDER, zeroline=False, automargin=False)
+    fig.update_yaxes(tickprefix="$", tickformat=tick_fmt, row=1, col=1)
+    fig.update_yaxes(tickformat=tick_fmt, row=2, col=1)
     return fig
 
 
@@ -112,6 +129,31 @@ def _add_pnl_traces(
         line={"color": color, "width": 1.5, "dash": dash},
         showlegend=True,
     ), row=row, col=1)
+
+
+def _add_fees_trace(
+    fig: go.Figure,
+    store: ExplorerDataStore,
+    t_start: pd.Timestamp,
+    t_end: pd.Timestamp,
+    price_decimals: int = 2,
+) -> None:
+    fees = _slice(store.curves.fees, t_start, t_end)
+    if fees.empty:
+        return
+    if len(fees) > MAX_CHART_POINTS:
+        fees = _lttb_df(fees.to_frame("fees"), MAX_CHART_POINTS)["fees"]
+
+    fmt = f".{price_decimals}f"
+    fig.add_trace(go.Scattergl(
+        x=fees.index, y=fees,
+        xaxis="x", yaxis="y3",
+        mode="lines", name="Fees",
+        line={"color": FEES_LINE_COLOR, "width": 1},
+        fill="tozeroy", fillcolor=FEES_FILL_COLOR,
+        hovertemplate=f"Fees: $%{{y:{fmt}}}<extra></extra>",
+        showlegend=True,
+    ))
 
 
 def _add_position_traces(
