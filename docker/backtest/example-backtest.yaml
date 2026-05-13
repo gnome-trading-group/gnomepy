@@ -11,8 +11,8 @@ strategy:
     ewma_alpha: 0.9
     warmup_ticks: 100
 
-start_date: "2026-01-21T00:00:00"
-end_date: "2026-01-26T00:00:00"
+start_date: "2026-01-24T00:00:00"
+end_date: "2026-01-25T00:00:00"
 
 listings:
   - listing_id: 1
@@ -26,10 +26,10 @@ profiles:
       maker_fee: 0.0002
     network_latency:
       type: static
-      latency_nanos: [0, 5000000]
+      latency_nanos: 5000000
     order_processing_latency:
       type: static
-      latency_nanos: [0, 1000000]
+      latency_nanos: 1000000
     queue_model:
       type: risk_averse
 

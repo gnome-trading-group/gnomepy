@@ -32,6 +32,8 @@ class ReportSection:
 
 pio.templates.default = "ggplot2"
 
+DEFAULT_MAX_POINTS = 50_000
+
 
 _MUTED_COLORS = [
     "rgba(150,150,150,0.5)", "rgba(100,149,237,0.5)", "rgba(180,120,80,0.5)",
@@ -53,12 +55,43 @@ def _sym_label(eid: int, sid: int) -> str:
     return f"{eid}/{sid}"
 
 
-def _downsample(series: pd.Series, max_points: int | None) -> pd.Series:
-    """Evenly downsample a Series if it exceeds *max_points*."""
+def _lttb(series: pd.Series, n: int) -> pd.Series:
+    """Largest-Triangle-Three-Buckets downsampling — preserves visual shape."""
+    import numpy as np
+
+    m = len(series)
+    y = series.values.astype(float)
+    bucket_size = (m - 2) / (n - 2)
+
+    selected = [0]
+    a = 0
+    for i in range(1, n - 1):
+        curr_start = int(i * bucket_size) + 1
+        curr_end = min(int((i + 1) * bucket_size) + 1, m)
+        next_start = curr_end
+        next_end = min(int((i + 2) * bucket_size) + 1, m)
+
+        avg_x = float(next_start + next_end - 1) / 2.0
+        avg_y = float(y[next_start:next_end].mean()) if next_start < m else y[-1]
+
+        ax = float(a)
+        ay = y[a]
+        cx = np.arange(curr_start, curr_end, dtype=float)
+        areas = np.abs((ax - avg_x) * (y[curr_start:curr_end] - ay)
+                       - (cx - ax) * (avg_y - ay)) * 0.5
+        best = curr_start + int(np.argmax(areas))
+        selected.append(best)
+        a = best
+
+    selected.append(m - 1)
+    return series.iloc[selected]
+
+
+def _downsample(series: pd.Series, max_points: int | None = DEFAULT_MAX_POINTS) -> pd.Series:
+    """Downsample a Series to at most *max_points* using LTTB. Pass ``None`` to disable."""
     if max_points is None or len(series) <= max_points:
         return series
-    step = max(1, len(series) // max_points)
-    return series.iloc[::step]
+    return _lttb(series, max_points)
 
 
 def plot_pnl(
@@ -67,7 +100,7 @@ def plot_pnl(
     show_mid: bool = True,
     show_fills: bool = True,
     title: str | None = None,
-    max_points: int | None = None,
+    max_points: int | None = DEFAULT_MAX_POINTS,
 ) -> go.Figure:
     """PnL + drawdown chart with optional mid-price overlay and fill markers."""
     pnl = _downsample(report.pnl_curve, max_points)
@@ -94,7 +127,7 @@ def plot_pnl(
             color = _MUTED_COLORS[i % len(_MUTED_COLORS)]
             name = "mid price" if len(symbols) == 1 else f"mid {_sym_label(eid, sid)}"
             fig.add_trace(
-                go.Scatter(
+                go.Scattergl(
                     x=mid.index, y=mid.values, mode="lines", name=name,
                     line=dict(width=0.8, color=color),
                     hoverinfo="skip",
@@ -103,8 +136,8 @@ def plot_pnl(
             )
 
     fig.add_trace(
-        go.Scatter(x=pnl.index, y=pnl.values, mode="lines", name="PnL",
-                   line=dict(width=1.2)),
+        go.Scattergl(x=pnl.index, y=pnl.values, mode="lines", name="PnL",
+                     line=dict(width=1.2)),
         row=1, col=1,
     )
     fig.add_trace(
@@ -127,7 +160,7 @@ def plot_pnl(
         eq_at_fills = eq_merged["pnl_val"].values
         buy_mask = fills["side"].map(_is_buy).values
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=fills.index[buy_mask], y=eq_at_fills[buy_mask], mode="markers",
                 name="buy",
                 marker=dict(symbol="triangle-up", size=7, color="#2ca02c"),
@@ -135,7 +168,7 @@ def plot_pnl(
             row=1, col=1,
         )
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=fills.index[~buy_mask], y=eq_at_fills[~buy_mask], mode="markers",
                 name="sell",
                 marker=dict(symbol="triangle-down", size=7, color="#d62728"),
@@ -164,7 +197,7 @@ def plot_position(
     report: "BacktestReport",
     *,
     title: str | None = None,
-    max_points: int | None = None,
+    max_points: int | None = DEFAULT_MAX_POINTS,
 ) -> go.Figure:
     """Position, cumulative fees, and cumulative volume subplots."""
     pos_by_sym = report.position_by_symbol
@@ -185,7 +218,7 @@ def plot_position(
             s = _downsample(pos_by_sym[col], max_points)
             color = _POSITION_COLORS[i % len(_POSITION_COLORS)]
             fig.add_trace(
-                go.Scatter(
+                go.Scattergl(
                     x=s.index, y=s.values, mode="lines", name=label,
                     line=dict(width=1, shape="hv", color=color),
                 ),
@@ -193,7 +226,7 @@ def plot_position(
             )
         total = _downsample(report.position_curve, max_points)
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=total.index, y=total.values, mode="lines", name="total",
                 line=dict(width=1.5, shape="hv", color="#333", dash="dash"),
             ),
@@ -211,14 +244,14 @@ def plot_position(
         )
 
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
             x=fees.index, y=fees.values, mode="lines", name="fees",
             line=dict(width=1, color="#ff7f0e"),
         ),
         row=2, col=1,
     )
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
             x=vol.index, y=vol.values, mode="lines", name="volume",
             line=dict(width=1, color="#9467bd"),
         ),
@@ -237,7 +270,7 @@ def plot_pnl_by_symbol(
     report: "BacktestReport",
     *,
     title: str | None = None,
-    max_points: int | None = None,
+    max_points: int | None = DEFAULT_MAX_POINTS,
 ) -> go.Figure:
     """Per-symbol PnL curves on a single chart."""
     by_sym = report.pnl_by_symbol
@@ -246,7 +279,7 @@ def plot_pnl_by_symbol(
         label = f"{col[0]}/{col[1]}" if isinstance(col, tuple) else str(col)
         s = _downsample(by_sym[col], max_points)
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=s.index, y=s.values, mode="lines",
                 name=label, line=dict(width=1.2),
             ),
@@ -320,7 +353,7 @@ def plot_spread(
     report: "BacktestReport",
     *,
     title: str | None = None,
-    max_points: int | None = None,
+    max_points: int | None = DEFAULT_MAX_POINTS,
 ) -> go.Figure:
     """Bid-ask spread over time, one line per symbol."""
     mkt = report._market_df.sort_index()
@@ -340,7 +373,7 @@ def plot_spread(
         name = f"spread {_sym_label(eid, sid)}" if multi else "spread"
         color = _SPREAD_COLORS[i % len(_SPREAD_COLORS)]
         fig.add_trace(
-            go.Scatter(
+            go.Scattergl(
                 x=spread.index, y=spread.values, mode="lines", name=name,
                 line=dict(width=0.8, color=color),
             ),
@@ -364,7 +397,7 @@ def plot_cross_exchange_spread(
     security_id: int | None = None,
     *,
     title: str | None = None,
-    max_points: int | None = None,
+    max_points: int | None = DEFAULT_MAX_POINTS,
 ) -> go.Figure:
     """Spread between two exchanges for the same security (in bps)."""
     mkt = report._market_df.sort_index()
@@ -410,7 +443,7 @@ def plot_cross_exchange_spread(
 
     fig = go.Figure()
     fig.add_trace(
-        go.Scatter(
+        go.Scattergl(
             x=spread_bps.index, y=spread_bps.values, mode="lines",
             name=f"{exchange_id_b} - {exchange_id_a}",
             line=dict(width=1, color="#6366f1"),
@@ -429,6 +462,7 @@ def plot_cross_exchange_spread(
 
 
 MAX_FILLS_DISPLAY = 500
+MAX_WARNINGS_DISPLAY = 500
 
 
 def _fills_table_html(report: "BacktestReport") -> str:
@@ -478,7 +512,7 @@ def _summary_table_html(summary: dict) -> str:
     """Render the full summary as a styled table, excluding nested dicts."""
     rows = []
     for k, v in summary.items():
-        if isinstance(v, dict):
+        if isinstance(v, (dict, list)):
             continue
         fmt = _METRIC_FORMAT.get(k)
         if fmt:
@@ -538,6 +572,18 @@ def _render_fills(report: "BacktestReport") -> str:
     return _fills_table_html(report)
 
 
+def _render_warnings(report: "BacktestReport") -> str | None:
+    warnings = report.summary().get("warnings") or []
+    if not warnings:
+        return None
+    total = len(warnings)
+    truncated = total > MAX_WARNINGS_DISPLAY
+    display = warnings[:MAX_WARNINGS_DISPLAY]
+    items = "".join(f"<li>{w}</li>" for w in display)
+    note = f'<p class="muted">Showing first {MAX_WARNINGS_DISPLAY:,} of {total:,} warnings.</p>' if truncated else ""
+    return f'<ol class="warnings-list">{items}</ol>{note}'
+
+
 DEFAULT_SECTIONS: list[ReportSection] = [
     ReportSection("kpi", "Summary", _render_kpi),
     ReportSection("config", "Configuration", _render_config),
@@ -547,6 +593,7 @@ DEFAULT_SECTIONS: list[ReportSection] = [
     ReportSection("spread", "Market Conditions", _render_spread),
     ReportSection("per_symbol", "Per-Symbol Breakdown", _render_per_symbol),
     ReportSection("fills", "Fills", _render_fills),
+    ReportSection("warnings", "Warnings", _render_warnings),
 ]
 
 
@@ -554,34 +601,23 @@ def _render_cross_exchange(report: "BacktestReport", **kwargs) -> go.Figure:
     return plot_cross_exchange_spread(report, **kwargs)
 
 
-def _render_adverse_selection(report: "BacktestReport", **kwargs) -> "go.Figure | None":
-    from gnomepy_research.reporting.backtest.adverse_selection import adverse_selection_section
-    return adverse_selection_section(report)
-
-
-def _render_market_making(report: "BacktestReport", **kwargs) -> "str | None":
-    from gnomepy_research.reporting.backtest.market_making import market_making_section
-    return market_making_section(report)
-
-
 SECTION_REGISTRY: dict[str, ReportSection] = {
-    "adverse_selection": ReportSection("adverse_selection", "Adverse Selection", _render_adverse_selection),
-    "market_making": ReportSection("market_making", "Market Making", _render_market_making),
     "cross_exchange_spread": ReportSection("cross_exchange_spread", "Cross-Exchange Spread", _render_cross_exchange),
 }
 
 
-def resolve_sections(config: dict) -> tuple[list[str], list[ReportSection], int | None]:
+def resolve_sections(config: dict) -> tuple[list[str], list[ReportSection], int | None, bool]:
     """Read the ``report`` key from a backtest config and resolve sections.
 
-    Returns ``(exclude, extra_sections, max_points)``.
+    Returns ``(exclude, extra_sections, max_points, plotly_cdn)``.
     """
     report_cfg = config.get("report") if config else None
     if not report_cfg:
-        return [], [], None
+        return [], [], None, True
 
     exclude = list(report_cfg.get("exclude") or [])
     max_points = report_cfg.get("max_points")
+    plotly_cdn = bool(report_cfg.get("plotly_cdn", True))
 
     extra: list[ReportSection] = []
     for entry in report_cfg.get("sections") or []:
@@ -598,7 +634,7 @@ def resolve_sections(config: dict) -> tuple[list[str], list[ReportSection], int 
         else:
             extra.append(section)
 
-    return exclude, extra, max_points
+    return exclude, extra, max_points, plotly_cdn
 
 
 def assemble_html(
@@ -607,7 +643,8 @@ def assemble_html(
     exclude: list[str] | None = None,
     extra_sections: list[ReportSection] | None = None,
     extra_figs: list[go.Figure] | None = None,
-    max_points: int | None = None,
+    max_points: int | None = DEFAULT_MAX_POINTS,
+    plotly_cdn: bool = True,
 ) -> str:
     """Build a standalone HTML report with configurable sections."""
     from datetime import datetime as dt
@@ -645,9 +682,13 @@ def assemble_html(
 
         if isinstance(result, go.Figure):
             chart_height = result.layout.height or 500
+            if not plotlyjs_included:
+                include_js = "cdn" if plotly_cdn else True
+            else:
+                include_js = False
             html = result.to_html(
                 full_html=False,
-                include_plotlyjs=not plotlyjs_included,
+                include_plotlyjs=include_js,
                 config={"responsive": True},
                 default_height=f"{chart_height}px",
                 default_width="100%",
@@ -745,6 +786,14 @@ def assemble_html(
   }}
   .config-block code {{ background: none; padding: 0; }}
   .muted {{ color: #94a3b8; font-style: italic; }}
+  .warnings-list {{
+    max-height: 400px; overflow-y: auto; margin: 0; padding: 0 0 0 1.5em;
+    border-left: 4px solid #f59e0b; background: #fffbeb;
+    border-radius: 0 8px 8px 0; padding: 16px 20px 16px 2.5em;
+    font-family: "SF Mono", "Fira Code", monospace; font-size: 0.82rem;
+    color: #78350f; line-height: 1.6;
+  }}
+  .warnings-list li {{ margin-bottom: 4px; word-break: break-word; }}
   footer {{
     margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0;
     font-size: 0.75rem; color: #94a3b8;

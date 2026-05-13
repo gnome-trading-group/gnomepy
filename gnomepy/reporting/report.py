@@ -196,18 +196,6 @@ class BacktestReport:
     def fills(self) -> pd.DataFrame:
         return self._curves.fills
 
-    # -- Market Making (research-specific, optional) -------------------------
-
-    def mm_stats(self) -> dict:
-        """Market-making specific metrics. Empty dict if not an MM strategy."""
-        from gnomepy_research.reporting.backtest.market_making import compute_mm_stats
-        return compute_mm_stats(self)
-
-    def plot_mm_dashboard(self, **kwargs) -> "go.Figure":
-        """Quoted spread, position histogram, fill side bar chart."""
-        from gnomepy_research.reporting.backtest.market_making import plot_mm_dashboard
-        return plot_mm_dashboard(self, **kwargs)
-
     # -- Sharpe --------------------------------------------------------------
 
     def sharpe_metrics(self, bar: str = "10s", n_buckets: int = 5) -> dict:
@@ -279,11 +267,6 @@ class BacktestReport:
         from gnomepy.reporting.plots import plot_position
         return plot_position(self, **kwargs)
 
-    def plot_adverse_selection(self, **kwargs) -> "go.Figure":
-        """Average post-fill mid movement curve across horizons."""
-        from gnomepy_research.reporting.backtest.adverse_selection import plot_adverse_selection
-        return plot_adverse_selection(self, **kwargs)
-
     def plot_cross_exchange_spread(self, **kwargs) -> "go.Figure":
         """Spread between two exchanges for the same security (bps)."""
         from gnomepy.reporting.plots import plot_cross_exchange_spread
@@ -308,20 +291,23 @@ class BacktestReport:
         extra_sections: list | None = None,
         extra_figs: list["go.Figure"] | None = None,
         max_points: int | None = None,
+        plotly_cdn: bool | None = None,
     ) -> str:
         """Return the full HTML report as a string."""
-        from gnomepy.reporting.plots import assemble_html, resolve_sections
+        from gnomepy.reporting.plots import DEFAULT_MAX_POINTS, assemble_html, resolve_sections
 
-        cfg_exclude, cfg_sections, cfg_max_points = resolve_sections(self._config or {})
+        cfg_exclude, cfg_sections, cfg_max_points, cfg_plotly_cdn = resolve_sections(self._config or {})
 
         merged_exclude = list(exclude or []) + cfg_exclude
         merged_sections = list(extra_sections or []) + cfg_sections
         if max_points is None:
-            max_points = cfg_max_points
+            max_points = cfg_max_points if cfg_max_points is not None else DEFAULT_MAX_POINTS
+        if plotly_cdn is None:
+            plotly_cdn = cfg_plotly_cdn
 
         return assemble_html(
             self, exclude=merged_exclude or None, extra_sections=merged_sections or None,
-            extra_figs=extra_figs, max_points=max_points,
+            extra_figs=extra_figs, max_points=max_points, plotly_cdn=plotly_cdn,
         )
 
     def save_html(
@@ -332,11 +318,12 @@ class BacktestReport:
         extra_sections: list | None = None,
         extra_figs: list["go.Figure"] | None = None,
         max_points: int | None = None,
+        plotly_cdn: bool | None = None,
     ) -> None:
         """Write a standalone HTML report to a local path or s3:// URI."""
         html = self.to_html(
             exclude=exclude, extra_sections=extra_sections,
-            extra_figs=extra_figs, max_points=max_points,
+            extra_figs=extra_figs, max_points=max_points, plotly_cdn=plotly_cdn,
         )
         path_str = str(path)
         if path_str.startswith("s3://"):

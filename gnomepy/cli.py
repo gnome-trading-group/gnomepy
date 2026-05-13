@@ -6,12 +6,10 @@ import logging
 import os
 import shutil
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 
 import click
 import yaml
-from importlib.metadata import version as _pkg_version
 
 from gnomepy.auth import get_id_token as _get_id_token
 from gnomepy.auth import login as _auth_login
@@ -48,6 +46,84 @@ def logout() -> None:
     """Remove cached authentication credentials."""
     _auth_logout()
     click.echo("Logged out.")
+
+
+# ---------------------------------------------------------------------------
+# Explorer command
+# ---------------------------------------------------------------------------
+
+@main.command()
+@click.argument("path", required=False, default=None)
+@click.option("--run-id", default=None, metavar="RUN_ID", help="Explore a remote run by run_id (looks up S3 path automatically)")
+@click.option("--job", "job_index", default=0, show_default=True, help="Job index within a remote run (used with --run-id)")
+@click.option("--compare", default=None, metavar="PATH_OR_RUN_ID", help="Second backtest path or run_id for comparison mode")
+@click.option("--compare-job", "compare_job_index", default=0, show_default=True, help="Job index for the comparison run (used when --compare is a run_id)")
+@click.option("--port", default=8050, show_default=True, help="Port for the Dash server")
+@click.option("--no-browser", is_flag=True, help="Do not auto-open the browser")
+@click.option("--debug", is_flag=True, hidden=True)
+def explore(
+    path: str | None,
+    run_id: str | None,
+    job_index: int,
+    compare: str | None,
+    compare_job_index: int,
+    port: int,
+    no_browser: bool,
+    debug: bool,
+) -> None:
+    """Launch the interactive backtest explorer.
+
+    Accepts a local directory, an S3 URI, or a remote run_id:
+
+    \b
+      gnomepy explore ./019e2174-...
+      gnomepy explore s3://gnome-research-prod/backtests/<run_id>/jobs/0
+      gnomepy explore --run-id <run_id> [--job 2]
+      gnomepy explore --run-id <run_id> --compare <run_id_b>
+    """
+    from gnomepy.java.recorder import BacktestResults
+    from gnomepy.explorer import launch_explorer
+
+    if path is None and run_id is None:
+        raise click.UsageError("Provide either PATH or --run-id.")
+
+    path_a = path if path else _s3_path_for_run(run_id, job_index)
+    results_a = BacktestResults.from_parquet(path_a)
+
+    results_b = None
+    if compare is not None:
+        path_b = compare if _is_local_or_s3(compare) else _s3_path_for_run(compare, compare_job_index)
+        results_b = BacktestResults.from_parquet(path_b)
+
+    launch_explorer(results_a, results_b=results_b, port=port, open_browser=not no_browser, debug=debug)
+
+
+def _is_local_or_s3(path: str) -> bool:
+    return path.startswith("s3://") or path.startswith("/") or path.startswith(".")
+
+
+def _s3_path_for_run(run_id: str, job_index: int) -> str:
+    """Resolve the S3 parquet prefix for a remote run from the API."""
+    from gnomepy.config import _STAGE
+    from gnomepy.remote import get_backtest
+
+    click.echo(f"Looking up run {run_id}…")
+    run = get_backtest(run_id)
+    status = run.get("status", "")
+    if status not in ("COMPLETED", "SUCCEEDED", "PARTIAL"):
+        raise click.ClickException(
+            f"Run {run_id} has status '{status}' — results may not be available yet."
+        )
+    jobs = run.get("jobs", [])
+    job_count = run.get("job_count", len(jobs))
+    if job_index >= job_count:
+        raise click.ClickException(
+            f"Job index {job_index} out of range — run has {job_count} job(s) (0-{job_count - 1})."
+        )
+    bucket = f"gnome-research-{_STAGE}"
+    s3_path = f"s3://{bucket}/backtests/{run_id}/jobs/{job_index}"
+    click.echo(f"Loading {s3_path}")
+    return s3_path
 
 
 # ---------------------------------------------------------------------------
@@ -114,14 +190,6 @@ def _run_single(config: str, strategy, output: str | None, job_id: str, no_progr
         for w in results.metadata.warnings:
             click.echo(f"warning: {w}", err=True)
 
-    if results.metadata is not None:
-        results.metadata.config_path = str(config)
-        try:
-            results.metadata.gnomepy_research_version = _pkg_version("gnomepy_research")
-        except Exception:
-            pass
-        results.metadata.gnomepy_research_commit = os.environ.get("RESEARCH_COMMIT")
-
     if output is not None and output.startswith("s3://"):
         results.save(output)
         click.echo(f"results saved to {output}")
@@ -130,15 +198,7 @@ def _run_single(config: str, strategy, output: str | None, job_id: str, no_progr
         out_dir = Path(output) if output else Path.cwd() / job_id
         results.save(out_dir)
         shutil.copyfile(config, out_dir / "config.yaml")
-        meta = results.metadata
-        manifest = {
-            "job_id": job_id,
-            "created_at": meta.created_at if meta else datetime.now(timezone.utc).isoformat(),
-            "gnomepy_version": meta.gnomepy_version if meta else None,
-            "gnomepy_research_version": meta.gnomepy_research_version if meta else None,
-            "gnomepy_research_commit": meta.gnomepy_research_commit if meta else None,
-            "config": "config.yaml",
-        }
+        manifest = {"config": "config.yaml"}
         (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         click.echo(f"results saved to {out_dir}")
         _generate_report(results, str(out_dir))
@@ -172,7 +232,10 @@ def _run_sweep(
             yaml.dump(cfg, tmp, default_flow_style=False)
             tmp.close()
 
-            results = run_backtest(tmp.name, strategy=strategy, backtest_id=this_job_id, progress=not no_progress)
+            results = run_backtest(
+                tmp.name, strategy=strategy, backtest_id=this_job_id,
+                progress=not no_progress, original_config_path=config,
+            )
 
             job_entry: dict = {
                 "job_index": i,
@@ -182,13 +245,10 @@ def _run_sweep(
             }
 
             if results is not None:
-                if results.metadata:
-                    results.metadata.config_path = str(config)
-                    try:
-                        results.metadata.gnomepy_research_version = _pkg_version("gnomepy_research")
-                    except Exception:
-                        pass
-                    results.metadata.gnomepy_research_commit = os.environ.get("RESEARCH_COMMIT")
+                if results.metadata and results.metadata.warnings:
+                    for w in results.metadata.warnings:
+                        click.echo(f"  warning: {w}", err=True)
+                    job_entry["warnings"] = list(results.metadata.warnings)
 
                 if is_s3:
                     job_out_str = f"{out_base}/jobs/{i:04d}"
@@ -198,16 +258,10 @@ def _run_sweep(
                     job_out = out_base / "jobs" / f"{i:04d}"
                     results.save(job_out)
                     shutil.copyfile(tmp.name, job_out / "config.yaml")
-                    meta = results.metadata
                     manifest = {
-                        "job_id": this_job_id,
+                        "config": "config.yaml",
                         "job_index": i,
                         "sweep_id": sweep_id,
-                        "created_at": meta.created_at if meta else datetime.now(timezone.utc).isoformat(),
-                        "gnomepy_version": meta.gnomepy_version if meta else None,
-                        "gnomepy_research_version": meta.gnomepy_research_version if meta else None,
-                        "gnomepy_research_commit": meta.gnomepy_research_commit if meta else None,
-                        "config": "config.yaml",
                         "config_params": job_entry["config_params"],
                     }
                     (job_out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

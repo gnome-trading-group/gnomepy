@@ -97,6 +97,50 @@ class TestFromDataframes:
         assert r.intent_record_count == 0
 
 
+class TestWarnings:
+    def test_round_trip_warnings(self):
+        meta = BacktestMetadata(
+            backtest_id="test-id",
+            warnings=["Missing S3 key: foo/bar", "Missing S3 key: baz/qux"],
+        )
+        r = BacktestResults.from_dataframes(
+            market_df=_make_market_df(), fills_df=_make_fills_df(), metadata=meta,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            r.save(tmp)
+            raw = json.loads((Path(tmp) / "metadata.json").read_text())
+            assert raw["warnings"] == ["Missing S3 key: foo/bar", "Missing S3 key: baz/qux"]
+            loaded = BacktestResults.from_parquet(tmp)
+        assert loaded.metadata.warnings == ["Missing S3 key: foo/bar", "Missing S3 key: baz/qux"]
+
+    def test_warnings_in_report_summary(self):
+        from gnomepy.reporting.report import BacktestReport
+
+        meta = BacktestMetadata(
+            backtest_id="test-id",
+            warnings=["Missing S3 key: foo/bar"],
+        )
+        r = BacktestResults.from_dataframes(
+            market_df=_make_market_df(), fills_df=_make_fills_df(), metadata=meta,
+        )
+        report = BacktestReport(r)
+        summary = report.summary()
+        assert summary["warnings"] == ["Missing S3 key: foo/bar"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report.save_summary(Path(tmp) / "summary.json")
+            saved = json.loads((Path(tmp) / "summary.json").read_text())
+        assert saved["warnings"] == ["Missing S3 key: foo/bar"]
+
+    def test_empty_warnings_preserved(self):
+        meta = BacktestMetadata(backtest_id="test-id", warnings=[])
+        r = BacktestResults.from_dataframes(metadata=meta)
+        with tempfile.TemporaryDirectory() as tmp:
+            r.save(tmp)
+            raw = json.loads((Path(tmp) / "metadata.json").read_text())
+        assert raw["warnings"] == []
+
+
 class TestSaveAndLoad:
     def test_round_trip_market(self):
         market = _make_market_df()

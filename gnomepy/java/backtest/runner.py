@@ -159,6 +159,7 @@ class Backtest:
         registry_api_key: str | None = None,
         s3_client=None,
         strategy_args: dict | None = None,
+        original_config_path: str | Path | None = None,
     ):
         """
         Args:
@@ -170,6 +171,9 @@ class Backtest:
             s3_client: Pre-built Java S3Client. Created automatically if omitted.
             strategy_args: Constructor args for Java strategies or Python strategies
                 resolved from a YAML import path.
+            original_config_path: Override for config_path in metadata. Useful when config
+                is a temp file (e.g. during parameter sweeps) and the original path should
+                be recorded instead.
         """
         ensure_jvm_started()
         self._config = config
@@ -179,6 +183,7 @@ class Backtest:
         self._registry_api_key = registry_api_key
         self._s3_client = s3_client
         self._strategy_args = strategy_args or {}
+        self._original_config_path = original_config_path
         self._recorder = None
         self._driver = None
         self._start_date = None
@@ -187,7 +192,6 @@ class Backtest:
         self._warning_handler = None
 
     def _build_driver(self):
-        self._install_warning_handler()
         BacktestDriverFactory = jpype.JClass(
             "group.gnometrading.backtest.config.BacktestDriverFactory"
         )
@@ -294,6 +298,7 @@ class Backtest:
         """Prepare data and fully execute the backtest."""
         t0 = time.time()
         self._build_driver()
+        self._install_warning_handler()
         self._driver.prepareData()
 
         if not progress:
@@ -326,14 +331,24 @@ class Backtest:
         if self._backtest_id is None:
             self._backtest_id = generate_backtest_id(strategy_name)
 
-        config_path = None
-        if isinstance(self._config, (str, Path)):
+        if self._original_config_path is not None:
+            config_path = str(self._original_config_path)
+        elif isinstance(self._config, (str, Path)):
             config_path = str(self._config)
+        else:
+            config_path = None
 
         try:
             gnomepy_version = _pkg_version("gnomepy")
         except Exception:
             gnomepy_version = None
+
+        try:
+            gnomepy_research_version = _pkg_version("gnomepy_research")
+        except Exception:
+            gnomepy_research_version = None
+
+        gnomepy_research_commit = os.environ.get("RESEARCH_COMMIT")
 
         return BacktestMetadata(
             backtest_id=self._backtest_id,
@@ -347,6 +362,8 @@ class Backtest:
             preset_name=getattr(self, "_preset_name", None),
             config=getattr(self, "_preset_config", None),
             gnomepy_version=gnomepy_version,
+            gnomepy_research_version=gnomepy_research_version,
+            gnomepy_research_commit=gnomepy_research_commit,
             warnings=self._warnings,
         )
 
@@ -383,15 +400,14 @@ class Backtest:
         """Run the backtest until a specific nanosecond timestamp."""
         if self._driver is None:
             self._build_driver()
+            self._install_warning_handler()
             self._driver.prepareData()
         self._driver.executeUntil(jpype.JLong(timestamp))
+        self._collect_java_warnings()
         if self._recorder is not None:
-            if self._backtest_id is None:
-                self._backtest_id = generate_backtest_id(self._resolve_strategy_name())
-            metadata = BacktestMetadata(
-                backtest_id=self._backtest_id,
-                start_date=str(self._start_date) if self._start_date else None,
-                end_date=str(self._end_date) if self._end_date else None,
+            metadata = self._build_metadata(
+                wall_time=0,
+                event_count=int(self._driver.getEventsProcessed()),
             )
             return BacktestResults(self._recorder, metadata=metadata)
         return None
@@ -406,6 +422,7 @@ def run_backtest(
     registry_api_key: str | None = None,
     s3_client=None,
     strategy_args: dict | None = None,
+    original_config_path: str | Path | None = None,
     progress: bool = True,
 ) -> BacktestResults | None:
     """Run a backtest end-to-end.
@@ -415,6 +432,8 @@ def run_backtest(
         strategy: Python Strategy instance, Java FQN, Python "module:Class" import path,
             or None to use strategy from YAML config.
         backtest_id: Optional explicit ID for this run. Auto-generated if omitted.
+        original_config_path: Override for config_path in metadata (useful when config
+            is a temp file during parameter sweeps).
 
     Returns BacktestResults if recording is enabled, else None.
     """
@@ -426,5 +445,6 @@ def run_backtest(
         registry_api_key=registry_api_key,
         s3_client=s3_client,
         strategy_args=strategy_args,
+        original_config_path=original_config_path,
     )
     return bt.run(progress=progress)

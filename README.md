@@ -2,6 +2,10 @@
 
 This package is used internally at GTG for alpha research.
 
+## Docs
+
+- [Backtest Explorer](docs/explorer.md) — interactive tick-level backtest analysis
+
 ## Releasing a new version
 
 The GitHub Actions workflow will automatically run with a tag matching the 
