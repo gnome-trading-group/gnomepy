@@ -11,7 +11,8 @@ from pathlib import Path
 import click
 import yaml
 
-from gnomepy._fs import fs_download_file, fs_list_files, resolve_fs
+import boto3
+
 from gnomepy.auth import get_id_token as _get_id_token
 from gnomepy.auth import login as _auth_login
 from gnomepy.auth import logout as _auth_logout
@@ -456,14 +457,19 @@ def backtest_list(status: str | None, limit: int) -> None:
         click.echo(f"{run_id:<20} {status_val:<18} {strategy:<35} {jobs:>5} {submitted}")
 
 
-def _download_job_files(s3_prefix: str, local_dir: Path) -> int:
-    fs, base = resolve_fs(s3_prefix)
-    base = base.rstrip("/")
-    files = fs_list_files(fs, base)
-    for remote_path in files:
-        relative = remote_path[len(base):].lstrip("/")
-        fs_download_file(fs, remote_path, local_dir / relative)
-    return len(files)
+def _download_job_files(bucket: str, s3_prefix: str, local_dir: Path) -> int:
+    s3 = boto3.client("s3")
+    paginator = s3.get_paginator("list_objects_v2")
+    count = 0
+    for page in paginator.paginate(Bucket=bucket, Prefix=s3_prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            relative = key[len(s3_prefix):].lstrip("/")
+            local_path = local_dir / relative
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            s3.download_file(bucket, key, str(local_path))
+            count += 1
+    return count
 
 
 @backtest.command(name="results")
@@ -497,9 +503,9 @@ def backtest_results(run_id: str, output: str | None) -> None:
         if status not in ("COMPLETED", "SUCCEEDED"):
             click.echo(f"[{idx:04d}] skipping — status={status}")
             continue
-        s3_prefix = f"s3://{bucket}/backtests/{run_id}/jobs/{idx}"
+        s3_prefix = f"backtests/{run_id}/jobs/{idx}/"
         local_dir = out_root / "jobs" / f"{idx:04d}"
-        count = _download_job_files(s3_prefix, local_dir)
+        count = _download_job_files(bucket, s3_prefix, local_dir)
         click.echo(f"[{idx:04d}] {count} files → {local_dir}")
         downloaded += count
     click.echo(f"done — {downloaded} total files downloaded to {out_root}")
