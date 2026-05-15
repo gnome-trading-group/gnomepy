@@ -11,9 +11,11 @@ from pathlib import Path
 import click
 import yaml
 
+from gnomepy._fs import fs_download_file, fs_list_files, resolve_fs
 from gnomepy.auth import get_id_token as _get_id_token
 from gnomepy.auth import login as _auth_login
 from gnomepy.auth import logout as _auth_logout
+from gnomepy.config import _STAGE
 from gnomepy.java.backtest.runner import run_backtest
 from gnomepy.remote import cancel_backtest, get_backtest, list_backtests, submit_backtest
 from gnomepy.sweep import expand_sweep, get_param_value, sweep_params
@@ -129,6 +131,45 @@ def _s3_path_for_run(run_id: str, job_index: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Cache commands
+# ---------------------------------------------------------------------------
+
+@main.group()
+def cache() -> None:
+    """Manage the local market data cache."""
+
+
+@cache.command(name="info")
+def cache_info() -> None:
+    """Show cache location, file count, and total size."""
+    from gnomepy.java.cache import MarketDataCache
+    c = MarketDataCache()
+    total_bytes, file_count = c.size()
+    click.echo(f"location: {c._root}")
+    click.echo(f"files:    {file_count}")
+    click.echo(f"size:     {_human_size(total_bytes)}")
+
+
+@cache.command(name="clear")
+@click.option("--prefix", default=None, help="Only clear keys matching this prefix (e.g. 'mbo/1/2')")
+@click.confirmation_option(prompt="Delete cached market data?")
+def cache_clear(prefix: str | None) -> None:
+    """Delete cached market data files."""
+    from gnomepy.java.cache import MarketDataCache
+    c = MarketDataCache()
+    count = c.clear(prefix=prefix)
+    click.echo(f"Deleted {count} cached file(s).")
+
+
+def _human_size(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
+
+
+# ---------------------------------------------------------------------------
 # Backtest commands
 # ---------------------------------------------------------------------------
 
@@ -160,6 +201,7 @@ def backtest() -> None:
 )
 @click.option("--job-id", "job_id", help="Job ID (default: generated UUIDv7)")
 @click.option("--no-progress", is_flag=True, help="Disable progress output")
+@click.option("--no-cache", is_flag=True, help="Disable local market data caching")
 def backtest_run(
     config: str,
     strategy_path: str | None,
@@ -167,6 +209,7 @@ def backtest_run(
     output: str | None,
     job_id: str | None,
     no_progress: bool,
+    no_cache: bool,
 ) -> None:
     """Run a backtest locally and generate a report."""
     if strategy_path and java_strategy:
@@ -175,16 +218,17 @@ def backtest_run(
     strategy = strategy_path or java_strategy or None
     parsed = yaml.safe_load(Path(config).read_text())
     params = sweep_params(parsed)
+    use_cache = not no_cache
 
     if not params:
-        _run_single(config, strategy, output, job_id or uuid7(), no_progress)
+        _run_single(config, strategy, output, job_id or uuid7(), no_progress, use_cache)
     else:
-        _run_sweep(config, parsed, params, strategy, output, job_id, no_progress)
+        _run_sweep(config, parsed, params, strategy, output, job_id, no_progress, use_cache)
 
 
-def _run_single(config: str, strategy, output: str | None, job_id: str, no_progress: bool) -> None:
+def _run_single(config: str, strategy, output: str | None, job_id: str, no_progress: bool, cache: bool = True) -> None:
     click.echo(f"job_id: {job_id}")
-    results = run_backtest(config, strategy=strategy, backtest_id=job_id, progress=not no_progress)
+    results = run_backtest(config, strategy=strategy, backtest_id=job_id, progress=not no_progress, cache=cache)
     if results is None:
         return
 
@@ -214,6 +258,7 @@ def _run_sweep(
     output: str | None,
     sweep_id: str | None,
     no_progress: bool,
+    cache: bool = True,
 ) -> None:
     configs = expand_sweep(parsed)
     sweep_id = sweep_id or uuid7()
@@ -237,6 +282,7 @@ def _run_sweep(
             results = run_backtest(
                 tmp.name, strategy=strategy, backtest_id=this_job_id,
                 progress=not no_progress, original_config_path=config,
+                cache=cache,
             )
 
             job_entry: dict = {
@@ -410,23 +456,53 @@ def backtest_list(status: str | None, limit: int) -> None:
         click.echo(f"{run_id:<20} {status_val:<18} {strategy:<35} {jobs:>5} {submitted}")
 
 
+def _download_job_files(s3_prefix: str, local_dir: Path) -> int:
+    fs, base = resolve_fs(s3_prefix)
+    base = base.rstrip("/")
+    files = fs_list_files(fs, base)
+    for remote_path in files:
+        relative = remote_path[len(base):].lstrip("/")
+        fs_download_file(fs, remote_path, local_dir / relative)
+    return len(files)
+
+
 @backtest.command(name="results")
 @click.argument("run_id")
-def backtest_results(run_id: str) -> None:
-    """Show report URLs for a completed backtest run."""
+@click.option("--output", "-o", default=None, type=click.Path(), help="Download all result files to this directory")
+def backtest_results(run_id: str, output: str | None) -> None:
+    """Show report URLs or download all result files for a completed backtest run."""
     run = get_backtest(run_id)
     jobs = run.get("jobs", [])
-    has_reports = any(j.get("report_url") for j in jobs)
-    if not has_reports:
-        click.echo("no reports available (run may still be in progress)")
+
+    if output is None:
+        has_reports = any(j.get("report_url") for j in jobs)
+        if not has_reports:
+            click.echo("no reports available (run may still be in progress)")
+            return
+        for job in jobs:
+            url = job.get("report_url")
+            if url:
+                idx = job.get("array_index", 0)
+                params_str = ", ".join(f"{k}={v}" for k, v in job.get("config_params", {}).items())
+                click.echo(f"[{idx:04d}] {params_str}")
+                click.echo(f"       {url}")
         return
+
+    bucket = f"gnome-research-{_STAGE}"
+    out_root = Path(output)
+    downloaded = 0
     for job in jobs:
-        url = job.get("report_url")
-        if url:
-            idx = job.get("array_index", 0)
-            params_str = ", ".join(f"{k}={v}" for k, v in job.get("config_params", {}).items())
-            click.echo(f"[{idx:04d}] {params_str}")
-            click.echo(f"       {url}")
+        status = job.get("status", "")
+        idx = job.get("array_index", 0)
+        if status not in ("COMPLETED", "SUCCEEDED"):
+            click.echo(f"[{idx:04d}] skipping — status={status}")
+            continue
+        s3_prefix = f"s3://{bucket}/backtests/{run_id}/jobs/{idx}"
+        local_dir = out_root / "jobs" / f"{idx:04d}"
+        count = _download_job_files(s3_prefix, local_dir)
+        click.echo(f"[{idx:04d}] {count} files → {local_dir}")
+        downloaded += count
+    click.echo(f"done — {downloaded} total files downloaded to {out_root}")
 
 
 @backtest.command(name="cancel")

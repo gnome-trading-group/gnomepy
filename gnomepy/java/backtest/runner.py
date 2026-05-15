@@ -160,6 +160,7 @@ class Backtest:
         s3_client=None,
         strategy_args: dict | None = None,
         original_config_path: str | Path | None = None,
+        cache: bool | str | Path = True,
     ):
         """
         Args:
@@ -174,6 +175,8 @@ class Backtest:
             original_config_path: Override for config_path in metadata. Useful when config
                 is a temp file (e.g. during parameter sweeps) and the original path should
                 be recorded instead.
+            cache: Enable local market data caching. True (default) uses ~/.gnomepy/cache/,
+                a path string uses that directory, False disables caching.
         """
         ensure_jvm_started()
         self._config = config
@@ -183,6 +186,7 @@ class Backtest:
         self._registry_api_key = registry_api_key
         self._s3_client = s3_client
         self._strategy_args = strategy_args or {}
+        self._cache = cache
         self._original_config_path = original_config_path
         self._recorder = None
         self._driver = None
@@ -235,6 +239,14 @@ class Backtest:
             s3 = jpype.JClass("software.amazon.awssdk.services.s3.S3Client").create()
         else:
             s3 = self._s3_client
+
+        if self._cache is not False:
+            from gnomepy.java.cache import MarketDataCache, create_caching_s3_proxy
+            cache_dir = self._cache if isinstance(self._cache, (str, Path)) else None
+            md_cache = MarketDataCache(cache_dir)
+            bucket = f"gnome-market-data-{os.getenv('STAGE', 'prod').lower()}"
+            s3 = create_caching_s3_proxy(s3, md_cache, bucket)
+            logger.debug("market data caching enabled: %s", md_cache._root)
 
         self._driver = BacktestDriverFactory.create(
             java_config, security_master, java_oms, java_strategy, self._recorder, s3
@@ -424,6 +436,7 @@ def run_backtest(
     strategy_args: dict | None = None,
     original_config_path: str | Path | None = None,
     progress: bool = True,
+    cache: bool | str | Path = True,
 ) -> BacktestResults | None:
     """Run a backtest end-to-end.
 
@@ -434,6 +447,8 @@ def run_backtest(
         backtest_id: Optional explicit ID for this run. Auto-generated if omitted.
         original_config_path: Override for config_path in metadata (useful when config
             is a temp file during parameter sweeps).
+        cache: Enable local market data caching. True uses ~/.gnomepy/cache/, a path
+            uses that directory, False disables caching.
 
     Returns BacktestResults if recording is enabled, else None.
     """
@@ -446,5 +461,6 @@ def run_backtest(
         s3_client=s3_client,
         strategy_args=strategy_args,
         original_config_path=original_config_path,
+        cache=cache,
     )
     return bt.run(progress=progress)

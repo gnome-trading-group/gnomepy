@@ -87,3 +87,18 @@ def fs_list_parquets(fs: pafs.FileSystem, directory: str) -> list[tuple[str, str
         return result
     except Exception:
         return []
+
+
+def fs_list_files(fs: pafs.FileSystem, directory: str) -> list[str]:
+    """Return full paths of all files (recursively) under directory."""
+    try:
+        selector = pafs.FileSelector(directory, recursive=True)
+        return [info.path for info in fs.get_file_info(selector) if info.type == pafs.FileType.File]
+    except Exception:
+        return []
+
+
+def fs_download_file(fs: pafs.FileSystem, remote_path: str, local_path: Path) -> None:
+    Path(local_path).parent.mkdir(parents=True, exist_ok=True)
+    with fs.open_input_file(remote_path) as f:
+        Path(local_path).write_bytes(f.read())

@@ -1,24 +1,29 @@
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timedelta
 
 import jpype
 
 from gnomepy.java._jvm import ensure_jvm_started
+from gnomepy.java.cache import MarketDataCache
 from gnomepy.java.datastore import DataStore
 from gnomepy.java.enums import SchemaType
-from gnomepy.java.schemas import wrap_schema
+
+logger = logging.getLogger(__name__)
 
 _MarketDataEntry = None
 _EntryType = None
 _LocalDateTime = None
 _S3Client = None
+_GetObjectRequest = None
+
+_UNSET = object()
 
 
 def _resolve_classes():
-    """Lazily resolve Java classes after JVM is started."""
-    global _MarketDataEntry, _EntryType, _LocalDateTime, _S3Client
+    global _MarketDataEntry, _EntryType, _LocalDateTime, _S3Client, _GetObjectRequest
 
     if _MarketDataEntry is not None:
         return
@@ -27,16 +32,15 @@ def _resolve_classes():
     _EntryType = jpype.JClass("group.gnometrading.data.MarketDataEntry$EntryType")
     _LocalDateTime = jpype.JClass("java.time.LocalDateTime")
     _S3Client = jpype.JClass("software.amazon.awssdk.services.s3.S3Client")
+    _GetObjectRequest = jpype.JClass("software.amazon.awssdk.services.s3.model.GetObjectRequest")
 
 
 def _to_java_datetime(dt: datetime):
-    """Convert Python datetime to Java LocalDateTime."""
     _resolve_classes()
     return _LocalDateTime.of(dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
 
 
 def _create_default_s3_client():
-    """Create a default Java S3Client using the standard credential chain."""
     _resolve_classes()
     return _S3Client.create()
 
@@ -48,11 +52,15 @@ class MarketDataClient:
     AWS credentials are resolved via the standard Java SDK credential chain
     (env vars, ~/.aws/credentials, IAM role, etc.).
 
+    Downloaded bytes are cached to local disk by default at
+    ``~/.gnomepy/cache/market_data/`` (or ``$GNOMEPY_CACHE_DIR``).
+    Pass ``cache_dir=None`` to disable caching.
+
     Usage:
         from gnomepy.java import ensure_jvm_started, MarketDataClient, SchemaType
 
         ensure_jvm_started()
-        client = MarketDataClient(bucket="my-market-data-bucket")
+        client = MarketDataClient()
         schemas = client.load(
             security_id=1,
             exchange_id=2,
@@ -62,16 +70,24 @@ class MarketDataClient:
         )
     """
 
-    def __init__(self, bucket: str | None = None, s3_client=None):
+    def __init__(self, bucket: str | None = None, s3_client=None, cache_dir=_UNSET):
         """
         Args:
             bucket: S3 bucket name containing market data.
             s3_client: A Java S3Client instance. If None, creates a default client.
+            cache_dir: Local cache directory. Omit for default, pass None to disable.
         """
         ensure_jvm_started()
         _resolve_classes()
         self._bucket = bucket or f"gnome-market-data-{os.getenv('STAGE', 'prod').lower()}"
         self._s3_client = s3_client or _create_default_s3_client()
+
+        if cache_dir is _UNSET:
+            self._cache: MarketDataCache | None = MarketDataCache()
+        elif cache_dir is None:
+            self._cache = None
+        else:
+            self._cache = MarketDataCache(cache_dir)
 
     def get_java_entries(
         self,
@@ -110,7 +126,7 @@ class MarketDataClient:
         start: datetime,
         end: datetime,
     ) -> DataStore:
-        """Load market data from S3 for a time range.
+        """Load market data from S3 (or local cache) for a time range.
 
         Args:
             security_id: Security identifier.
@@ -123,17 +139,39 @@ class MarketDataClient:
             DataStore wrapping the loaded schemas.
         """
         entries = self.get_java_entries(security_id, exchange_id, schema_type, start, end)
-        results = []
+        all_data = bytearray()
+        hits = 0
+        misses = 0
 
         for entry in entries:
+            key = str(entry.getKey())
+
+            if self._cache is not None:
+                cached = self._cache.get(key)
+                if cached is not None:
+                    all_data.extend(cached)
+                    hits += 1
+                    continue
+
             try:
-                for js in entry.loadFromS3(self._s3_client, self._bucket):
-                    results.append(wrap_schema(js))
+                raw = self._download_raw(key)
+                if self._cache is not None:
+                    self._cache.put(key, raw)
+                all_data.extend(raw)
+                misses += 1
             except Exception as e:
                 if "NoSuchKey" in str(e):
-                    continue  # Missing minute slot — expected
+                    continue
                 raise RuntimeError(
-                    f"Failed to load S3 key: {entry.getKey()} from bucket: {self._bucket}"
+                    f"Failed to load S3 key: {key} from bucket: {self._bucket}"
                 ) from e
 
-        return DataStore.from_schemas(results, schema_type)
+        if hits or misses:
+            logger.debug("market data cache: %d hits, %d misses", hits, misses)
+
+        return DataStore(bytes(all_data), schema_type)
+
+    def _download_raw(self, key: str) -> bytes:
+        request = _GetObjectRequest.builder().bucket(self._bucket).key(key).build()
+        response = self._s3_client.getObjectAsBytes(request)
+        return bytes(response.asByteArray())

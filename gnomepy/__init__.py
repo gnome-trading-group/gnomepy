@@ -28,6 +28,7 @@ from gnomepy.java.backtest.config import (
 )
 from gnomepy.java.backtest.orders import ExecutionReport
 from gnomepy.java.backtest.runner import Backtest, run_backtest
+from gnomepy.java.cache import MarketDataCache
 from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.datastore import DataStore
 from gnomepy.java.enums import (
@@ -73,6 +74,7 @@ __all__ = [
     "Strategy",
     "Backtest",
     "run_backtest",
+    "MarketDataCache",
     # Backtest config
     "BacktestConfig",
     "ListingSimConfig",
