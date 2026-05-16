@@ -87,7 +87,7 @@ class Schema:
         return bytes([b & 0xFF for b in byte_array])
 
 class MboSchema(Schema):
-    _java_class = "group.gnometrading.schemas.MBOSchema"
+    _java_class = "group.gnometrading.schemas.MboSchema"
 
     def __init__(
         self,
@@ -200,7 +200,7 @@ class MboSchema(Schema):
 
 
 class Mbp10Schema(Schema):
-    _java_class = "group.gnometrading.schemas.MBP10Schema"
+    _java_class = "group.gnometrading.schemas.Mbp10Schema"
     NUM_LEVELS = 10
 
     def __init__(
@@ -343,7 +343,7 @@ class Mbp10Schema(Schema):
 
 class Mbp1Schema(Mbp10Schema):
     """MBP1 has the same decoder layout as MBP10 but with a single level."""
-    _java_class = "group.gnometrading.schemas.MBP1Schema"
+    _java_class = "group.gnometrading.schemas.Mbp1Schema"
     NUM_LEVELS = 1
 
     def __init__(
@@ -532,11 +532,11 @@ class BboSchema(Schema):
 
 
 class Bbo1sSchema(BboSchema):
-    _java_class = "group.gnometrading.schemas.BBO1SSchema"
+    _java_class = "group.gnometrading.schemas.Bbo1sSchema"
 
 
 class Bbo1mSchema(BboSchema):
-    _java_class = "group.gnometrading.schemas.BBO1MSchema"
+    _java_class = "group.gnometrading.schemas.Bbo1mSchema"
 
 
 class TradesSchema(Schema):
@@ -734,15 +734,15 @@ class OhlcvSchema(Schema):
 
 
 class Ohlcv1sSchema(OhlcvSchema):
-    _java_class = "group.gnometrading.schemas.OHLCV1SSchema"
+    _java_class = "group.gnometrading.schemas.Ohlcv1sSchema"
 
 
 class Ohlcv1mSchema(OhlcvSchema):
-    _java_class = "group.gnometrading.schemas.OHLCV1MSchema"
+    _java_class = "group.gnometrading.schemas.Ohlcv1mSchema"
 
 
 class Ohlcv1hSchema(OhlcvSchema):
-    _java_class = "group.gnometrading.schemas.OHLCV1HSchema"
+    _java_class = "group.gnometrading.schemas.Ohlcv1hSchema"
 
 
 # Schema type name → wrapper class
