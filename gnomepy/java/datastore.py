@@ -22,7 +22,7 @@ _ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 class DataStore:
     def __init__(self, data: bytes, schema_type: SchemaType):
         if data[:4] == _ZSTD_MAGIC:
-            data = zstandard.ZstdDecompressor().decompress(data)
+            data = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(data)).read()
         self._data: bytes | None = data
         self._schemas: list[Schema] | None = None
         self._schema_type = schema_type
