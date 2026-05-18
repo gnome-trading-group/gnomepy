@@ -337,7 +337,6 @@ class BacktestResults:
                 df[col] = df[col] / self.PRICE_SCALE
             for col in ["submit_size", "filled_qty", "leaves_qty"]:
                 df[col] = df[col] / self.SIZE_SCALE
-            df["total_fee"] = df["total_fee"] / (self.PRICE_SCALE * self.SIZE_SCALE)
 
         self._cached_orders_df = df
         return df
@@ -375,7 +374,6 @@ class BacktestResults:
                 df[col] = df[col] / self.PRICE_SCALE
             for col in ["fill_qty", "leaves_qty"]:
                 df[col] = df[col] / self.SIZE_SCALE
-            df["fee"] = df["fee"] / (self.PRICE_SCALE * self.SIZE_SCALE)
 
         self._cached_fills_df = df
         return df
