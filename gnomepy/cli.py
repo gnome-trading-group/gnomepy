@@ -171,6 +171,49 @@ def _human_size(n: int) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Import commands
+# ---------------------------------------------------------------------------
+
+@main.group("import")
+def import_cmd() -> None:
+    """Import historical market data from external vendors."""
+
+
+@import_cmd.command("tardis")
+@click.option("--exchange", required=True, help="Tardis exchange name (e.g., binance-futures, deribit)")
+@click.option("--symbols", required=True, help="Comma-separated symbols (e.g., BTCUSDT,ETHUSDT)")
+@click.option("--start", required=True, type=click.DateTime(formats=["%Y-%m-%d"]), help="Start date inclusive")
+@click.option("--end", required=True, type=click.DateTime(formats=["%Y-%m-%d"]), help="End date inclusive")
+@click.option("--dry-run", is_flag=True, help="Validate without uploading to S3")
+@click.option("--bucket", default=None, help="Override S3 bucket")
+def import_tardis(
+    exchange: str,
+    symbols: str,
+    start,
+    end,
+    dry_run: bool,
+    bucket: str | None,
+) -> None:
+    """Import Tardis incremental L2 + trades data as MBP_10 into gnome market data."""
+    from gnomepy.importer.tardis import TardisImporter, TardisImportRequest
+
+    request = TardisImportRequest(
+        exchange=exchange,
+        symbols=[s.strip() for s in symbols.split(",")],
+        start_date=start.date(),
+        end_date=end.date(),
+        bucket=bucket,
+        dry_run=dry_run,
+    )
+    results = TardisImporter().run(request)
+    for r in results:
+        click.echo(f"{r.exchange} / {r.symbol}  (security_id={r.security_id}, exchange_id={r.exchange_id})")
+        click.echo(f"  processed: {r.days_processed}  skipped: {r.days_skipped}  records: {r.total_records}")
+        for err in r.errors:
+            click.echo(f"  error: {err}", err=True)
+
+
+# ---------------------------------------------------------------------------
 # Backtest commands
 # ---------------------------------------------------------------------------
 

@@ -42,6 +42,11 @@ class BacktestMetadata:
     gnomepy_version: str | None = None
     gnomepy_research_version: str | None = None
     gnomepy_research_commit: str | None = None
+    gnomepy_commit: str | None = None
+    backtest_jar_hash: str | None = None
+    java_version: str | None = None
+    python_version: str | None = None
+    os_info: str | None = None
 
     # Persistence
     data_scaled: bool = True

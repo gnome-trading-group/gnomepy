@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import logging
 import os
+import platform
+import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -336,6 +339,41 @@ class Backtest:
             return f"{cls.__module__}:{cls.__name__}"
         return None
 
+    def _capture_env_metadata(self) -> dict:
+        """Capture reproducibility metadata: git commit, JAR hash, runtime versions."""
+        result = {}
+
+        try:
+            repo_root = Path(__file__).parents[3]
+            proc = subprocess.run(
+                ["git", "-C", str(repo_root), "rev-parse", "--short", "HEAD"],
+                capture_output=True, text=True,
+            )
+            if proc.returncode == 0:
+                result["gnomepy_commit"] = proc.stdout.strip()
+        except Exception:
+            pass
+
+        try:
+            import jpype as _jpype
+            result["java_version"] = str(_jpype.getJVMVersion())
+        except Exception:
+            pass
+
+        result["python_version"] = platform.python_version()
+        result["os_info"] = platform.platform()
+
+        gnome_jars = os.environ.get("GNOME_JARS", "")
+        if gnome_jars:
+            try:
+                jar_path = Path(gnome_jars.split(":")[0])
+                digest = hashlib.sha256(jar_path.read_bytes()).hexdigest()[:16]
+                result["backtest_jar_hash"] = f"sha256:{digest}"
+            except Exception:
+                pass
+
+        return result
+
     def _build_metadata(self, wall_time: float, event_count: int) -> BacktestMetadata:
         """Assemble BacktestMetadata from all available sources."""
         strategy_name = self._resolve_strategy_name()
@@ -362,6 +400,8 @@ class Backtest:
 
         gnomepy_research_commit = os.environ.get("RESEARCH_COMMIT")
 
+        env = self._capture_env_metadata()
+
         return BacktestMetadata(
             backtest_id=self._backtest_id,
             start_date=str(self._start_date) if self._start_date else None,
@@ -376,6 +416,11 @@ class Backtest:
             gnomepy_version=gnomepy_version,
             gnomepy_research_version=gnomepy_research_version,
             gnomepy_research_commit=gnomepy_research_commit,
+            gnomepy_commit=env.get("gnomepy_commit"),
+            backtest_jar_hash=env.get("backtest_jar_hash"),
+            java_version=env.get("java_version"),
+            python_version=env.get("python_version"),
+            os_info=env.get("os_info"),
             warnings=self._warnings,
         )
 

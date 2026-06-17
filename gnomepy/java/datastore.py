@@ -47,6 +47,16 @@ class DataStore:
         instance._schema_type = schema_type
         return instance
 
+    def _migrate_if_needed(self) -> None:
+        if not self._data or len(self._data) < 8:
+            return
+        schema_cls = get_schema_class(self._schema_type)
+        JavaClass = jpype.JClass(schema_cls._java_class)
+        proto = JavaClass()
+        java_bytes = jpype.JArray(jpype.JByte)(self._data)
+        migrated = proto.migrateIfNeeded(java_bytes)
+        self._data = bytes(migrated)
+
     def __iter__(self) -> Iterator[Schema]:
         if self._schemas is not None:
             yield from self._schemas
@@ -60,6 +70,8 @@ class DataStore:
 
         proto = JavaClass()
         msg_size = int(proto.totalMessageSize())
+
+        self._migrate_if_needed()
 
         java_bytes = jpype.JArray(jpype.JByte)(self._data)
         src_buf = UnsafeBuffer(java_bytes)
