@@ -119,7 +119,6 @@ class EventContract:
     event_id: int
     security_id: int
     outcome_label: str
-    complement_security_id: int | None
     date_created: str
 
 
