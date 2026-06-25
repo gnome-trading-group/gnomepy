@@ -105,7 +105,6 @@ class Event:
     category: str | None
     resolution_source: str | None
     tags: list[str] | None
-    embedding: list[float] | None
     resolved: bool
     resolved_at: str | None
     expiry: str | None

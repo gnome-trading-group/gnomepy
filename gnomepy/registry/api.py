@@ -148,13 +148,25 @@ class RegistryClient:
         body = {_to_camel_case(k): v for k, v in kwargs.items()}
         return self._patch("/event-contracts", {"eventContractId": str(event_contract_id)}, body)
 
+    _PAGE_SIZE = 5000
+
     def _get(self, path: str, params: dict, output_type) -> list:
-        res = requests.get(self.base_url + path, params=params, headers={"x-api-key": self.api_key})
-        res.raise_for_status()
-        if dataclasses.is_dataclass(output_type):
-            known = {f.name for f in dataclasses.fields(output_type)}
-            return [output_type(**{k: v for k, v in item.items() if k in known}) for item in res.json()]
-        return [output_type(**item) for item in res.json()]
+        all_items = []
+        offset = 0
+        while True:
+            page_params = {**params, "limit": self._PAGE_SIZE, "offset": offset}
+            res = requests.get(self.base_url + path, params=page_params, headers={"x-api-key": self.api_key})
+            res.raise_for_status()
+            page = res.json()
+            if dataclasses.is_dataclass(output_type):
+                known = {f.name for f in dataclasses.fields(output_type)}
+                all_items.extend(output_type(**{k: v for k, v in item.items() if k in known}) for item in page)
+            else:
+                all_items.extend(output_type(**item) for item in page)
+            if len(page) < self._PAGE_SIZE:
+                break
+            offset += self._PAGE_SIZE
+        return all_items
 
     def _post_bulk(self, path: str, items: list[dict], batch_size: int = 500) -> list[dict]:
         results: list[dict] = []
