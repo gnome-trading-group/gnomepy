@@ -159,6 +159,27 @@ class RegistryClient:
         body = {_to_camel_case(k): v for k, v in kwargs.items()}
         return self._patch("/event-contracts", {"eventContractId": str(event_contract_id)}, body)
 
+    def patch_event(self, event_id: int, **kwargs) -> dict:
+        body = {_to_camel_case(k): v for k, v in kwargs.items()}
+        return self._patch("/events", {"eventId": str(event_id)}, body)
+
+    def patch_security(self, security_id: int, **kwargs) -> dict:
+        body = {_to_camel_case(k): v for k, v in kwargs.items()}
+        return self._patch("/securities", {"securityId": str(security_id)}, body)
+
+    def patch_listing(self, listing_id: int, **kwargs) -> dict:
+        body = {_to_camel_case(k): v for k, v in kwargs.items()}
+        return self._patch("/listings", {"listingId": str(listing_id)}, body)
+
+    def bulk_patch_events(self, items: list[dict]) -> list[dict]:
+        return self._patch_bulk("/events", items)
+
+    def bulk_patch_securities(self, items: list[dict]) -> list[dict]:
+        return self._patch_bulk("/securities", items)
+
+    def bulk_patch_listings(self, items: list[dict]) -> list[dict]:
+        return self._patch_bulk("/listings", items)
+
     def _get(self, path: str, params: dict, output_type) -> list:
         all_items = []
         offset = 0
@@ -190,6 +211,22 @@ class RegistryClient:
             batch = [{_to_camel_case(k): v for k, v in item.items()} for item in items[i : i + batch_size]]
             logger.debug("POST bulk %s batch=%d/%d items=%d", path, i // batch_size + 1, n_batches, len(batch))
             res = requests.post(
+                self.base_url + path,
+                json=batch,
+                headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+            )
+            res.raise_for_status()
+            results.extend(res.json())
+        return results
+
+    def _patch_bulk(self, path: str, items: list[dict], batch_size: int = 500) -> list[dict]:
+        n_batches = (len(items) + batch_size - 1) // batch_size
+        logger.debug("PATCH bulk %s total=%d batch_size=%d n_batches=%d", path, len(items), batch_size, n_batches)
+        results: list[dict] = []
+        for i in range(0, len(items), batch_size):
+            batch = [{_to_camel_case(k): v for k, v in item.items()} for item in items[i : i + batch_size]]
+            logger.debug("PATCH bulk %s batch=%d/%d items=%d", path, i // batch_size + 1, n_batches, len(batch))
+            res = requests.patch(
                 self.base_url + path,
                 json=batch,
                 headers={"x-api-key": self.api_key, "Content-Type": "application/json"},

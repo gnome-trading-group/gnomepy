@@ -84,6 +84,7 @@ class Listing:
     exchange_security_symbol: str | None
     date_modified: str
     date_created: str
+    active: bool = True
 
 
 @dataclass
