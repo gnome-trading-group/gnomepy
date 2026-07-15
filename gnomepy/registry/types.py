@@ -104,7 +104,6 @@ class Event:
     title: str
     description: str | None
     category: str | None
-    resolution_source: str | None
     tags: list[str] | None
     resolved: bool
     resolved_at: str | None
@@ -130,8 +129,6 @@ class ContractRelationship:
     relationship_type: str
     confidence: float
     method: str
-    reviewed: bool
-    reviewed_at: str | None
     date_created: str
 
 

@@ -1,4 +1,5 @@
 from gnomepy.registry.api import RegistryClient
+from gnomepy.registry.graph import RelationshipGraph
 from gnomepy.registry.types import (
     AssetClass,
     ContractRelationship,
@@ -16,6 +17,7 @@ from gnomepy.registry.types import (
 
 __all__ = [
     "RegistryClient",
+    "RelationshipGraph",
     "AssetClass",
     "ContractRelationship",
     "ContractType",
