@@ -595,7 +595,6 @@ def strategy() -> None:
 def strategy_run(config: str, strategy_path: str | None, jar: str | None) -> None:
     """Run a strategy session locally against live market feeds."""
     session_config = SessionConfig.from_yaml(config)
-    print(session_config)
     if session_config.strategy_id is None:
         session_config.strategy_id = 0
     run_strategy_session(session_config, strategy=strategy_path, jar=jar)
