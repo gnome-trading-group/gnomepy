@@ -18,6 +18,9 @@ from gnomepy.auth import login as _auth_login
 from gnomepy.auth import logout as _auth_logout
 from gnomepy.config import _STAGE
 from gnomepy.java.backtest.runner import run_backtest
+from gnomepy.java.strategy.config import SessionConfig
+from gnomepy.java.strategy.runner import run_strategy_session
+from gnomepy.registry.api import RegistryClient
 from gnomepy.remote import cancel_backtest, get_backtest, list_backtests, submit_backtest
 from gnomepy.sweep import expand_sweep, get_param_value, sweep_params
 from gnomepy.utils import uuid7
@@ -562,6 +565,169 @@ def backtest_cancel(run_id: str) -> None:
     result = cancel_backtest(run_id)
     click.echo(f"run_id: {result['run_id']}")
     click.echo(f"status: {result['status']}")
+
+
+# ---------------------------------------------------------------------------
+# Strategy session commands
+# ---------------------------------------------------------------------------
+
+@main.group()
+def strategy() -> None:
+    """Run and manage strategy sessions."""
+
+
+@strategy.command(name="run")
+@click.option(
+    "--config",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
+    help="YAML session config file",
+)
+@click.option(
+    "--strategy",
+    "strategy_path",
+    help="Python strategy override as module.path:ClassName",
+)
+@click.option(
+    "--jar",
+    help="Path to the gnome-orchestrator uber JAR",
+)
+def strategy_run(config: str, strategy_path: str | None, jar: str | None) -> None:
+    """Run a strategy session locally against live market feeds."""
+    session_config = SessionConfig.from_yaml(config)
+    print(session_config)
+    if session_config.strategy_id is None:
+        session_config.strategy_id = 0
+    run_strategy_session(session_config, strategy=strategy_path, jar=jar)
+
+
+@strategy.command(name="deploy")
+@click.option(
+    "--config",
+    type=click.Path(exists=True, dir_okay=False),
+    required=True,
+    help="YAML session config file",
+)
+@click.option("--research-commit", default=None, help="gnomepy-research git ref to pin")
+@click.option("--session-id", default=None, help="Explicit session ID (default: generated UUID)")
+@click.option("--region", default=None, help="AWS region override (use when listings span multiple exchange regions)")
+def strategy_deploy(config: str, research_commit: str | None, session_id: str | None, region: str | None) -> None:
+    """Deploy a strategy session to ECS Fargate."""
+    session_config = SessionConfig.from_yaml(config)
+    if session_config.strategy_id is None:
+        raise click.ClickException(
+            "strategy_id is required for deploy. Add it to the YAML or run "
+            "'gnomepy strategy create' first."
+        )
+    sid = session_id or str(uuid7())
+    registry = RegistryClient()
+    result = registry.create_strategy_session(
+        session_id=sid,
+        strategy_id=session_config.strategy_id,
+        mode=session_config.mode,
+        config=session_config.to_properties(),
+        research_commit=research_commit,
+        region=region,
+    )
+    click.echo(f"session_id: {result['session_id']}")
+    click.echo(f"status:     {result['status']}")
+    click.echo(f"task_arn:   {result.get('task_arn', '')}")
+
+
+@strategy.command(name="list")
+@click.option("--strategy-id", "strategy_id", type=int, default=None, help="Filter by strategy ID")
+@click.option("--status", default=None, help="Filter by status (e.g. RUNNING, STOPPED)")
+@click.option("--limit", default=20, show_default=True, help="Maximum number of results")
+def strategy_list(strategy_id: int | None, status: str | None, limit: int) -> None:
+    """List strategy sessions."""
+    registry = RegistryClient()
+    sessions = registry.get_strategy_sessions(strategy_id=strategy_id, status=status)
+    sessions = sessions[:limit]
+    if not sessions:
+        click.echo("no sessions found")
+        return
+    header = f"{'SESSION_ID':<38} {'STATUS':<12} {'MODE':<8} {'STRATEGY_ID':>11} {'STARTED_AT'}"
+    click.echo(header)
+    click.echo("-" * len(header))
+    for s in sessions:
+        started = (s.started_at or "")[:19].replace("T", " ")
+        click.echo(f"{s.session_id:<38} {s.status:<12} {s.mode:<8} {s.strategy_id:>11} {started}")
+
+
+@strategy.command(name="status")
+@click.argument("session_id")
+def strategy_status(session_id: str) -> None:
+    """Show details for a strategy session."""
+    registry = RegistryClient()
+    sessions = registry.get_strategy_sessions(session_id=session_id)
+    if not sessions:
+        raise click.ClickException(f"Session not found: {session_id}")
+    s = sessions[0]
+    click.echo(f"session_id:         {s.session_id}")
+    click.echo(f"strategy_id:        {s.strategy_id}")
+    click.echo(f"status:             {s.status}")
+    click.echo(f"mode:               {s.mode}")
+    click.echo(f"started_at:         {s.started_at or ''}")
+    click.echo(f"stopped_at:         {s.stopped_at or ''}")
+    click.echo(f"task_arn:           {s.task_arn or ''}")
+    click.echo(f"task_definition_arn:{s.task_definition_arn or ''}")
+    click.echo(f"research_commit:    {s.research_commit or ''}")
+    if s.failure_reason:
+        click.echo(f"failure_reason:     {s.failure_reason}")
+
+
+@strategy.command(name="stop")
+@click.argument("session_id")
+@click.confirmation_option(prompt="Stop this session?")
+def strategy_stop(session_id: str) -> None:
+    """Stop a running strategy session."""
+    registry = RegistryClient()
+    result = registry.stop_strategy_session(session_id)
+    click.echo(f"session_id: {result['session_id']}")
+    click.echo(f"status:     {result['status']}")
+
+
+@strategy.command(name="create")
+@click.option("--config", "config_path", type=click.Path(exists=True, dir_okay=False), default=None, help="YAML file with name, description, parameters")
+@click.option("--name", default=None, help="Strategy name")
+@click.option("--description", default=None, help="Strategy description")
+def strategy_create(config_path: str | None, name: str | None, description: str | None) -> None:
+    """Create a new strategy and auto-assign an ID."""
+    parameters = None
+    if config_path is not None:
+        import yaml
+        data = yaml.safe_load(open(config_path).read())
+        name = data.get("name", name)
+        description = data.get("description", description)
+        parameters = data.get("parameters")
+    if not name:
+        raise click.ClickException("--name is required (or provide --config with a 'name' field)")
+    registry = RegistryClient()
+    result = registry.create_strategy(name=name, description=description, parameters=parameters)
+    click.echo(f"strategy_id: {result['strategy_id']}")
+    click.echo(f"name:        {result['name']}")
+    if result.get("description"):
+        click.echo(f"description: {result['description']}")
+
+
+@strategy.command(name="get")
+@click.argument("identifier")
+def strategy_get(identifier: str) -> None:
+    """Get a strategy by ID or name."""
+    registry = RegistryClient()
+    if identifier.isdigit():
+        strategies = registry.get_strategies(strategy_id=int(identifier))
+    else:
+        strategies = registry.get_strategies(name=identifier)
+    if not strategies:
+        raise click.ClickException(f"Strategy not found: {identifier}")
+    s = strategies[0]
+    click.echo(f"strategy_id: {s.strategy_id}")
+    click.echo(f"name:        {s.name}")
+    click.echo(f"status:      {s.status}")
+    click.echo(f"description: {s.description or ''}")
+    if s.parameters:
+        click.echo(f"parameters:  {json.dumps(s.parameters)}")
 
 
 if __name__ == "__main__":

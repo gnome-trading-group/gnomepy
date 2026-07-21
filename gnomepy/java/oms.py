@@ -154,80 +154,35 @@ class TrackedOrderInfo:
     avg_fill_price: int
 
 
-class OmsView:
-    """Read-only Python view of the Java OMS state.
+class PositionViewWrapper:
+    """Thin read-only wrapper over Java's PositionView + SecurityMaster.
 
-    Strategies use this to query positions and open orders
-    during on_market_data() or on_execution_report() callbacks.
+    Resolves (exchange_id, security_id) → listing_id via SecurityMaster,
+    then delegates position queries to Java's PositionView.
     """
 
-    def __init__(self, java_oms, security_master, strategy_id: int = 0):
-        self._java = java_oms
-        self._security_master = security_master
-        self._strategy_id = int(strategy_id)
+    def __init__(self, position_view, security_master):
+        self._pv = position_view
+        self._sm = security_master
 
     def _resolve_listing_id(self, exchange_id: int, security_id: int) -> int:
-        listing = self._security_master.getListing(int(exchange_id), int(security_id))
+        listing = self._sm.getListing(int(exchange_id), int(security_id))
         return int(listing.listingId())
 
     def get_position(self, exchange_id: int, security_id: int) -> PositionInfo | None:
         listing_id = self._resolve_listing_id(exchange_id, security_id)
-        pos = self._java.getPosition(int(listing_id))
+        pos = self._pv.getPosition(int(listing_id))
         if pos is None:
             return None
         return _position_from_java(pos)
 
-    def get_effective_quantity(
-        self,
-        exchange_id: int,
-        security_id: int,
-        strategy_id: int | None = None,
-    ) -> int:
-        """Net position + inflight orders (what position will be if all pending orders fill).
-
-        `strategy_id` defaults to the id this OmsView was bound to by the runner —
-        strategies should not need to pass it.
-        """
-        sid = self._strategy_id if strategy_id is None else int(strategy_id)
+    def get_effective_quantity(self, exchange_id: int, security_id: int) -> int:
+        """Net quantity + pending buy orders - pending sell orders."""
         listing_id = self._resolve_listing_id(exchange_id, security_id)
-        return int(self._java.getEffectiveQuantity(sid, int(listing_id)))
-
-    def get_all_positions(self) -> list[PositionInfo]:
-        result = []
-        self._java.getPositionTracker().forEachPosition(
-            lambda p: result.append(_position_from_java(p))
-        )
-        return result
-
-    def get_order(self, client_oid: str) -> TrackedOrderInfo | None:
-        tracked = self._java.getOrder(jpype.JLong(int(client_oid)))
-        if tracked is None:
-            return None
-        return _tracked_order_from_java(tracked)
-
-    def get_open_orders(self) -> list[TrackedOrderInfo]:
-        result = []
-
-        def _collect(o):
-            if not o.getState().isTerminal():
-                result.append(_tracked_order_from_java(o))
-
-        self._java.getOrderStateManager().forEachOrder(_collect)
-        return result
-
-    def get_open_orders_for(self, exchange_id: int, security_id: int) -> list[TrackedOrderInfo]:
-        result = []
-
-        def _collect(o):
-            if (
-                not o.getState().isTerminal()
-                and int(o.getExchangeId()) == exchange_id
-                and int(o.getSecurityId()) == security_id
-            ):
-                result.append(_tracked_order_from_java(o))
-
-        self._java.getOrderStateManager().forEachOrder(_collect)
-        return result
+        pos = self._pv.getPosition(int(listing_id))
+        if pos is None:
+            return 0
+        return int(pos.getEffectiveQuantity())
 
 
 def _position_from_java(pos) -> PositionInfo:

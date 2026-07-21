@@ -140,3 +140,40 @@ class ExchangeEvent:
     native_event_id: str
     raw_title: str
     date_created: str
+
+
+@dataclass
+class HedgeKeyword:
+    hedge_keyword_id: int
+    security_id: int
+    keyword: str
+    date_modified: str
+    date_created: str
+
+
+@dataclass
+class Strategy:
+    strategy_id: int
+    name: str
+    status: int
+    date_modified: str
+    date_created: str
+    description: str | None = None
+    parameters: dict | None = None
+
+
+@dataclass
+class StrategySession:
+    session_id: str
+    strategy_id: int
+    status: str
+    mode: str
+    config: dict
+    date_created: str
+    date_modified: str
+    research_commit: str | None = None
+    task_arn: str | None = None
+    task_definition_arn: str | None = None
+    failure_reason: str | None = None
+    started_at: str | None = None
+    stopped_at: str | None = None

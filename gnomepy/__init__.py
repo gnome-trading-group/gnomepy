@@ -8,7 +8,7 @@ Public API:
         StrategyConfig, RiskConfig,
         StaticFeeConfig, StaticLatencyConfig, GaussianLatencyConfig,
         OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig,
-        Intent, ExecutionReport, OmsView,
+        Intent, ExecutionReport, PositionViewWrapper,
         SchemaType, Side, Action,
         Mbp10Schema, ...
     )
@@ -41,7 +41,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "Side": ("gnomepy.java.enums", "Side"),
     "TimeInForce": ("gnomepy.java.enums", "TimeInForce"),
     "Intent": ("gnomepy.java.oms", "Intent"),
-    "OmsView": ("gnomepy.java.oms", "OmsView"),
+    "PositionViewWrapper": ("gnomepy.java.oms", "PositionViewWrapper"),
     "PositionInfo": ("gnomepy.java.oms", "PositionInfo"),
     "TrackedOrderInfo": ("gnomepy.java.oms", "TrackedOrderInfo"),
     "BacktestResults": ("gnomepy.java.recorder", "BacktestResults"),

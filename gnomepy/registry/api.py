@@ -18,6 +18,8 @@ from gnomepy.registry.types import (
     Listing,
     ListingSpec,
     Security,
+    Strategy,
+    StrategySession,
 )
 
 logger = logging.getLogger(__name__)
@@ -253,3 +255,67 @@ class RegistryClient:
         )
         res.raise_for_status()
         return res.json()
+
+    def _delete(self, path: str, body: dict) -> dict:
+        res = requests.delete(
+            self.base_url + path,
+            json=body,
+            headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+        )
+        res.raise_for_status()
+        return res.json()
+
+    def get_strategies(
+        self,
+        *,
+        strategy_id: int | None = None,
+        name: str | None = None,
+        status: int | None = None,
+    ) -> list[Strategy]:
+        return self._get("/strategies", _parse_kwarg_params(locals()), Strategy)
+
+    def create_strategy(
+        self,
+        name: str,
+        description: str | None = None,
+        parameters: dict | None = None,
+    ) -> dict:
+        body: dict = {"name": name}
+        if description is not None:
+            body["description"] = description
+        if parameters is not None:
+            body["parameters"] = parameters
+        return self._post("/strategies", body)
+
+    def get_strategy_sessions(
+        self,
+        *,
+        session_id: str | None = None,
+        strategy_id: int | None = None,
+        status: str | None = None,
+    ) -> list[StrategySession]:
+        return self._get("/strategy-sessions", _parse_kwarg_params(locals()), StrategySession)
+
+    def create_strategy_session(
+        self,
+        session_id: str,
+        strategy_id: int,
+        mode: str,
+        config: dict,
+        research_commit: str | None = None,
+        region: str | None = None,
+    ) -> dict:
+        body = {
+            "sessionId": session_id,
+            "strategyId": strategy_id,
+            "mode": mode,
+            "config": config,
+        }
+        if research_commit is not None:
+            body["researchCommit"] = research_commit
+        if region is not None:
+            body["region"] = region
+        return self._post("/strategy-sessions", body)
+
+    def stop_strategy_session(self, session_id: str) -> dict:
+        return self._delete("/strategy-sessions", {"sessionId": session_id})

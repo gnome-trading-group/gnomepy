@@ -42,7 +42,7 @@ def ensure_jvm_started(
             return
 
         if classpath is None:
-            classpath = discover_classpath(gnome_root=gnome_root)
+            classpath = discover_classpath("gnome-backtest", gnome_root=gnome_root)
 
         args = list(DEFAULT_JVM_ARGS)
         if jvm_args:

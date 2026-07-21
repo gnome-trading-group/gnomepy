@@ -23,7 +23,7 @@ from gnomepy.java._jvm import ensure_jvm_started
 from gnomepy.java.backtest.config import BacktestConfig
 from gnomepy.java.backtest.orders import ExecutionReport
 from gnomepy.java.backtest.strategy import Strategy
-from gnomepy.java.oms import OmsView
+from gnomepy.java.oms import PositionViewWrapper
 from gnomepy.java.recorder import BacktestResults, MetricRecorder as PyMetricRecorder
 from gnomepy.java.schemas import wrap_schema
 from gnomepy.metadata import BacktestMetadata
@@ -42,7 +42,7 @@ def _create_python_callback(py_strategy: Strategy):
         return lst
 
     @JImplements(
-        "group.gnometrading.backtest.driver.PythonStrategyAgent$PythonStrategyCallback"
+        "group.gnometrading.strategies.PythonStrategyAgent$PythonStrategyCallback"
     )
     class _Proxy:
         @JOverride
@@ -60,6 +60,10 @@ def _create_python_callback(py_strategy: Strategy):
         @JOverride
         def simulateProcessingTime(self):
             return jpype.JLong(py_strategy.simulate_processing_time())
+
+        @JOverride
+        def onInit(self, positionView, securityMaster):
+            py_strategy._position_view = PositionViewWrapper(positionView, securityMaster)
 
     return _Proxy()
 
@@ -258,7 +262,7 @@ class Backtest:
     def _resolve_strategy(self, java_config, java_oms, security_master):
         position_view = java_oms.getPositionTracker().createPositionView(jpype.JInt(0))
         PythonStrategyAgent = jpype.JClass(
-            "group.gnometrading.backtest.driver.PythonStrategyAgent"
+            "group.gnometrading.strategies.PythonStrategyAgent"
         )
         strategy = self._strategy
 
@@ -286,12 +290,11 @@ class Backtest:
         return self._wrap_python_strategy(strategy, java_oms, security_master, position_view, PythonStrategyAgent)
 
     def _wrap_python_strategy(self, py_strategy, java_oms, security_master, position_view, PythonStrategyAgent):
-        py_strategy._oms_view = OmsView(java_oms, security_master)
         if self._recorder is not None:
             py_strategy._metric_recorder = PyMetricRecorder(self._recorder.createMetricRecorder())
             py_strategy.register_metrics()
         callback = _create_python_callback(py_strategy)
-        return PythonStrategyAgent.create(position_view, callback)
+        return PythonStrategyAgent.create(position_view, security_master, callback)
 
     def add_warning(self, message: str) -> None:
         """Add an arbitrary warning to be included in backtest results and metadata."""

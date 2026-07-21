@@ -1,6 +1,6 @@
 [project]
 name = "gnomepy"
-version = "2.5.0"
+version = "2.6.0"
 description = ""
 authors = [
     {name = "mprey",email = "masonprey7@gmail.com"}
@@ -23,11 +23,14 @@ backtest = [
     "jpype1 (>=1.5.0,<2.0.0)",
     "pyarrow (>=23.0.1,<24.0.0)",
     "plotly (>=6.6.0,<6.7.0)",
-    "dash (>=2.18,<3.0)",
-    "dash-bootstrap-components (>=1.6,<2.0)",
+    "dash (>=2.18.0,<3.0.0)",
+    "dash-bootstrap-components (>=1.6.0,<2.0.0)",
     "pandas-stubs (>=2.3.3,<2.4.0)",
     "anthropic (>=0.40.0,<1.0.0)",
     "boto3-stubs (>=1.42.73,<1.43.0)",
+]
+tardis = [
+    "tardis-dev (>=1.0.0,<2.0.0)",
 ]
 
 [project.scripts]
@@ -39,11 +42,6 @@ requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.4.1"
+pytest = ">=8.4.1,<9.0.0"
 
-[tool.poetry.group.tardis]
-optional = true
-
-[tool.poetry.group.tardis.dependencies]
-tardis-dev = ">=1.0.0"
 

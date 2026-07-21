@@ -58,13 +58,13 @@ class Strategy(ABC):
         """Called when an execution report is received. Return new Intents if desired."""
         ...
 
-    _oms_view = None
+    _position_view = None
     _metric_recorder = None
 
     @property
-    def oms(self):
-        """Access the OMS for position/order queries. Available after backtest starts."""
-        return self._oms_view
+    def positions(self):
+        """Access position data. Available after the strategy is initialized."""
+        return self._position_view
 
     @property
     def metrics(self):
