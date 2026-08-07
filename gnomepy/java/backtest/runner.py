@@ -18,7 +18,7 @@ from importlib.metadata import version as _pkg_version
 
 logger = logging.getLogger(__name__)
 
-from gnomepy.config import config as gnome_config
+from gnomepy.config import config as gnome_config, resolve_registry_api_key
 from gnomepy.java._jvm import ensure_jvm_started
 from gnomepy.java.backtest.config import BacktestConfig
 from gnomepy.java.backtest.orders import ExecutionReport
@@ -228,7 +228,7 @@ class Backtest:
 
         # Build SecurityMaster
         registry_host = self._registry_url or os.environ.get("REGISTRY_URL", gnome_config.REGISTRY_API_HOST)
-        registry_api_key = self._registry_api_key or os.environ.get("REGISTRY_API_KEY", gnome_config.REGISTRY_API_KEY)
+        registry_api_key = self._registry_api_key or os.environ.get("REGISTRY_API_KEY") or resolve_registry_api_key()
         RegistryConnection = jpype.JClass("group.gnometrading.RegistryConnection")
         SecurityMaster = jpype.JClass("group.gnometrading.SecurityMaster")
         security_master = SecurityMaster(RegistryConnection(registry_host, registry_api_key))

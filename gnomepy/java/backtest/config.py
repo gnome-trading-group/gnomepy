@@ -21,6 +21,17 @@ class StaticFeeConfig:
 
 
 @dataclass
+class PolymarketFeeConfig:
+    fee_rate: float = 0.07
+
+    def _to_java(self):
+        cls = jpype.JClass("group.gnometrading.backtest.config.FeeModelConfig$Polymarket")
+        obj = cls()
+        obj.feeRate = float(self.fee_rate)
+        return obj
+
+
+@dataclass
 class StaticLatencyConfig:
     latency_nanos: int = 0
 
@@ -41,6 +52,21 @@ class GaussianLatencyConfig:
         obj = cls()
         obj.mu = float(self.mu)
         obj.sigma = float(self.sigma)
+        return obj
+
+
+@dataclass
+class MakerTakerLatencyConfig:
+    base_nanos: int = 0
+    taker_delay_nanos: int = 0
+    maker_delay_nanos: int = 0
+
+    def _to_java(self):
+        cls = jpype.JClass("group.gnometrading.backtest.config.LatencyConfig$MakerTaker")
+        obj = cls()
+        obj.baseNanos = jpype.JLong(self.base_nanos)
+        obj.takerDelayNanos = jpype.JLong(self.taker_delay_nanos)
+        obj.makerDelayNanos = jpype.JLong(self.maker_delay_nanos)
         return obj
 
 
@@ -71,11 +97,11 @@ class ProbabilisticQueueConfig:
 class ExchangeProfileConfig:
     """Reusable simulation profile for a listing."""
 
-    fee_model: StaticFeeConfig = field(default_factory=StaticFeeConfig)
-    network_latency: Union[StaticLatencyConfig, GaussianLatencyConfig] = field(
+    fee_model: Union[StaticFeeConfig, PolymarketFeeConfig] = field(default_factory=StaticFeeConfig)
+    network_latency: Union[StaticLatencyConfig, GaussianLatencyConfig, MakerTakerLatencyConfig] = field(
         default_factory=StaticLatencyConfig
     )
-    order_processing_latency: Union[StaticLatencyConfig, GaussianLatencyConfig] = field(
+    order_processing_latency: Union[StaticLatencyConfig, GaussianLatencyConfig, MakerTakerLatencyConfig] = field(
         default_factory=StaticLatencyConfig
     )
     queue_model: Union[

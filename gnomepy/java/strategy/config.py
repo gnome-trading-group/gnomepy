@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 
+
 @dataclass
 class SimulationConfig:
     taker_fee: float = 0.0
@@ -27,6 +28,7 @@ class StrategyConfig:
 class SessionConfig:
     mode: str
     listings: list[int]
+    session_id: str | None = None
     strategy_id: int | None = None
     strategy: StrategyConfig | None = None
     simulation: SimulationConfig = field(default_factory=SimulationConfig)
@@ -37,6 +39,8 @@ class SessionConfig:
             "mode": self.mode,
             "listings": ",".join(str(lid) for lid in self.listings),
         }
+        if self.session_id is not None:
+            props["session.id"] = self.session_id
         if self.strategy_id is not None:
             props["strategy.id"] = str(self.strategy_id)
         if self.strategy:
@@ -79,6 +83,7 @@ class SessionConfig:
                 cancel_ahead_probability=sim.get("cancel_ahead_probability", 0.5),
             )
         return SessionConfig(
+            session_id=data.get("session_id"),
             strategy_id=data.get("strategy_id"),
             mode=data["mode"],
             listings=list(data["listings"]),

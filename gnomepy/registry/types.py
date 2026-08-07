@@ -140,6 +140,7 @@ class ExchangeEvent:
     native_event_id: str
     raw_title: str
     date_created: str
+    native_url: str | None = None
 
 
 @dataclass

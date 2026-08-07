@@ -184,6 +184,25 @@ class PositionViewWrapper:
             return 0
         return int(pos.getEffectiveQuantity())
 
+    def compliant_size(self, exchange_id: int, security_id: int, desired_size: int, price: int) -> int:
+        if desired_size <= 0:
+            return desired_size
+        listing_id = self._resolve_listing_id(exchange_id, security_id)
+        spec = self._sm.getListingSpec(int(listing_id))
+        if spec is None:
+            return desired_size
+        size = desired_size
+        lot = int(spec.lotSize())
+        if lot > 0:
+            size = ((size + lot - 1) // lot) * lot
+        min_notional = int(spec.minNotional())
+        if min_notional > 0 and price > 0:
+            min_size = (min_notional + price - 1) // price
+            if lot > 0:
+                min_size = ((min_size + lot - 1) // lot) * lot
+            size = max(size, min_size)
+        return size
+
 
 def _position_from_java(pos) -> PositionInfo:
     return PositionInfo(

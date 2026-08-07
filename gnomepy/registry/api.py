@@ -217,6 +217,8 @@ class RegistryClient:
                 json=batch,
                 headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
             )
+            if not res.ok:
+                logger.error("POST %s failed (%d): %s", path, res.status_code, res.text)
             res.raise_for_status()
             results.extend(res.json())
         return results
@@ -233,6 +235,8 @@ class RegistryClient:
                 json=batch,
                 headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
             )
+            if not res.ok:
+                logger.error("PATCH %s failed (%d): %s", path, res.status_code, res.text)
             res.raise_for_status()
             results.extend(res.json())
         return results
@@ -315,7 +319,7 @@ class RegistryClient:
             body["researchCommit"] = research_commit
         if region is not None:
             body["region"] = region
-        return self._post("/strategy-sessions", body)
+        return self._post("/strategy-sessions/launch", body)
 
     def stop_strategy_session(self, session_id: str) -> dict:
-        return self._delete("/strategy-sessions", {"sessionId": session_id})
+        return self._post("/strategy-sessions/stop", {"sessionId": session_id})
