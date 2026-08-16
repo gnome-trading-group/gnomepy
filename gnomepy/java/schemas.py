@@ -29,8 +29,7 @@ def _set_level_fields(enc, level_kwargs: dict, num_levels: int) -> None:
     for i in range(num_levels):
         for snake_prefix, java_method in _LEVEL_FIELDS:
             val = level_kwargs.get(f"{snake_prefix}_{i}")
-            if val is not None:
-                getattr(enc, f"{java_method}{i}")(jpype.JLong(val))
+            _enc_optional(enc, f"{java_method}{i}", val)
 
 
 def _set_flags(flags_encoder, flags: list[str]) -> None:
@@ -39,6 +38,14 @@ def _set_flags(flags_encoder, flags: list[str]) -> None:
         setter = _FLAG_SETTERS.get(flag)
         if setter:
             getattr(flags_encoder, setter)(True)
+
+
+def _enc_optional(enc, method: str, value, cast=jpype.JLong) -> None:
+    setter = getattr(enc, method)
+    if value is not None:
+        setter(cast(value))
+    else:
+        setter(cast(getattr(enc, f"{method}NullValue")()))
 
 
 def _java_action(name: str):
@@ -125,10 +132,8 @@ class MboSchema(Schema):
             enc.timestampRecv(jpype.JLong(timestamp_recv))
         if order_id is not None:
             enc.orderId(jpype.JLong(order_id))
-        if price is not None:
-            enc.price(jpype.JLong(price))
-        if size is not None:
-            enc.size(jpype.JLong(size))
+        _enc_optional(enc, "price", price)
+        _enc_optional(enc, "size", size)
         if action is not None:
             enc.action(_java_action(action))
         if side is not None:
@@ -238,10 +243,8 @@ class Mbp10Schema(Schema):
             enc.timestampSent(jpype.JLong(timestamp_sent))
         if timestamp_recv is not None:
             enc.timestampRecv(jpype.JLong(timestamp_recv))
-        if price is not None:
-            enc.price(jpype.JLong(price))
-        if size is not None:
-            enc.size(jpype.JLong(size))
+        _enc_optional(enc, "price", price)
+        _enc_optional(enc, "size", size)
         if action is not None:
             enc.action(_java_action(action))
         if side is not None:
@@ -250,8 +253,7 @@ class Mbp10Schema(Schema):
             _set_flags(enc.flags(), flags)
         if sequence is not None:
             enc.sequence(jpype.JLong(sequence))
-        if depth is not None:
-            enc.depth(jpype.JShort(depth))
+        _enc_optional(enc, "depth", depth, cast=jpype.JShort)
         _set_level_fields(enc, level_kwargs, self.NUM_LEVELS)
         self._java = schema
 
@@ -381,10 +383,8 @@ class Mbp1Schema(Mbp10Schema):
             enc.timestampSent(jpype.JLong(timestamp_sent))
         if timestamp_recv is not None:
             enc.timestampRecv(jpype.JLong(timestamp_recv))
-        if price is not None:
-            enc.price(jpype.JLong(price))
-        if size is not None:
-            enc.size(jpype.JLong(size))
+        _enc_optional(enc, "price", price)
+        _enc_optional(enc, "size", size)
         if action is not None:
             enc.action(_java_action(action))
         if side is not None:
@@ -393,8 +393,7 @@ class Mbp1Schema(Mbp10Schema):
             _set_flags(enc.flags(), flags)
         if sequence is not None:
             enc.sequence(jpype.JLong(sequence))
-        if depth is not None:
-            enc.depth(jpype.JShort(depth))
+        _enc_optional(enc, "depth", depth, cast=jpype.JShort)
         _set_level_fields(enc, level_kwargs, 1)
         self._java = schema
 
@@ -434,26 +433,18 @@ class BboSchema(Schema):
             enc.timestampEvent(jpype.JLong(timestamp_event))
         if timestamp_recv is not None:
             enc.timestampRecv(jpype.JLong(timestamp_recv))
-        if price is not None:
-            enc.price(jpype.JLong(price))
-        if size is not None:
-            enc.size(jpype.JLong(size))
+        _enc_optional(enc, "price", price)
+        _enc_optional(enc, "size", size)
         if side is not None:
             enc.side(_java_side(side))
         if sequence is not None:
             enc.sequence(jpype.JLong(sequence))
-        if bid_price_0 is not None:
-            enc.bidPrice0(jpype.JLong(bid_price_0))
-        if ask_price_0 is not None:
-            enc.askPrice0(jpype.JLong(ask_price_0))
-        if bid_size_0 is not None:
-            enc.bidSize0(jpype.JLong(bid_size_0))
-        if ask_size_0 is not None:
-            enc.askSize0(jpype.JLong(ask_size_0))
-        if bid_count_0 is not None:
-            enc.bidCount0(jpype.JLong(bid_count_0))
-        if ask_count_0 is not None:
-            enc.askCount0(jpype.JLong(ask_count_0))
+        _enc_optional(enc, "bidPrice0", bid_price_0)
+        _enc_optional(enc, "askPrice0", ask_price_0)
+        _enc_optional(enc, "bidSize0", bid_size_0)
+        _enc_optional(enc, "askSize0", ask_size_0)
+        _enc_optional(enc, "bidCount0", bid_count_0)
+        _enc_optional(enc, "askCount0", ask_count_0)
         self._java = schema
 
     @property
@@ -575,18 +566,15 @@ class TradesSchema(Schema):
             enc.timestampSent(jpype.JLong(timestamp_sent))
         if timestamp_recv is not None:
             enc.timestampRecv(jpype.JLong(timestamp_recv))
-        if price is not None:
-            enc.price(jpype.JLong(price))
-        if size is not None:
-            enc.size(jpype.JLong(size))
+        _enc_optional(enc, "price", price)
+        _enc_optional(enc, "size", size)
         if action is not None:
             enc.action(_java_action(action))
         if side is not None:
             enc.side(_java_side(side))
         if sequence is not None:
             enc.sequence(jpype.JLong(sequence))
-        if depth is not None:
-            enc.depth(jpype.JShort(depth))
+        _enc_optional(enc, "depth", depth, cast=jpype.JShort)
         self._java = schema
 
     @property
@@ -676,14 +664,10 @@ class OhlcvSchema(Schema):
             enc.securityId(jpype.JLong(security_id))
         if timestamp_event is not None:
             enc.timestampEvent(jpype.JLong(timestamp_event))
-        if open is not None:
-            enc.open(jpype.JLong(open))
-        if high is not None:
-            enc.high(jpype.JLong(high))
-        if low is not None:
-            enc.low(jpype.JLong(low))
-        if close is not None:
-            enc.close(jpype.JLong(close))
+        _enc_optional(enc, "open", open)
+        _enc_optional(enc, "high", high)
+        _enc_optional(enc, "low", low)
+        _enc_optional(enc, "close", close)
         if volume is not None:
             enc.volume(jpype.JLong(volume))
         self._java = schema
