@@ -7,7 +7,7 @@ from typing import Optional
 
 import requests
 
-from gnomepy.config import config
+from gnomepy.config import config, resolve_registry_api_key
 from gnomepy.registry.types import (
     ContractRelationship,
     Currency,
@@ -41,7 +41,6 @@ class RegistryClient:
         self,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
-        api_key_environ_key: str = "GNOME_REGISTRY_API_KEY",
         page_size: int = 1000,
     ):
         if base_url:
@@ -50,10 +49,13 @@ class RegistryClient:
             self.base_url = f"https://{config.REGISTRY_API_HOST}/api"
 
         if api_key is None:
-            api_key = os.environ.get(api_key_environ_key)
+            api_key = resolve_registry_api_key()
 
-        if api_key is None or not isinstance(api_key, str) or api_key.isspace():
-            raise ValueError(f"Invalid API key: {api_key}")
+        if not api_key or not isinstance(api_key, str) or api_key.isspace():
+            raise ValueError(
+                "No registry API key found. Set GNOME_REGISTRY_API_KEY or "
+                "REGISTRY_API_KEY_ID (requires AWS credentials)."
+            )
         self.api_key = api_key
         self._page_size = page_size
 
