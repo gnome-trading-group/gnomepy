@@ -32,9 +32,6 @@ class RelationshipGraph:
     def get_equivalents(self, security_id: int, min_confidence: float = 0.0) -> list[int]:
         return self._get_related(security_id, "EQUIVALENT", min_confidence)
 
-    def get_complement(self, security_id: int, min_confidence: float = 0.0) -> list[int]:
-        return self._get_related(security_id, "COMPLEMENT", min_confidence)
-
     def get_equivalent_pairs(self, min_confidence: float = 0.0) -> list[tuple[int, int]]:
         seen: set[tuple[int, int]] = set()
         pairs: list[tuple[int, int]] = []
@@ -46,6 +43,25 @@ class RelationshipGraph:
                 if pair not in seen:
                     seen.add(pair)
                     pairs.append(pair)
+        return pairs
+
+    def get_implies(self, security_id: int, min_confidence: float = 0.0) -> list[int]:
+        return self._get_related(security_id, "IMPLIES", min_confidence)
+
+    def get_implied_by(self, security_id: int, min_confidence: float = 0.0) -> list[int]:
+        results = []
+        for sid, neighbors in self._adj.get("IMPLIES", {}).items():
+            for other_sid, conf in neighbors:
+                if other_sid == security_id and conf >= min_confidence:
+                    results.append(sid)
+        return results
+
+    def get_implies_pairs(self, min_confidence: float = 0.0) -> list[tuple[int, int, float]]:
+        pairs: list[tuple[int, int, float]] = []
+        for sid, neighbors in self._adj.get("IMPLIES", {}).items():
+            for other_sid, confidence in neighbors:
+                if confidence >= min_confidence:
+                    pairs.append((sid, other_sid, confidence))
         return pairs
 
     def get_related(

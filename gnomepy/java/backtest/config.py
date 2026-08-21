@@ -21,13 +21,15 @@ class StaticFeeConfig:
 
 
 @dataclass
-class PolymarketFeeConfig:
-    fee_rate: float = 0.07
+class ParametricFeeConfig:
+    taker_fee_rate: float = 0.07
+    maker_fee_rate: float = 0.0
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.backtest.config.FeeModelConfig$Polymarket")
+        cls = jpype.JClass("group.gnometrading.backtest.config.FeeModelConfig$Parametric")
         obj = cls()
-        obj.feeRate = float(self.fee_rate)
+        obj.takerFeeRate = float(self.taker_fee_rate)
+        obj.makerFeeRate = float(self.maker_fee_rate)
         return obj
 
 
@@ -97,7 +99,7 @@ class ProbabilisticQueueConfig:
 class ExchangeProfileConfig:
     """Reusable simulation profile for a listing."""
 
-    fee_model: Union[StaticFeeConfig, PolymarketFeeConfig] = field(default_factory=StaticFeeConfig)
+    fee_model: Union[StaticFeeConfig, ParametricFeeConfig] = field(default_factory=StaticFeeConfig)
     network_latency: Union[StaticLatencyConfig, GaussianLatencyConfig, MakerTakerLatencyConfig] = field(
         default_factory=StaticLatencyConfig
     )

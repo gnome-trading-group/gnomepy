@@ -89,7 +89,7 @@ def load_schema() -> SbeSchema:
     if _cached_schema is not None:
         return _cached_schema
 
-    jars = discover_classpath()
+    jars = discover_classpath("gnome-backtest")
     for jar_path in jars:
         with zipfile.ZipFile(jar_path) as zf:
             if "schema.xml" in zf.namelist():

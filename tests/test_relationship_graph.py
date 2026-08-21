@@ -21,10 +21,6 @@ class TestRelationshipGraphEmpty:
         g = RelationshipGraph([])
         assert g.get_equivalents(1) == []
 
-    def test_get_complement_empty(self):
-        g = RelationshipGraph([])
-        assert g.get_complement(1) == []
-
     def test_get_equivalent_pairs_empty(self):
         g = RelationshipGraph([])
         assert g.get_equivalent_pairs() == []
@@ -46,17 +42,6 @@ class TestRelationshipGraphEquivalents:
 
     def test_unrelated_returns_empty(self):
         assert self.g.get_equivalents(999) == []
-
-
-class TestRelationshipGraphComplement:
-    def setup_method(self):
-        self.g = RelationshipGraph([make_rel(1, 100, 200, "COMPLEMENT")])
-
-    def test_forward(self):
-        assert self.g.get_complement(100) == [200]
-
-    def test_reverse_symmetric(self):
-        assert self.g.get_complement(200) == [100]
 
 
 class TestRelationshipGraphImpliesDirectional:
@@ -143,16 +128,58 @@ class TestRelationshipGraphMultipleTypes:
         self.g = RelationshipGraph(
             [
                 make_rel(1, 100, 200, "EQUIVALENT"),
-                make_rel(2, 100, 300, "COMPLEMENT"),
-                make_rel(3, 100, 400, "IMPLIES"),
+                make_rel(2, 100, 400, "IMPLIES"),
             ]
         )
 
     def test_equivalents_only_returns_equivalent(self):
         assert self.g.get_equivalents(100) == [200]
 
-    def test_complement_only_returns_complement(self):
-        assert self.g.get_complement(100) == [300]
-
     def test_implies_only_returns_implies(self):
         assert self.g.get_related(100, "IMPLIES") == [400]
+
+
+class TestRelationshipGraphImpliesMethods:
+    def setup_method(self):
+        self.g = RelationshipGraph(
+            [
+                make_rel(1, 100, 200, "IMPLIES", confidence=0.98),
+                make_rel(2, 100, 300, "IMPLIES", confidence=0.80),
+                make_rel(3, 400, 200, "IMPLIES", confidence=0.95),
+            ]
+        )
+
+    def test_get_implies_returns_consequents(self):
+        assert set(self.g.get_implies(100)) == {200, 300}
+
+    def test_get_implies_confidence_filter(self):
+        assert self.g.get_implies(100, min_confidence=0.90) == [200]
+
+    def test_get_implies_unknown_returns_empty(self):
+        assert self.g.get_implies(999) == []
+
+    def test_get_implied_by_returns_antecedents(self):
+        assert set(self.g.get_implied_by(200)) == {100, 400}
+
+    def test_get_implied_by_confidence_filter(self):
+        assert self.g.get_implied_by(200, min_confidence=0.97) == [100]
+
+    def test_get_implied_by_unknown_returns_empty(self):
+        assert self.g.get_implied_by(999) == []
+
+    def test_get_implies_pairs_all(self):
+        pairs = self.g.get_implies_pairs()
+        assert len(pairs) == 3
+        assert (100, 200, 0.98) in pairs
+        assert (100, 300, 0.80) in pairs
+        assert (400, 200, 0.95) in pairs
+
+    def test_get_implies_pairs_confidence_filter(self):
+        pairs = self.g.get_implies_pairs(min_confidence=0.90)
+        assert len(pairs) == 2
+        assert (100, 200, 0.98) in pairs
+        assert (400, 200, 0.95) in pairs
+
+    def test_implies_is_directional(self):
+        assert self.g.get_implies(200) == []
+        assert self.g.get_implies(300) == []

@@ -89,12 +89,19 @@ def create_caching_s3_proxy(real_s3_client, cache: MarketDataCache, bucket: str)
     ``getObjectAsBytes`` calls, serving from ``cache`` on hits and
     persisting downloaded bytes on misses. All other S3 methods are
     delegated transparently to ``real_s3_client``.
+
+    Direct method calls are used for intercepted methods (not ``method.invoke()``)
+    so that original Java exception types — in particular ``NoSuchKeyException`` —
+    propagate unchanged to the engine's existing handler in ``BacktestDriver.prepareData()``.
+    ``method.invoke()`` wraps exceptions in ``InvocationTargetException``, which
+    prevents the engine's typed catch blocks from matching.
     """
     import jpype
     from jpype import JImplements, JOverride
 
     Proxy = jpype.JClass("java.lang.reflect.Proxy")
     S3Client = jpype.JClass("software.amazon.awssdk.services.s3.S3Client")
+    InvocationTargetException = jpype.JClass("java.lang.reflect.InvocationTargetException")
 
     @JImplements("java.lang.reflect.InvocationHandler")
     class _CachingHandler:
@@ -108,7 +115,9 @@ def create_caching_s3_proxy(real_s3_client, cache: MarketDataCache, bucket: str)
                     key = str(request.key())
                     req_bucket = str(request.bucket())
                 except Exception:
-                    return method.invoke(real_s3_client, args)
+                    if name == "getObjectAsBytes":
+                        return real_s3_client.getObjectAsBytes(request)
+                    return real_s3_client.getObject(request)
 
                 if req_bucket == bucket:
                     cached = cache.get(key)
@@ -119,22 +128,31 @@ def create_caching_s3_proxy(real_s3_client, cache: MarketDataCache, bucket: str)
                         else:
                             return _response_stream_from_cache(cached)
 
-                    # Cache miss — call real client, then persist
-                    result = method.invoke(real_s3_client, args)
+                    # Cache miss — direct calls preserve original Java exception types.
+                    # NoSuchKeyException must reach BacktestDriver.prepareData() unmodified.
                     if name == "getObjectAsBytes":
+                        result = real_s3_client.getObjectAsBytes(request)
                         raw = bytes(result.asByteArray())
                         cache.put(key, raw)
                         return result
                     else:
                         # ResponseInputStream can only be read once
+                        result = real_s3_client.getObject(request)
                         raw = bytes(result.readAllBytes())
                         result.close()
                         cache.put(key, raw)
                         return _response_stream_from_cache(raw)
 
-            if args is None:
-                return method.invoke(real_s3_client, jpype.JArray(jpype.JObject)(0))
-            return method.invoke(real_s3_client, args)
+            # Passthrough for all other S3Client methods. method.invoke() wraps exceptions
+            # in InvocationTargetException — unwrap so callers see the original type.
+            call_args = args if args is not None else jpype.JArray(jpype.JObject)(0)
+            try:
+                return method.invoke(real_s3_client, call_args)
+            except InvocationTargetException as ite:
+                cause = ite.getCause()
+                if cause is not None:
+                    raise cause
+                raise
 
     handler = _CachingHandler()
     interfaces = jpype.JArray(jpype.JClass("java.lang.Class"))([S3Client.class_])

@@ -235,6 +235,10 @@ class Backtest:
 
         java_oms = BacktestDriverFactory.buildOms(java_config.risk, security_master)
 
+        tracker = java_oms.getPositionTracker()
+        for lsc in java_config.listings:
+            tracker.registerSlot(jpype.JInt(0), jpype.JInt(int(lsc.listingId)))
+
         if java_config.record:
             self._recorder = jpype.JClass(
                 "group.gnometrading.backtest.recorder.BacktestRecorder"

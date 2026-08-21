@@ -23,9 +23,9 @@ def _with_mid_price(market_df: pd.DataFrame) -> pd.DataFrame:
         return market_df
     if "bid_price_0" in market_df.columns and "ask_price_0" in market_df.columns:
         df = market_df.copy()
-        df["mid_price"] = (
-            df["bid_price_0"].astype(float) + df["ask_price_0"].astype(float)
-        ) / 2.0
+        bid = df["bid_price_0"].astype(float).where(df["bid_price_0"] > 0)
+        ask = df["ask_price_0"].astype(float).where(df["ask_price_0"] > 0)
+        df["mid_price"] = ((bid + ask) / 2.0).ffill()
         return df
     return market_df
 

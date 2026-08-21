@@ -10,6 +10,9 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
 
+from gnomepy.config import config as gnome_config
+from gnomepy.registry.api import RegistryClient
+from gnomepy.registry.types import SecurityType
 from gnomepy.reporting.metrics import _is_buy
 
 if TYPE_CHECKING:
@@ -584,8 +587,90 @@ def _render_warnings(report: "BacktestReport") -> str | None:
     return f'<ol class="warnings-list">{items}</ol>{note}'
 
 
+def _render_listings(report: "BacktestReport") -> str | None:
+    config = getattr(report, "_config", None)
+    if not config:
+        return None
+    raw_listings = config.get("listings")
+    if not raw_listings:
+        return None
+
+    listing_ids: list[int] = []
+    profile_by_id: dict[int, str] = {}
+    for entry in raw_listings:
+        if isinstance(entry, dict):
+            lid = entry.get("listing_id")
+            if lid is not None:
+                listing_ids.append(int(lid))
+                profile_by_id[int(lid)] = entry.get("profile", "")
+        elif isinstance(entry, int):
+            listing_ids.append(entry)
+
+    if not listing_ids:
+        return None
+
+    listings: dict[int, object] = {}
+    securities: dict[int, object] = {}
+    exchanges: dict[int, object] = {}
+    try:
+        client = RegistryClient()
+        for lid in listing_ids:
+            results = client.get_listing(listing_id=lid)
+            if results:
+                listings[lid] = results[0]
+
+        security_ids = {l.security_id for l in listings.values()}
+        exchange_ids = {l.exchange_id for l in listings.values()}
+
+        for sid in security_ids:
+            results = client.get_security(security_id=sid)
+            if results:
+                securities[sid] = results[0]
+
+        for eid in exchange_ids:
+            results = client.get_exchange(exchange_id=eid)
+            if results:
+                exchanges[eid] = results[0]
+    except Exception:
+        pass
+
+    controller_ui = gnome_config.CONTROLLER_UI_URL
+    rows = []
+    for lid in listing_ids:
+        listing = listings.get(lid)
+        security = securities.get(listing.security_id) if listing else None
+        exchange = exchanges.get(listing.exchange_id) if listing else None
+        sym = security.symbol if security else "—"
+        sec_type = SecurityType(security.type).name.capitalize() if security else "—"
+        exch_name = exchange.exchange_name if exchange else "—"
+        exch_sym = (listing.exchange_security_symbol or "—") if listing else "—"
+        profile = profile_by_id.get(lid, "")
+        url = f"{controller_ui}/security-master/listings/{lid}"
+        rows.append(
+            f'<tr>'
+            f'<td><a class="listing-link" href="{url}">{lid}</a></td>'
+            f'<td>{sym}</td>'
+            f'<td>{exch_name}</td>'
+            f'<td>{exch_sym}</td>'
+            f'<td>{sec_type}</td>'
+            f'<td>{profile}</td>'
+            f'</tr>'
+        )
+
+    headers = ["Listing ID", "Symbol", "Exchange", "Exchange Symbol", "Type", "Profile"]
+    header_html = "".join(f"<th>{h}</th>" for h in headers)
+    rows_html = "".join(rows)
+    return (
+        f'<table class="listings-table">'
+        f'<thead><tr>{header_html}</tr></thead>'
+        f'<tbody>{rows_html}</tbody>'
+        f'</table>'
+    )
+
+
 DEFAULT_SECTIONS: list[ReportSection] = [
     ReportSection("kpi", "Summary", _render_kpi),
+    ReportSection("listings", "Listings", _render_listings),
     ReportSection("config", "Configuration", _render_config),
     ReportSection("summary_table", "Details", _render_summary_table),
     ReportSection("pnl", "Performance", _render_pnl),
@@ -778,6 +863,23 @@ def assemble_html(
   .fills-table tr:hover {{ background: #f8fafc; }}
   .plotly-graph-div {{ width: 100% !important; min-height: 350px; }}
   .js-plotly-plot .plotly {{ min-height: 350px; }}
+  .listings-table {{
+    border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 4px 0;
+  }}
+  .listings-table th, .listings-table td {{
+    border: 1px solid #e2e8f0; padding: 8px 14px;
+  }}
+  .listings-table th {{
+    background: #f1f5f9; text-align: left; font-weight: 600;
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em;
+  }}
+  .listings-table td {{
+    font-family: "SF Mono", "Fira Code", monospace; font-size: 0.85rem;
+  }}
+  .listings-table tr:nth-child(even) {{ background: #f8fafc; }}
+  .listings-table tr:hover {{ background: #f0f9ff; }}
+  .listing-link {{ color: #2563eb; text-decoration: none; }}
+  .listing-link:hover {{ text-decoration: underline; }}
   .config-block {{
     background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 8px;
     padding: 16px 20px; overflow-x: auto;
