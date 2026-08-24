@@ -10,6 +10,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import yaml
+
 import jpype
 import pytz
 from jpype import JImplements, JOverride
@@ -419,7 +421,10 @@ class Backtest:
             strategy_args=self._strategy_args or None,
             config_path=config_path,
             preset_name=getattr(self, "_preset_name", None),
-            config=getattr(self, "_preset_config", None),
+            config=getattr(self, "_preset_config", None) or (
+                yaml.safe_load(Path(self._config).read_text())
+                if isinstance(self._config, (str, Path)) else None
+            ),
             gnomepy_version=gnomepy_version,
             gnomepy_research_version=gnomepy_research_version,
             gnomepy_research_commit=gnomepy_research_commit,

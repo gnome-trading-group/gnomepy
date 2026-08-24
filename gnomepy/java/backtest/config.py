@@ -13,7 +13,7 @@ class StaticFeeConfig:
     maker_fee: float = 0.0
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.backtest.config.FeeModelConfig$Static")
+        cls = jpype.JClass("group.gnometrading.simulation.config.FeeModelConfig$Static")
         obj = cls()
         obj.takerFee = float(self.taker_fee)
         obj.makerFee = float(self.maker_fee)
@@ -26,7 +26,7 @@ class ParametricFeeConfig:
     maker_fee_rate: float = 0.0
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.backtest.config.FeeModelConfig$Parametric")
+        cls = jpype.JClass("group.gnometrading.simulation.config.FeeModelConfig$Parametric")
         obj = cls()
         obj.takerFeeRate = float(self.taker_fee_rate)
         obj.makerFeeRate = float(self.maker_fee_rate)
@@ -38,7 +38,7 @@ class StaticLatencyConfig:
     latency_nanos: int = 0
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.backtest.config.LatencyConfig$Static")
+        cls = jpype.JClass("group.gnometrading.simulation.config.LatencyConfig$Static")
         obj = cls()
         obj.latencyNanos = jpype.JLong(self.latency_nanos)
         return obj
@@ -50,7 +50,7 @@ class GaussianLatencyConfig:
     sigma: float = 0.0
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.backtest.config.LatencyConfig$Gaussian")
+        cls = jpype.JClass("group.gnometrading.simulation.config.LatencyConfig$Gaussian")
         obj = cls()
         obj.mu = float(self.mu)
         obj.sigma = float(self.sigma)
@@ -64,7 +64,7 @@ class MakerTakerLatencyConfig:
     maker_delay_nanos: int = 0
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.backtest.config.LatencyConfig$MakerTaker")
+        cls = jpype.JClass("group.gnometrading.simulation.config.LatencyConfig$MakerTaker")
         obj = cls()
         obj.baseNanos = jpype.JLong(self.base_nanos)
         obj.takerDelayNanos = jpype.JLong(self.taker_delay_nanos)
@@ -75,13 +75,13 @@ class MakerTakerLatencyConfig:
 @dataclass
 class OptimisticQueueConfig:
     def _to_java(self):
-        return jpype.JClass("group.gnometrading.backtest.config.QueueModelConfig$Optimistic")()
+        return jpype.JClass("group.gnometrading.simulation.config.QueueModelConfig$Optimistic")()
 
 
 @dataclass
 class RiskAverseQueueConfig:
     def _to_java(self):
-        return jpype.JClass("group.gnometrading.backtest.config.QueueModelConfig$RiskAverse")()
+        return jpype.JClass("group.gnometrading.simulation.config.QueueModelConfig$RiskAverse")()
 
 
 @dataclass
@@ -89,7 +89,7 @@ class ProbabilisticQueueConfig:
     cancel_ahead_probability: float = 0.5
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.backtest.config.QueueModelConfig$Probabilistic")
+        cls = jpype.JClass("group.gnometrading.simulation.config.QueueModelConfig$Probabilistic")
         obj = cls()
         obj.cancelAheadProbability = float(self.cancel_ahead_probability)
         return obj
@@ -111,7 +111,7 @@ class ExchangeProfileConfig:
     ] = field(default_factory=RiskAverseQueueConfig)
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.backtest.config.ExchangeProfileConfig")
+        cls = jpype.JClass("group.gnometrading.simulation.config.ExchangeProfileConfig")
         obj = cls()
         obj.feeModel = self.fee_model._to_java()
         obj.networkLatency = self.network_latency._to_java()
