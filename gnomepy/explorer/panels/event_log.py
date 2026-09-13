@@ -13,6 +13,7 @@ def build_event_columns(price_decimals: int = 2) -> list[dict]:
     return [
         {"name": "Time", "id": "time", "type": "text"},
         {"name": "Type", "id": "type", "type": "text"},
+        {"name": "Listing", "id": "listing", "type": "text"},
         {"name": "OType", "id": "order_type", "type": "text"},
         {"name": "OID", "id": "oid", "type": "text"},
         {"name": "Src", "id": "source", "type": "text"},
@@ -29,15 +30,17 @@ def build_event_columns(price_decimals: int = 2) -> list[dict]:
 def build_event_records(
     windowed_a: WindowedData,
     windowed_b: WindowedData | None = None,
+    label_fn=None,
 ) -> list[dict]:
+    _label = label_fn or (lambda eid, sid: f"{eid}/{sid}")
     rows: list[dict] = []
-    rows.extend(_fill_records(windowed_a.fills, source="A"))
-    rows.extend(_intent_records(windowed_a.intents, source="A"))
-    rows.extend(_order_records(windowed_a.orders, source="A"))
+    rows.extend(_fill_records(windowed_a.fills, source="A", label_fn=_label))
+    rows.extend(_intent_records(windowed_a.intents, source="A", label_fn=_label))
+    rows.extend(_order_records(windowed_a.orders, source="A", label_fn=_label))
     if windowed_b is not None:
-        rows.extend(_fill_records(windowed_b.fills, source="B"))
-        rows.extend(_intent_records(windowed_b.intents, source="B"))
-        rows.extend(_order_records(windowed_b.orders, source="B"))
+        rows.extend(_fill_records(windowed_b.fills, source="B", label_fn=_label))
+        rows.extend(_intent_records(windowed_b.intents, source="B", label_fn=_label))
+        rows.extend(_order_records(windowed_b.orders, source="B", label_fn=_label))
     rows.sort(key=lambda r: r.get("_ts", 0))
     for r in rows:
         r.pop("_ts", None)
@@ -48,16 +51,19 @@ def _ts_str(ts: pd.Timestamp) -> str:
     return ts.strftime("%H:%M:%S.%f")
 
 
-def _fill_records(fills: pd.DataFrame, source: str) -> list[dict]:
+def _fill_records(fills: pd.DataFrame, source: str, label_fn=None) -> list[dict]:
     if fills.empty:
         return []
+    has_listing = "exchange_id" in fills.columns and "security_id" in fills.columns
     rows = []
     for ts, row in fills.iterrows():
+        listing = label_fn(int(row["exchange_id"]), int(row["security_id"])) if has_listing and label_fn else None
         rows.append({
             "_ts": ts.value,
             "timestamp_iso": ts.isoformat(),
             "time": _ts_str(ts),
             "type": "fill",
+            "listing": listing,
             "order_type": None,
             "oid": str(int(row["client_oid"])) if "client_oid" in row else None,
             "source": source,
@@ -72,9 +78,10 @@ def _fill_records(fills: pd.DataFrame, source: str) -> list[dict]:
     return rows
 
 
-def _intent_records(intents: pd.DataFrame, source: str) -> list[dict]:
+def _intent_records(intents: pd.DataFrame, source: str, label_fn=None) -> list[dict]:
     if intents.empty:
         return []
+    has_listing = "exchange_id" in intents.columns and "security_id" in intents.columns
     rows = []
     for ts, row in intents.iterrows():
         bid_p = row.get("bid_price", 0)
@@ -90,11 +97,13 @@ def _intent_records(intents: pd.DataFrame, source: str) -> list[dict]:
             side = "Take"
         else:
             continue
+        listing = label_fn(int(row["exchange_id"]), int(row["security_id"])) if has_listing and label_fn else None
         rows.append({
             "_ts": ts.value,
             "timestamp_iso": ts.isoformat(),
             "time": _ts_str(ts),
             "type": "intent",
+            "listing": listing,
             "order_type": None,
             "oid": None,
             "source": source,
@@ -109,17 +118,20 @@ def _intent_records(intents: pd.DataFrame, source: str) -> list[dict]:
     return rows
 
 
-def _order_records(orders: pd.DataFrame, source: str) -> list[dict]:
+def _order_records(orders: pd.DataFrame, source: str, label_fn=None) -> list[dict]:
     if orders.empty:
         return []
+    has_listing = "exchange_id" in orders.columns and "security_id" in orders.columns
     rows = []
     for ts, row in orders.iterrows():
+        listing = label_fn(int(row["exchange_id"]), int(row["security_id"])) if has_listing and label_fn else None
         avg_fill = float(row.get("avg_fill_price", 0))
         rows.append({
             "_ts": ts.value,
             "timestamp_iso": ts.isoformat(),
             "time": _ts_str(ts),
             "type": "order",
+            "listing": listing,
             "order_type": str(row.get("order_type", "")) or None,
             "oid": str(int(row["client_oid"])) if "client_oid" in row else None,
             "source": source,

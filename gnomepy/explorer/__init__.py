@@ -27,13 +27,22 @@ def launch_explorer(
     price_decimals: int = 2,
 ) -> None:
     """Load results and launch the Dash backtest explorer in a local browser."""
-    print("Loading backtest data…")
-    store_a = ExplorerDataStore(results_a, label="A")
-    store_b = ExplorerDataStore(results_b, label="B") if results_b else None
+    import time
 
-    print(f"  A: {store_a.summary_label()}")
+    def _step(msg: str) -> float:
+        print(f"  {msg}", flush=True)
+        return time.time()
+
+    print("Loading backtest data…", flush=True)
+    t0 = time.time()
+
+    _step("reading parquet files…")
+    store_a = ExplorerDataStore(results_a, label="A", _progress=_step)
+    store_b = ExplorerDataStore(results_b, label="B", _progress=_step) if results_b else None
+
+    print(f"  ready in {time.time() - t0:.1f}s — {store_a.summary_label()}", flush=True)
     if store_b:
-        print(f"  B: {store_b.summary_label()}")
+        print(f"  B: {store_b.summary_label()}", flush=True)
 
     app = create_app(store_a, store_b, price_decimals=price_decimals)
 

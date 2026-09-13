@@ -326,7 +326,8 @@ class Backtest:
         self._driver.prepareData()
 
         if not progress:
-            self._driver.fullyExecute()
+            end_ns = int(self._end_date.replace(tzinfo=pytz.UTC).timestamp()) * 1_000_000_000
+            self._driver.executeUntil(jpype.JLong(end_ns))
         else:
             self._run_with_progress()
 
@@ -441,12 +442,10 @@ class Backtest:
         end = self._end_date
         total_sec = (end - start).total_seconds()
         if total_sec <= 0:
-            self._driver.fullyExecute()
             return
 
-        epoch = datetime(1970, 1, 1, tzinfo=pytz.UTC)
-        start_ns = int((start.replace(tzinfo=pytz.UTC) - epoch).total_seconds() * 1_000_000_000)
-        end_ns = int((end.replace(tzinfo=pytz.UTC) - epoch).total_seconds() * 1_000_000_000)
+        start_ns = int(start.replace(tzinfo=pytz.UTC).timestamp()) * 1_000_000_000
+        end_ns = int(end.replace(tzinfo=pytz.UTC).timestamp()) * 1_000_000_000
 
         chunk_ns = 10 * 60_000_000_000 # 10 minutes
         current_ns = start_ns
@@ -460,7 +459,6 @@ class Backtest:
             events = int(self._driver.getEventsProcessed())
             logger.info("Backtest: %d%% | events: %s | %.1fs", pct, f"{events:,}", elapsed)
 
-        self._driver.fullyExecute()
         elapsed = time.time() - t0
         events = int(self._driver.getEventsProcessed())
         logger.info("Backtest: 100%% | events: %s | %.1fs", f"{events:,}", elapsed)

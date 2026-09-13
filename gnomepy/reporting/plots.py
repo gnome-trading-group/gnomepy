@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 
 from gnomepy.config import config as gnome_config
 from gnomepy.registry.api import RegistryClient
-from gnomepy.registry.types import SecurityType
+from gnomepy.registry.types import Exchange, Listing, Security, SecurityType
 from gnomepy.reporting.metrics import _is_buy
 
 if TYPE_CHECKING:
@@ -38,10 +38,27 @@ pio.templates.default = "ggplot2"
 DEFAULT_MAX_POINTS = 50_000
 
 
-_MUTED_COLORS = [
-    "rgba(150,150,150,0.5)", "rgba(100,149,237,0.5)", "rgba(180,120,80,0.5)",
-    "rgba(120,180,120,0.5)", "rgba(180,100,180,0.5)", "rgba(200,180,100,0.5)",
+_PALETTE = [
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
+
+_LEGEND_LAYOUT = dict(
+    orientation="v",
+    yanchor="top",
+    y=1,
+    xanchor="left",
+    x=1.02,
+    bgcolor="rgba(255,255,255,0.8)",
+    bordercolor="rgba(0,0,0,0.1)",
+    borderwidth=1,
+)
+
+
+def _with_alpha(hex_color: str, alpha: float = 0.5) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
 
 
 def _iter_symbols(market_df: pd.DataFrame) -> list[tuple[int, int]]:
@@ -54,8 +71,93 @@ def _iter_symbols(market_df: pd.DataFrame) -> list[tuple[int, int]]:
     )
 
 
-def _sym_label(eid: int, sid: int) -> str:
+def _sym_label(eid: int, sid: int, lid: int | None = None) -> str:
+    if lid is not None:
+        return f"{eid}/{sid}/{lid}"
     return f"{eid}/{sid}"
+
+
+@dataclass
+class _ListingContext:
+    eid_sid_to_lid: dict[tuple[int, int], int]
+    listings: dict[int, Listing]
+    securities: dict[int, Security]
+    exchanges: dict[int, Exchange]
+    controller_ui: str
+
+
+def _get_listing_context(report: "BacktestReport") -> "_ListingContext":
+    cached = getattr(report, "_listing_ctx", None)
+    if cached is not None:
+        return cached
+
+    eid_sid_to_lid: dict[tuple[int, int], int] = {}
+    listings_map: dict[int, Listing] = {}
+    securities_map: dict[int, Security] = {}
+    exchanges_map: dict[int, Exchange] = {}
+
+    config = getattr(report, "_config", None)
+    if config:
+        raw_listings = config.get("listings")
+        if raw_listings:
+            listing_ids: list[int] = []
+            for entry in raw_listings:
+                if isinstance(entry, dict):
+                    lid = entry.get("listing_id")
+                    if lid is not None:
+                        listing_ids.append(int(lid))
+                elif isinstance(entry, int):
+                    listing_ids.append(entry)
+
+            if listing_ids:
+                try:
+                    client = RegistryClient()
+                    for lid in listing_ids:
+                        results = client.get_listing(listing_id=lid)
+                        if results:
+                            listing = results[0]
+                            listings_map[lid] = listing
+                            eid_sid_to_lid[(listing.exchange_id, listing.security_id)] = lid
+
+                    for sid in {l.security_id for l in listings_map.values()}:
+                        results = client.get_security(security_id=sid)
+                        if results:
+                            securities_map[sid] = results[0]
+
+                    for eid in {l.exchange_id for l in listings_map.values()}:
+                        results = client.get_exchange(exchange_id=eid)
+                        if results:
+                            exchanges_map[eid] = results[0]
+                except Exception:
+                    pass
+
+    ctx = _ListingContext(
+        eid_sid_to_lid=eid_sid_to_lid,
+        listings=listings_map,
+        securities=securities_map,
+        exchanges=exchanges_map,
+        controller_ui=gnome_config.CONTROLLER_UI_URL,
+    )
+    report._listing_ctx = ctx
+    return ctx
+
+
+def _build_color_map(report: "BacktestReport") -> dict[tuple[int, int], str]:
+    """Assign a deterministic color to each (exchange_id, security_id) pair."""
+    cached = getattr(report, "_color_map", None)
+    if cached is not None:
+        return cached
+    pairs: set[tuple[int, int]] = set()
+    if not report._market_df.empty:
+        for pair in report._market_df.groupby(["exchange_id", "security_id"], sort=False).groups:
+            pairs.add(pair)
+    fills = report.fills
+    if not fills.empty and "exchange_id" in fills.columns and "security_id" in fills.columns:
+        for pair in fills.groupby(["exchange_id", "security_id"], sort=False).groups:
+            pairs.add(pair)
+    color_map = {pair: _PALETTE[i % len(_PALETTE)] for i, pair in enumerate(sorted(pairs))}
+    report._color_map = color_map
+    return color_map
 
 
 def _lttb(series: pd.Series, n: int) -> pd.Series:
@@ -120,6 +222,8 @@ def plot_pnl(
 
     if show_mid and not report._market_df.empty:
         symbols = _iter_symbols(report._market_df)
+        ctx = _get_listing_context(report)
+        color_map = _build_color_map(report)
         for i, (eid, sid) in enumerate(symbols):
             sym_mkt = report._market_df[
                 (report._market_df["exchange_id"] == eid)
@@ -127,13 +231,14 @@ def plot_pnl(
             ].sort_index()
             sym_mkt = sym_mkt[~sym_mkt.index.duplicated(keep="last")]
             mid = _downsample(sym_mkt["mid_price"].astype(float), max_points)
-            color = _MUTED_COLORS[i % len(_MUTED_COLORS)]
-            name = "mid price" if len(symbols) == 1 else f"mid {_sym_label(eid, sid)}"
+            color = _with_alpha(color_map.get((eid, sid), _PALETTE[i % len(_PALETTE)]))
+            lid = ctx.eid_sid_to_lid.get((eid, sid))
+            name = "mid price" if len(symbols) == 1 else f"mid {_sym_label(eid, sid, lid)}"
             fig.add_trace(
                 go.Scattergl(
                     x=mid.index, y=mid.values, mode="lines", name=name,
                     line=dict(width=0.8, color=color),
-                    hoverinfo="skip",
+                    hovertemplate="%{y:,.4f}<extra>%{fullData.name}</extra>",
                 ),
                 row=1, col=1, secondary_y=True,
             )
@@ -183,7 +288,8 @@ def plot_pnl(
         height=600,
         title=title or "Mark-to-market PnL",
         hovermode="x unified",
-        legend=dict(orientation="h", y=1.05),
+        legend=_LEGEND_LAYOUT,
+        margin=dict(r=160),
     )
     fig.update_yaxes(title_text="PnL", row=1, col=1, secondary_y=False)
     if show_mid:
@@ -191,9 +297,6 @@ def plot_pnl(
     fig.update_yaxes(title_text="DD", row=2, col=1)
     fig.update_xaxes(title_text="time", row=2, col=1)
     return fig
-
-
-_POSITION_COLORS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
 
 
 def plot_position(
@@ -216,10 +319,17 @@ def plot_position(
     )
 
     if multi:
+        ctx = _get_listing_context(report)
+        color_map = _build_color_map(report)
         for i, col in enumerate(pos_by_sym.columns):
-            label = _sym_label(*col) if isinstance(col, tuple) else str(col)
+            if isinstance(col, tuple):
+                lid = ctx.eid_sid_to_lid.get(col)
+                label = _sym_label(*col, lid)
+                color = color_map.get(col, _PALETTE[i % len(_PALETTE)])
+            else:
+                label = str(col)
+                color = _PALETTE[i % len(_PALETTE)]
             s = _downsample(pos_by_sym[col], max_points)
-            color = _POSITION_COLORS[i % len(_POSITION_COLORS)]
             fig.add_trace(
                 go.Scattergl(
                     x=s.index, y=s.values, mode="lines", name=label,
@@ -263,7 +373,8 @@ def plot_position(
     fig.update_layout(
         height=650, hovermode="x unified",
         showlegend=multi,
-        legend=dict(orientation="h", y=1.05) if multi else None,
+        legend=_LEGEND_LAYOUT if multi else None,
+        margin=dict(r=160) if multi else None,
         title=title or "Position / Fees / Volume",
     )
     return fig
@@ -277,14 +388,22 @@ def plot_pnl_by_symbol(
 ) -> go.Figure:
     """Per-symbol PnL curves on a single chart."""
     by_sym = report.pnl_by_symbol
+    ctx = _get_listing_context(report)
+    color_map = _build_color_map(report)
     fig = go.Figure()
-    for col in by_sym.columns:
-        label = f"{col[0]}/{col[1]}" if isinstance(col, tuple) else str(col)
+    for i, col in enumerate(by_sym.columns):
+        if isinstance(col, tuple):
+            lid = ctx.eid_sid_to_lid.get(col)
+            label = _sym_label(col[0], col[1], lid)
+            color = color_map.get(col, _PALETTE[i % len(_PALETTE)])
+        else:
+            label = str(col)
+            color = _PALETTE[i % len(_PALETTE)]
         s = _downsample(by_sym[col], max_points)
         fig.add_trace(
             go.Scattergl(
                 x=s.index, y=s.values, mode="lines",
-                name=label, line=dict(width=1.2),
+                name=label, line=dict(width=1.2, color=color),
             ),
         )
     fig.update_layout(
@@ -293,7 +412,8 @@ def plot_pnl_by_symbol(
         hovermode="x unified",
         yaxis_title="PnL",
         xaxis_title="time",
-        legend=dict(orientation="h", y=1.05),
+        legend=_LEGEND_LAYOUT,
+        margin=dict(r=160),
     )
     return fig
 
@@ -349,9 +469,6 @@ def _kpi_cards_html(summary: dict) -> str:
     return '<div class="kpi-row">' + "".join(items) + '</div>'
 
 
-_SPREAD_COLORS = ["#6366f1", "#e11d48", "#059669", "#d97706", "#7c3aed"]
-
-
 def plot_spread(
     report: "BacktestReport",
     *,
@@ -363,6 +480,8 @@ def plot_spread(
     symbols = _iter_symbols(mkt)
     multi = len(symbols) > 1
 
+    ctx = _get_listing_context(report)
+    color_map = _build_color_map(report)
     fig = go.Figure()
     for i, (eid, sid) in enumerate(symbols):
         sym_mkt = mkt[(mkt["exchange_id"] == eid) & (mkt["security_id"] == sid)]
@@ -373,8 +492,9 @@ def plot_spread(
                 (sym_mkt["ask_price_0"] - sym_mkt["bid_price_0"]).astype(float),
                 max_points,
             )
-        name = f"spread {_sym_label(eid, sid)}" if multi else "spread"
-        color = _SPREAD_COLORS[i % len(_SPREAD_COLORS)]
+        lid = ctx.eid_sid_to_lid.get((eid, sid))
+        name = f"spread {_sym_label(eid, sid, lid)}" if multi else "spread"
+        color = color_map.get((eid, sid), _PALETTE[i % len(_PALETTE)])
         fig.add_trace(
             go.Scattergl(
                 x=spread.index, y=spread.values, mode="lines", name=name,
@@ -389,6 +509,8 @@ def plot_spread(
         yaxis_title="spread",
         xaxis_title="time",
         showlegend=multi,
+        legend=_LEGEND_LAYOUT if multi else None,
+        margin=dict(r=160) if multi else None,
     )
     return fig
 
@@ -444,11 +566,17 @@ def plot_cross_exchange_spread(
 
     spread_bps = _downsample(spread_bps, max_points)
 
+    ctx = _get_listing_context(report)
+    lid_a = ctx.eid_sid_to_lid.get((exchange_id_a, security_id))
+    lid_b = ctx.eid_sid_to_lid.get((exchange_id_b, security_id))
+    label_a = _sym_label(exchange_id_a, security_id, lid_a)
+    label_b = _sym_label(exchange_id_b, security_id, lid_b)
+
     fig = go.Figure()
     fig.add_trace(
         go.Scattergl(
             x=spread_bps.index, y=spread_bps.values, mode="lines",
-            name=f"{exchange_id_b} - {exchange_id_a}",
+            name=f"{label_b} - {label_a}",
             line=dict(width=1, color="#6366f1"),
         ),
     )
@@ -456,7 +584,7 @@ def plot_cross_exchange_spread(
 
     fig.update_layout(
         height=350,
-        title=title or f"Cross-Exchange Spread (ex {exchange_id_a} vs {exchange_id_b}, bps)",
+        title=title or f"Cross-Exchange Spread ({label_a} vs {label_b}, bps)",
         hovermode="x unified",
         yaxis_title="spread (bps)",
         xaxis_title="time",
@@ -470,6 +598,8 @@ MAX_WARNINGS_DISPLAY = 500
 
 def _fills_table_html(report: "BacktestReport") -> str:
     """Render fills as a scrollable HTML table, capped at MAX_FILLS_DISPLAY rows."""
+    import html as _html
+
     fills = report.fills
     if fills.empty:
         return '<p class="muted">No fills.</p>'
@@ -478,20 +608,77 @@ def _fills_table_html(report: "BacktestReport") -> str:
     truncated = total > MAX_FILLS_DISPLAY
     df = fills.head(MAX_FILLS_DISPLAY) if truncated else fills
 
-    cols = ["side", "fill_price", "fill_qty", "fee"]
+    cols = ["side", "fill_price", "fill_qty", "leaves_qty", "fee", "book_bid_price", "book_ask_price"]
     available = [c for c in cols if c in df.columns]
-    df = df[available].copy()
-    df.index = df.index.strftime("%Y-%m-%d %H:%M:%S.%f")
-    df.index.name = "timestamp"
+    display = df[available].copy()
 
-    html = df.to_html(
+    # Join order details (order_type, submit_price) via client_oid
+    if report._results is not None and "client_oid" in df.columns:
+        try:
+            orders = report._results.orders_df()
+            if not orders.empty and "client_oid" in orders.columns:
+                deduped = orders.drop_duplicates(subset="client_oid").set_index("client_oid")
+                oids = df["client_oid"].values
+                display["order_type"] = pd.array(deduped["order_type"].reindex(oids).values)
+                display["submit_price"] = pd.array(deduped["submit_price"].reindex(oids).values)
+        except Exception:
+            pass
+
+    # Listing ID column with tooltip
+    ctx = _get_listing_context(report)
+    if ctx.eid_sid_to_lid and "exchange_id" in df.columns and "security_id" in df.columns:
+        def _lid_cell(row):
+            lid = ctx.eid_sid_to_lid.get((row["exchange_id"], row["security_id"]))
+            if lid is None:
+                return ""
+            listing = ctx.listings.get(lid)
+            if listing:
+                sec = ctx.securities.get(listing.security_id)
+                exch = ctx.exchanges.get(listing.exchange_id)
+                sym = _html.escape(sec.symbol) if sec else "?"
+                exch_name = _html.escape(exch.exchange_name) if exch else "?"
+                tooltip = f"{sym} @ {exch_name}"
+                return f'<span title="{tooltip}">{lid}</span>'
+            return str(lid)
+
+        display.insert(0, "listing_id", df.apply(_lid_cell, axis=1).values)
+
+    rename_map = {
+        "listing_id": "Listing",
+        "side": "Side",
+        "fill_price": "Fill Price",
+        "fill_qty": "Fill Qty",
+        "leaves_qty": "Leaves Qty",
+        "fee": "Fee",
+        "book_bid_price": "Book Bid",
+        "book_ask_price": "Book Ask",
+        "order_type": "Order Type",
+        "submit_price": "Submit Price",
+    }
+    display = display.rename(columns={k: v for k, v in rename_map.items() if k in display.columns})
+
+    display.index = display.index.strftime("%Y-%m-%d %H:%M:%S.%f").str[:-3]
+    display.index.name = "Timestamp"
+
+    table_html = display.to_html(
         classes="fills-table",
         float_format=lambda x: f"{x:,.6f}",
+        escape=False,
     )
+
+    # Color side cells
+    table_html = table_html.replace(
+        "<td>Bid</td>",
+        '<td style="color:#16a34a;font-weight:600">Bid</td>',
+    ).replace(
+        "<td>Ask</td>",
+        '<td style="color:#dc2626;font-weight:600">Ask</td>',
+    )
+
     note = ""
     if truncated:
         note = f'<p class="muted">Showing first {MAX_FILLS_DISPLAY:,} of {total:,} fills.</p>'
-    return f'<div class="fills-scroll">{html}</div>{note}'
+    return f'<div class="fills-scroll">{table_html}</div>{note}'
 
 
 _METRIC_FORMAT: dict[str, str] = {
@@ -609,48 +796,33 @@ def _render_listings(report: "BacktestReport") -> str | None:
     if not listing_ids:
         return None
 
-    listings: dict[int, object] = {}
-    securities: dict[int, object] = {}
-    exchanges: dict[int, object] = {}
-    try:
-        client = RegistryClient()
-        for lid in listing_ids:
-            results = client.get_listing(listing_id=lid)
-            if results:
-                listings[lid] = results[0]
+    ctx = _get_listing_context(report)
 
-        security_ids = {l.security_id for l in listings.values()}
-        exchange_ids = {l.exchange_id for l in listings.values()}
-
-        for sid in security_ids:
-            results = client.get_security(security_id=sid)
-            if results:
-                securities[sid] = results[0]
-
-        for eid in exchange_ids:
-            results = client.get_exchange(exchange_id=eid)
-            if results:
-                exchanges[eid] = results[0]
-    except Exception:
-        pass
-
-    controller_ui = gnome_config.CONTROLLER_UI_URL
     rows = []
     for lid in listing_ids:
-        listing = listings.get(lid)
-        security = securities.get(listing.security_id) if listing else None
-        exchange = exchanges.get(listing.exchange_id) if listing else None
+        listing = ctx.listings.get(lid)
+        security = ctx.securities.get(listing.security_id) if listing else None
+        exchange = ctx.exchanges.get(listing.exchange_id) if listing else None
+
         sym = security.symbol if security else "—"
-        sec_type = SecurityType(security.type).name.capitalize() if security else "—"
+        if security:
+            sec_url = f"{ctx.controller_ui}/security-master/securities/{security.security_id}"
+            sym_cell = f'{sym} (<a class="listing-link" href="{sec_url}">{security.security_id}</a>)'
+        else:
+            sym_cell = sym
+
         exch_name = exchange.exchange_name if exchange else "—"
+        exch_cell = f"{exch_name} ({exchange.exchange_id})" if exchange else exch_name
+
+        sec_type = SecurityType(security.type).name.capitalize() if security else "—"
         exch_sym = (listing.exchange_security_symbol or "—") if listing else "—"
         profile = profile_by_id.get(lid, "")
-        url = f"{controller_ui}/security-master/listings/{lid}"
+        url = f"{ctx.controller_ui}/security-master/listings/{lid}"
         rows.append(
             f'<tr>'
             f'<td><a class="listing-link" href="{url}">{lid}</a></td>'
-            f'<td>{sym}</td>'
-            f'<td>{exch_name}</td>'
+            f'<td>{sym_cell}</td>'
+            f'<td>{exch_cell}</td>'
             f'<td>{exch_sym}</td>'
             f'<td>{sec_type}</td>'
             f'<td>{profile}</td>'
@@ -860,7 +1032,9 @@ def assemble_html(
     letter-spacing: 0.04em;
   }}
   .fills-table td {{ font-family: "SF Mono", "Fira Code", monospace; }}
-  .fills-table tr:hover {{ background: #f8fafc; }}
+  .fills-table tbody tr:nth-child(even) {{ background: #f8fafc; }}
+  .fills-table tr:hover {{ background: #eef4ff; }}
+  .fills-table td span[title] {{ cursor: help; border-bottom: 1px dotted #94a3b8; }}
   .plotly-graph-div {{ width: 100% !important; min-height: 350px; }}
   .js-plotly-plot .plotly {{ min-height: 350px; }}
   .listings-table {{

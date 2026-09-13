@@ -398,9 +398,11 @@ class BacktestResults:
 
         if scale_prices:
             for col in ["bid_price", "ask_price", "take_limit_price"]:
-                df[col] = df[col] / self.PRICE_SCALE
+                if col in df.columns:
+                    df[col] = df[col] / self.PRICE_SCALE
             for col in ["bid_size", "ask_size", "take_size"]:
-                df[col] = df[col] / self.SIZE_SCALE
+                if col in df.columns:
+                    df[col] = df[col] / self.SIZE_SCALE
 
         self._cached_intent_df = df
         return df

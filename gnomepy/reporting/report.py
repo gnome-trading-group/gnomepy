@@ -25,7 +25,7 @@ def _with_mid_price(market_df: pd.DataFrame) -> pd.DataFrame:
         df = market_df.copy()
         bid = df["bid_price_0"].astype(float).where(df["bid_price_0"] > 0)
         ask = df["ask_price_0"].astype(float).where(df["ask_price_0"] > 0)
-        df["mid_price"] = ((bid + ask) / 2.0).ffill()
+        df["mid_price"] = ((bid.fillna(ask) + ask.fillna(bid)) / 2.0).ffill()
         return df
     return market_df
 

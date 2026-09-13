@@ -26,7 +26,12 @@ from gnomepy.explorer.styles import (
 )
 
 if TYPE_CHECKING:
-    from gnomepy.explorer.data import WindowedData
+    from gnomepy.explorer.data import ExplorerDataStore, WindowedData
+
+_MULTI_PALETTE = [
+    "#58a6ff", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+    "#8c564b", "#e377c2", "#bcbd22", "#17becf", "#7f7f7f",
+]
 
 
 def build_price_figure(
@@ -36,13 +41,14 @@ def build_price_figure(
     t_start: pd.Timestamp | None = None,
     t_end: pd.Timestamp | None = None,
     price_decimals: int = 2,
+    store_a: ExplorerDataStore | None = None,
 ) -> go.Figure:
     fig = go.Figure()
     layout = dict(CHART_LAYOUT_BASE)
     layout["title"] = {"text": "Price & Book", "font": {"size": 12}}
     layout["yaxis"] = {**layout.get("yaxis", {}), "tickformat": f".{price_decimals}f"}
 
-    _add_price_traces(fig, windowed_a, label="", is_comparison_b=False, price_decimals=price_decimals)
+    _add_price_traces(fig, windowed_a, label="", is_comparison_b=False, price_decimals=price_decimals, store=store_a)
     if windowed_b is not None:
         _add_price_traces(fig, windowed_b, label=" B", is_comparison_b=True, price_decimals=price_decimals)
 
@@ -67,6 +73,7 @@ def build_spread_figure(
     t_start: pd.Timestamp | None = None,
     t_end: pd.Timestamp | None = None,
     price_decimals: int = 2,
+    store_a: ExplorerDataStore | None = None,
 ) -> go.Figure:
     fig = go.Figure()
     layout = dict(CHART_LAYOUT_BASE)
@@ -79,6 +86,28 @@ def build_spread_figure(
         mkt = windowed.market
         if mkt.empty or "bid_price_0" not in mkt.columns or "ask_price_0" not in mkt.columns:
             continue
+
+        # Multi-listing: separate spread trace per listing
+        if (
+            not is_b
+            and "exchange_id" in mkt.columns
+            and mkt.groupby(["exchange_id", "security_id"]).ngroups > 1
+        ):
+            pairs = sorted(mkt.groupby(["exchange_id", "security_id"]).groups.keys())
+            for i, (eid, sid) in enumerate(pairs):
+                sym_mkt = mkt[(mkt["exchange_id"] == eid) & (mkt["security_id"] == sid)]
+                spread = (sym_mkt["ask_price_0"] - sym_mkt["bid_price_0"]).astype(float)
+                sym_label = store_a.listing_label(eid, sid) if store_a else f"{eid}/{sid}"
+                color = _MULTI_PALETTE[i % len(_MULTI_PALETTE)]
+                fig.add_trace(go.Scattergl(
+                    x=spread.index, y=spread, mode="lines",
+                    name=f"Spread {sym_label}",
+                    line={"color": color, "width": 1},
+                    hovertemplate=f"Spread: %{{y:.{price_decimals}f}}<extra></extra>",
+                    showlegend=True,
+                ))
+            continue
+
         spread = (mkt["ask_price_0"] - mkt["bid_price_0"]).astype(float)
         color = ASK_LINE_COLOR if not is_b else BID_LINE_COLOR
         fig.add_trace(go.Scattergl(
@@ -112,6 +141,7 @@ def _add_price_traces(
     label: str,
     is_comparison_b: bool,
     price_decimals: int = 2,
+    store: ExplorerDataStore | None = None,
 ) -> None:
     mkt = windowed.market
     fills = windowed.fills
@@ -120,6 +150,16 @@ def _add_price_traces(
     is_deep = windowed.is_deep_window
 
     if mkt.empty:
+        return
+
+    # Multi-listing "All" mode: separate trace per (exchange_id, security_id)
+    if (
+        not is_comparison_b
+        and "exchange_id" in mkt.columns
+        and "security_id" in mkt.columns
+        and mkt.groupby(["exchange_id", "security_id"]).ngroups > 1
+    ):
+        _add_multi_listing_price_traces(fig, mkt, fills, intents, price_decimals, store)
         return
 
     mid_opacity = 0.6 if is_comparison_b else 1.0
@@ -144,6 +184,53 @@ def _add_price_traces(
 
     _add_intent_traces(fig, intents, mkt, label, is_comparison_b)
     _add_fill_markers(fig, fills, label, is_comparison_b, price_decimals)
+
+
+def _add_multi_listing_price_traces(
+    fig: go.Figure,
+    mkt: pd.DataFrame,
+    fills: pd.DataFrame,
+    intents: pd.DataFrame,
+    price_decimals: int,
+    store: ExplorerDataStore | None,
+) -> None:
+    pairs = sorted(mkt.groupby(["exchange_id", "security_id"]).groups.keys())
+    for i, (eid, sid) in enumerate(pairs):
+        color = _MULTI_PALETTE[i % len(_MULTI_PALETTE)]
+        sym_mkt = mkt[(mkt["exchange_id"] == eid) & (mkt["security_id"] == sid)]
+        label = store.listing_label(eid, sid) if store else f"{eid}/{sid}"
+        fig.add_trace(go.Scattergl(
+            x=sym_mkt.index,
+            y=sym_mkt["mid_price"],
+            mode="lines",
+            name=label,
+            line={"color": color, "width": 1.5},
+            hovertemplate=f"{label}: %{{y:.{price_decimals}f}}<extra></extra>",
+            showlegend=True,
+        ))
+        # Per-listing fill markers
+        if not fills.empty and "exchange_id" in fills.columns:
+            sym_fills = fills[(fills["exchange_id"] == eid) & (fills["security_id"] == sid)]
+            if not sym_fills.empty:
+                is_buy = sym_fills["side"].str.upper().str.contains("BID")
+                buys = sym_fills[is_buy]
+                sells = sym_fills[~is_buy]
+                price_col = "fill_price" if "fill_price" in sym_fills.columns else sym_fills.columns[0]
+                if not buys.empty:
+                    fig.add_trace(go.Scattergl(
+                        x=buys.index, y=buys[price_col], mode="markers",
+                        name=f"Buy ({label})",
+                        marker={"color": color, "size": 7, "symbol": "triangle-up"},
+                        showlegend=False,
+                    ))
+                if not sells.empty:
+                    fig.add_trace(go.Scattergl(
+                        x=sells.index, y=sells[price_col], mode="markers",
+                        name=f"Sell ({label})",
+                        marker={"color": color, "size": 7, "symbol": "triangle-down"},
+                        showlegend=False,
+                    ))
+    _add_intent_traces(fig, intents, mkt, label="", is_b=False)
 
 
 def _add_bbo_band(

@@ -35,6 +35,16 @@ CURSOR_COLOR = "rgba(255, 215, 0, 0.7)"
 SIGNAL_COLORS = ["#d29922", "#a371f7", "#79c0ff", "#56d364", "#ff7b72", "#ffa657"]
 DEPTH_ALPHA = [0.9, 0.6, 0.4, 0.28, 0.18, 0.12, 0.08, 0.06, 0.04, 0.03]
 
+LADDER_BG = "#1c2128"
+LADDER_HEADER_BG = "#21262d"
+LADDER_BID_BAR = "rgba(63, 185, 80, 0.3)"
+LADDER_ASK_BAR = "rgba(248, 81, 73, 0.3)"
+LADDER_PRICE_TEXT = "#f0f6fc"
+LADDER_SIZE_TEXT = "#c9d1d9"
+LADDER_MID_HIGHLIGHT = "rgba(88, 166, 255, 0.15)"
+INTENT_LADDER_BORDER = "#ffd700"
+FILL_FLASH_COLOR = "rgba(255, 215, 0, 0.5)"
+
 CHART_MARGIN = {"l": 80, "r": 15, "t": 25, "b": 0}
 CHART_FONT = {"family": "JetBrains Mono, monospace", "color": TEXT, "size": 11}
 PLOTLY_TEMPLATE = "plotly_dark"
@@ -122,4 +132,13 @@ body {{
 .rc-slider-track {{ background-color: #388bfd; }}
 .rc-slider-handle {{ border-color: #388bfd; background-color: #388bfd; }}
 .rc-slider-rail {{ background-color: {BORDER}; }}
+@keyframes fill-flash {{
+    0% {{ background-color: {FILL_FLASH_COLOR}; }}
+    100% {{ background-color: transparent; }}
+}}
+.fill-flash {{ animation: fill-flash 1.5s ease-out forwards; }}
+.ladder-table {{ width: 100%; border-collapse: collapse; font-family: 'JetBrains Mono', monospace; font-size: 12px; }}
+.ladder-table td, .ladder-table th {{ padding: 2px 6px; white-space: nowrap; }}
+.tab-content-visible {{ display: block; }}
+.tab-content-hidden {{ display: none; }}
 """

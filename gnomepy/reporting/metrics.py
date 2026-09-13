@@ -174,7 +174,9 @@ def build_curves(
     mkt = market_df.sort_index().copy()
     if "mid_price" not in mkt.columns:
         if "bid_price_0" in mkt.columns and "ask_price_0" in mkt.columns:
-            mkt["mid_price"] = (mkt["bid_price_0"].astype(float) + mkt["ask_price_0"].astype(float)) / 2.0
+            bid = mkt["bid_price_0"].astype(float).where(mkt["bid_price_0"] > 0)
+            ask = mkt["ask_price_0"].astype(float).where(mkt["ask_price_0"] > 0)
+            mkt["mid_price"] = ((bid.fillna(ask) + ask.fillna(bid)) / 2.0).ffill().fillna(0.0)
         else:
             mkt["mid_price"] = 0.0
     mkt["_seq"] = range(len(mkt))

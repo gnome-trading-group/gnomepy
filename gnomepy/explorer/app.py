@@ -20,6 +20,7 @@ from gnomepy.explorer.data import (
     ComparisonStore,
     ExplorerDataStore,
 )
+from gnomepy.explorer.panels.book import build_book_context_chart, build_book_tab_layout, build_ladder
 from gnomepy.explorer.panels.event_log import build_event_columns, build_event_records
 from gnomepy.explorer.panels.price import build_price_figure, build_spread_figure
 from gnomepy.explorer.panels.pnl import build_pnl_figure
@@ -83,7 +84,60 @@ def create_app(
     default_signals = [o["value"] for o in signal_options[:3]]
     has_signals = bool(signal_options)
 
+    listings = store_a.listings()
+    listing_options = [{"label": "All", "value": "all"}] + [
+        {"label": store_a.listing_label(eid, sid), "value": f"{eid}_{sid}"}
+        for eid, sid in listings
+    ]
+    default_listing = "all" if len(listings) > 1 else (f"{listings[0][0]}_{listings[0][1]}" if listings else "all")
+
     slider_marks = _build_slider_marks(t_min, t_max)
+
+    charts_tab_content = html.Div(id="charts-tab-content", children=[
+        dbc.Row(dbc.Col(
+            dcc.Loading(
+                dcc.Graph(id="price-chart", config=_CHART_CONFIG, style={"height": "35vh"}),
+                type="circle", color="#58a6ff", style={"height": "35vh"},
+            ),
+            width=12,
+        ), className="g-0 mt-1"),
+
+        dbc.Row(dbc.Col(
+            dcc.Loading(
+                dcc.Graph(id="spread-chart", config=_CHART_CONFIG, style={"height": "12vh"}),
+                type="circle", color="#58a6ff", style={"height": "12vh"},
+            ),
+            width=12,
+        ), className="g-0"),
+
+        dbc.Row(dbc.Col(
+            dcc.Loading(
+                dcc.Graph(id="signals-chart", config=_CHART_CONFIG, style={"height": "20vh"}),
+                type="circle", color="#58a6ff", style={"height": "20vh"},
+            ),
+            width=12,
+        ), id="signals-row", className="g-0",
+            style={"display": "block" if has_signals else "none"}),
+
+        dbc.Row(dbc.Col(
+            dcc.Loading(
+                dcc.Graph(id="pnl-chart", config=_CHART_CONFIG, style={"height": "25vh"}),
+                type="circle", color="#58a6ff", style={"height": "25vh"},
+            ),
+            width=12,
+        ), className="g-0"),
+
+        dbc.Row(dbc.Col(
+            _build_event_table(),
+            width=12,
+        ), className="g-0 mt-1 mb-3"),
+    ])
+
+    book_tab_content = html.Div(
+        id="book-tab-content",
+        children=[build_book_tab_layout(listings, store_a)],
+        style={"display": "none"},
+    )
 
     app.layout = dbc.Container(
         [
@@ -94,40 +148,28 @@ def create_app(
 
             _build_header(store_a, store_b),
             _build_config_diff_section(),
-            _build_nav_bar(slider_marks, signal_options, default_signals, has_signals, price_decimals),
+            _build_nav_bar(slider_marks, signal_options, default_signals, has_signals, price_decimals, listing_options, default_listing),
             _build_window_label(),
 
-            dbc.Row(dbc.Col(
-                dcc.Graph(id="price-chart", config=_CHART_CONFIG, style={"height": "35vh"}),
-                width=12,
-            ), className="g-0 mt-1"),
+            dcc.Tabs(
+                id="main-tabs",
+                value="charts",
+                children=[
+                    dcc.Tab(label="Charts", value="charts"),
+                    dcc.Tab(label="Book Analysis", value="book"),
+                ],
+                style={"height": "32px", "marginTop": "4px"},
+                colors={"background": PANEL_BG, "primary": "#388bfd", "border": BORDER},
+            ),
 
-            dbc.Row(dbc.Col(
-                dcc.Graph(id="spread-chart", config=_CHART_CONFIG, style={"height": "12vh"}),
-                width=12,
-            ), className="g-0"),
-
-            dbc.Row(dbc.Col(
-                dcc.Graph(id="signals-chart", config=_CHART_CONFIG, style={"height": "20vh"}),
-                width=12,
-            ), id="signals-row", className="g-0",
-                style={"display": "block" if has_signals else "none"}),
-
-            dbc.Row(dbc.Col(
-                dcc.Graph(id="pnl-chart", config=_CHART_CONFIG, style={"height": "25vh"}),
-                width=12,
-            ), className="g-0"),
-
-            dbc.Row(dbc.Col(
-                _build_event_table(),
-                width=12,
-            ), className="g-0 mt-1 mb-3"),
+            charts_tab_content,
+            book_tab_content,
         ],
         fluid=True,
         style={"backgroundColor": BG, "minHeight": "100vh", "padding": "8px"},
     )
 
-    _register_callbacks(app, t_min, t_max, has_signals, default_signals, price_decimals)
+    _register_callbacks(app, t_min, t_max, has_signals, default_signals, price_decimals, listings)
     return app
 
 
@@ -166,6 +208,8 @@ def _build_nav_bar(
     default_signals: list[str],
     has_signals: bool,
     price_decimals: int = 2,
+    listing_options: list[dict] | None = None,
+    default_listing: str = "all",
 ) -> dbc.Row:
     step_buttons = dbc.ButtonGroup([
         dbc.Button("|◀", id="btn-first", n_clicks=0, size="sm", outline=True, color="secondary"),
@@ -220,6 +264,22 @@ def _build_nav_bar(
     else:
         signals_row = [html.Div(id="signal-selector", style={"display": "none"})]
 
+    show_listing_selector = listing_options and len(listing_options) > 2  # >1 listing + "All"
+    listing_col = []
+    if show_listing_selector:
+        listing_col = [dbc.Col(html.Div([
+            html.Span("Listing:", style={"color": TEXT_MUTED, "fontSize": "12px", "marginRight": "4px"}),
+            dcc.Dropdown(
+                id="listing-selector",
+                options=listing_options,
+                value=default_listing,
+                clearable=False,
+                style={"minWidth": "180px", "fontSize": "12px"},
+            ),
+        ], style={"display": "flex", "alignItems": "center", "gap": "4px"}), width="auto")]
+    else:
+        listing_col = [html.Div(id="listing-selector", style={"display": "none"})]
+
     controls_row = dbc.Row([
         dbc.Col(step_buttons, width="auto"),
         dbc.Col(html.Div([
@@ -230,6 +290,7 @@ def _build_nav_bar(
             html.Span("Speed:", style={"color": TEXT_MUTED, "fontSize": "12px", "marginRight": "4px"}),
             speed_select,
         ], style={"display": "flex", "alignItems": "center", "gap": "4px"}), width="auto"),
+        *listing_col,
         dbc.Col(html.Div(signals_row, style={"display": "flex", "alignItems": "center", "gap": "4px"}), width="auto"),
         dbc.Col(html.Div([
             html.Span("Decimals:", style={"color": TEXT_MUTED, "fontSize": "12px", "marginRight": "4px"}),
@@ -292,6 +353,7 @@ def _build_event_table() -> dash_table.DataTable:
         style_cell_conditional=[
             {"if": {"column_id": "time"}, "textAlign": "left", "minWidth": "110px"},
             {"if": {"column_id": "type"}, "textAlign": "left", "minWidth": "55px"},
+            {"if": {"column_id": "listing"}, "textAlign": "left", "minWidth": "120px"},
             {"if": {"column_id": "order_type"}, "textAlign": "left", "minWidth": "65px"},
             {"if": {"column_id": "oid"}, "textAlign": "right", "minWidth": "50px"},
             {"if": {"column_id": "source"}, "textAlign": "center", "minWidth": "40px"},
@@ -398,6 +460,53 @@ def _center_window(
     return _clamp_window(new_start, new_end, t_min, t_max)
 
 
+class _FilteredStore:
+    """Thin wrapper around ExplorerDataStore that exposes single-listing curves."""
+
+    def __init__(self, store: ExplorerDataStore, listing: tuple[int, int]):
+        self.label = store.label
+        self.metadata = store.metadata
+        self._store = store
+        self._listing = listing
+        # Expose per-listing curves as the "total" curves so pnl.py renders them
+        by_pnl = store.curves.pnl_by_symbol
+        by_pos = store.curves.position_by_symbol
+        by_fees = store.curves.fees_by_symbol
+        self._pnl = by_pnl[listing] if listing in by_pnl.columns else store.curves.pnl
+        self._pos = by_pos[listing] if listing in by_pos.columns else store.curves.position
+        self._fees = by_fees[listing] if listing in by_fees.columns else store.curves.fees
+
+    @property
+    def curves(self):
+        c = self._store.curves
+        import types
+        proxy = types.SimpleNamespace()
+        proxy.pnl = self._pnl
+        proxy.position = self._pos
+        proxy.fees = self._fees
+        proxy.pnl_by_symbol = type(c.pnl_by_symbol)()  # empty DataFrame
+        proxy.position_by_symbol = type(c.position_by_symbol)()
+        return proxy
+
+    def listing_label(self, eid: int, sid: int) -> str:
+        return self._store.listing_label(eid, sid)
+
+
+def _filtered_store(store: ExplorerDataStore, listing: tuple[int, int]) -> "_FilteredStore":
+    return _FilteredStore(store, listing)
+
+
+def _parse_listing(value: str | None) -> tuple[int, int] | None:
+    """Parse 'eid_sid' dropdown value to (eid, sid) tuple, or None for 'all'."""
+    if not value or value == "all":
+        return None
+    try:
+        eid, sid = value.split("_", 1)
+        return int(eid), int(sid)
+    except (ValueError, AttributeError):
+        return None
+
+
 def _register_callbacks(
     app: dash.Dash,
     t_min: pd.Timestamp,
@@ -405,6 +514,7 @@ def _register_callbacks(
     has_signals: bool,
     default_signals: list[str],
     price_decimals: int = 2,
+    listings: list[tuple[int, int]] | None = None,
 ) -> None:
 
     @app.callback(
@@ -530,34 +640,38 @@ def _register_callbacks(
         Input("time-window", "data"),
         Input("cursor-pos", "data"),
         Input("price-decimals-input", "value"),
+        Input("listing-selector", "value"),
         prevent_initial_call=False,
     )
-    def render_price(window_data, cursor_pos, decimals):
+    def render_price(window_data, cursor_pos, decimals, listing_val):
         t_start, t_end = _window_from_store(window_data, t_min, t_max)
         cursor_ts = pd.Timestamp(cursor_pos) if cursor_pos else None
         pd_ = int(decimals) if decimals is not None else price_decimals
+        listing = _parse_listing(listing_val)
 
-        windowed_a = _STORE_A.window(t_start, t_end)
-        windowed_b = _STORE_B.window(t_start, t_end) if _STORE_B else None
+        windowed_a = _STORE_A.window(t_start, t_end, listing=listing)
+        windowed_b = _STORE_B.window(t_start, t_end, listing=listing) if _STORE_B else None
 
-        return build_price_figure(windowed_a, windowed_b, cursor_ts, t_start, t_end, pd_)
+        return build_price_figure(windowed_a, windowed_b, cursor_ts, t_start, t_end, pd_, store_a=_STORE_A)
 
     @app.callback(
         Output("spread-chart", "figure"),
         Input("time-window", "data"),
         Input("cursor-pos", "data"),
         Input("price-decimals-input", "value"),
+        Input("listing-selector", "value"),
         prevent_initial_call=False,
     )
-    def render_spread(window_data, cursor_pos, decimals):
+    def render_spread(window_data, cursor_pos, decimals, listing_val):
         t_start, t_end = _window_from_store(window_data, t_min, t_max)
         cursor_ts = pd.Timestamp(cursor_pos) if cursor_pos else None
         pd_ = int(decimals) if decimals is not None else price_decimals
+        listing = _parse_listing(listing_val)
 
-        windowed_a = _STORE_A.window(t_start, t_end)
-        windowed_b = _STORE_B.window(t_start, t_end) if _STORE_B else None
+        windowed_a = _STORE_A.window(t_start, t_end, listing=listing)
+        windowed_b = _STORE_B.window(t_start, t_end, listing=listing) if _STORE_B else None
 
-        return build_spread_figure(windowed_a, windowed_b, cursor_ts, t_start, t_end, pd_)
+        return build_spread_figure(windowed_a, windowed_b, cursor_ts, t_start, t_end, pd_, store_a=_STORE_A)
 
     @app.callback(
         Output("event-table", "columns"),
@@ -573,15 +687,23 @@ def _register_callbacks(
         Input("time-window", "data"),
         Input("cursor-pos", "data"),
         Input("price-decimals-input", "value"),
+        Input("listing-selector", "value"),
         prevent_initial_call=False,
     )
-    def render_pnl(window_data, cursor_pos, decimals):
+    def render_pnl(window_data, cursor_pos, decimals, listing_val):
         t_start, t_end = _window_from_store(window_data, t_min, t_max)
         cursor_ts = pd.Timestamp(cursor_pos) if cursor_pos else None
         pnl_delta = _COMPARISON.pnl_delta(t_start, t_end) if _COMPARISON else None
         pd_ = int(decimals) if decimals is not None else price_decimals
+        listing = _parse_listing(listing_val)
 
-        return build_pnl_figure(_STORE_A, _STORE_B, t_start, t_end, cursor_ts, pnl_delta, pd_)
+        store_a = _STORE_A
+        store_b = _STORE_B
+        if listing is not None:
+            store_a = _filtered_store(_STORE_A, listing)
+            store_b = _filtered_store(_STORE_B, listing) if _STORE_B else None
+
+        return build_pnl_figure(store_a, store_b, t_start, t_end, cursor_ts, pnl_delta, pd_)
 
     if has_signals:
         @app.callback(
@@ -604,13 +726,15 @@ def _register_callbacks(
     @app.callback(
         Output("event-table", "data"),
         Input("time-window", "data"),
+        Input("listing-selector", "value"),
         prevent_initial_call=False,
     )
-    def render_event_table(window_data):
+    def render_event_table(window_data, listing_val):
         t_start, t_end = _window_from_store(window_data, t_min, t_max)
-        windowed_a = _STORE_A.window(t_start, t_end)
-        windowed_b = _STORE_B.window(t_start, t_end) if _STORE_B else None
-        return build_event_records(windowed_a, windowed_b)
+        listing = _parse_listing(listing_val)
+        windowed_a = _STORE_A.window(t_start, t_end, listing=listing)
+        windowed_b = _STORE_B.window(t_start, t_end, listing=listing) if _STORE_B else None
+        return build_event_records(windowed_a, windowed_b, label_fn=_STORE_A.listing_label)
 
     @app.callback(
         Output("window-label", "children"),
@@ -630,6 +754,67 @@ def _register_callbacks(
         else:
             span_str = f"{total_s:.1f}s"
         return f"Window: {t_start.strftime('%Y-%m-%d %H:%M:%S')} — {t_end.strftime('%H:%M:%S')}  ({span_str})"
+
+    @app.callback(
+        Output("charts-tab-content", "style"),
+        Output("book-tab-content", "style"),
+        Input("main-tabs", "value"),
+        prevent_initial_call=False,
+    )
+    def switch_tab(tab: str):
+        if tab == "book":
+            return {"display": "none"}, {"display": "block"}
+        return {"display": "block"}, {"display": "none"}
+
+    @app.callback(
+        Output("book-ladders-container", "children"),
+        Output("book-context-chart", "figure"),
+        Input("cursor-pos", "data"),
+        Input("time-window", "data"),
+        Input("price-decimals-input", "value"),
+        Input("listing-selector", "value"),
+        Input("main-tabs", "value"),
+        prevent_initial_call=False,
+    )
+    def render_book(cursor_pos, window_data, decimals, listing_val, active_tab):
+        if active_tab != "book":
+            raise dash.exceptions.PreventUpdate
+
+        t_start, t_end = _window_from_store(window_data, t_min, t_max)
+        cursor_ts = pd.Timestamp(cursor_pos) if cursor_pos else t_end
+        pd_ = int(decimals) if decimals is not None else price_decimals
+        listing = _parse_listing(listing_val)
+
+        windowed_a = _STORE_A.window(t_start, t_end, listing=listing)
+        context_fig = build_book_context_chart(windowed_a, cursor_ts if cursor_pos else None, t_start, t_end, pd_)
+
+        active_listings = [listing] if listing else _STORE_A.listings()
+        book_snaps = _STORE_A.book_snapshot(cursor_ts, listing)
+        intents = _STORE_A.intent_at(cursor_ts, listing)
+        all_fills = _STORE_A.fills_near(cursor_ts)
+
+        n = len(active_listings)
+        col_width = max(3, 12 // n) if n > 0 else 12
+
+        ladder_cols: list[dbc.Col] = []
+        for eid, sid in active_listings:
+            key = (eid, sid)
+            venue_label = _STORE_A.listing_label(eid, sid)
+            b_data = book_snaps.get(key)
+            i_data = intents.get(key)
+            if not all_fills.empty and "exchange_id" in all_fills.columns:
+                listing_fills = all_fills[(all_fills["exchange_id"] == eid) & (all_fills["security_id"] == sid)]
+            else:
+                listing_fills = all_fills
+            ladder = build_ladder(b_data, i_data, listing_fills, venue_label, pd_, _STORE_A.record_depth)
+            ladder_cols.append(dbc.Col(ladder, width=col_width))
+
+        if len(ladder_cols) == 1:
+            row_children = [dbc.Col(width=4), ladder_cols[0], dbc.Col(width=4)]
+        else:
+            row_children = ladder_cols
+
+        return dbc.Row(row_children, className="g-2 mt-1"), context_fig
 
     @app.callback(
         Output("config-diff-section", "children"),

@@ -25,6 +25,11 @@ from gnomepy.explorer.styles import (
 FEES_LINE_COLOR = "rgba(210, 153, 34, 0.45)"
 FEES_FILL_COLOR = "rgba(210, 153, 34, 0.08)"
 
+_MULTI_PALETTE = [
+    "#58a6ff", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+    "#8c564b", "#e377c2", "#bcbd22", "#17becf", "#7f7f7f",
+]
+
 if TYPE_CHECKING:
     from gnomepy.explorer.data import ExplorerDataStore
 
@@ -46,9 +51,20 @@ def build_pnl_figure(
         subplot_titles=("PnL", "Position"),
     )
 
-    _add_pnl_traces(fig, store_a, t_start, t_end, label="A" if store_b else "", color=PNL_A_COLOR, row=1)
+    multi = (
+        store_b is None
+        and not store_a.curves.pnl_by_symbol.empty
+        and len(store_a.curves.pnl_by_symbol.columns) > 1
+    )
+
+    if multi:
+        _add_multi_pnl_traces(fig, store_a, t_start, t_end, row=1)
+        _add_multi_position_traces(fig, store_a, t_start, t_end, row=2)
+    else:
+        _add_pnl_traces(fig, store_a, t_start, t_end, label="A" if store_b else "", color=PNL_A_COLOR, row=1)
+        _add_position_traces(fig, store_a, t_start, t_end, label="A" if store_b else "", color=POSITION_A_COLOR, row=2)
+
     _add_fees_trace(fig, store_a, t_start, t_end, price_decimals)
-    _add_position_traces(fig, store_a, t_start, t_end, label="A" if store_b else "", color=POSITION_A_COLOR, row=2)
 
     if store_b is not None:
         _add_pnl_traces(fig, store_b, t_start, t_end, label="B", color=PNL_B_COLOR, row=1, dash="dash")
@@ -187,3 +203,75 @@ def _add_zero_line(fig: go.Figure, row: int) -> None:
         line={"color": "rgba(255,255,255,0.15)", "width": 1, "dash": "dot"},
         row=row, col=1,
     )
+
+
+def _add_multi_pnl_traces(
+    fig: go.Figure,
+    store: ExplorerDataStore,
+    t_start: pd.Timestamp,
+    t_end: pd.Timestamp,
+    row: int,
+) -> None:
+    by_sym = store.curves.pnl_by_symbol
+    for i, col in enumerate(by_sym.columns):
+        s = _slice(by_sym[col], t_start, t_end)
+        if s.empty:
+            continue
+        if len(s) > MAX_CHART_POINTS:
+            s = _lttb_df(s.to_frame("v"), MAX_CHART_POINTS)["v"]
+        eid, sid = col if isinstance(col, tuple) else (col, col)
+        label = store.listing_label(eid, sid) if isinstance(col, tuple) else str(col)
+        color = _MULTI_PALETTE[i % len(_MULTI_PALETTE)]
+        fig.add_trace(go.Scattergl(
+            x=s.index, y=s,
+            mode="lines", name=label,
+            line={"color": color, "width": 1.2},
+            showlegend=True,
+        ), row=row, col=1)
+
+    total = _slice(store.curves.pnl, t_start, t_end)
+    if not total.empty:
+        if len(total) > MAX_CHART_POINTS:
+            total = _lttb_df(total.to_frame("v"), MAX_CHART_POINTS)["v"]
+        fig.add_trace(go.Scattergl(
+            x=total.index, y=total,
+            mode="lines", name="Total PnL",
+            line={"color": PNL_A_COLOR, "width": 1.5, "dash": "dash"},
+            showlegend=True,
+        ), row=row, col=1)
+
+
+def _add_multi_position_traces(
+    fig: go.Figure,
+    store: ExplorerDataStore,
+    t_start: pd.Timestamp,
+    t_end: pd.Timestamp,
+    row: int,
+) -> None:
+    by_sym = store.curves.position_by_symbol
+    for i, col in enumerate(by_sym.columns):
+        s = _slice(by_sym[col], t_start, t_end)
+        if s.empty:
+            continue
+        if len(s) > MAX_CHART_POINTS:
+            s = _lttb_df(s.to_frame("v"), MAX_CHART_POINTS)["v"]
+        eid, sid = col if isinstance(col, tuple) else (col, col)
+        label = store.listing_label(eid, sid) if isinstance(col, tuple) else str(col)
+        color = _MULTI_PALETTE[i % len(_MULTI_PALETTE)]
+        fig.add_trace(go.Scattergl(
+            x=s.index, y=s,
+            mode="lines", name=f"Pos {label}",
+            line={"color": color, "width": 1, "shape": "hv"},
+            showlegend=False,
+        ), row=row, col=1)
+
+    total = _slice(store.curves.position, t_start, t_end)
+    if not total.empty:
+        if len(total) > MAX_CHART_POINTS:
+            total = _lttb_df(total.to_frame("v"), MAX_CHART_POINTS)["v"]
+        fig.add_trace(go.Scattergl(
+            x=total.index, y=total,
+            mode="lines", name="Total Pos",
+            line={"color": POSITION_A_COLOR, "width": 1.5, "dash": "dash", "shape": "hv"},
+            showlegend=False,
+        ), row=row, col=1)
