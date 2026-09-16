@@ -76,7 +76,7 @@ COPY --from=jar-builder /build/gnome-backtest/target/*-all.jar /opt/gnome/gnome-
 COPY gnomepy/pyproject.toml gnomepy/poetry.lock gnomepy/README.md /opt/gnomepy/
 RUN pip install poetry poetry-plugin-export && \
     cd /opt/gnomepy && \
-    poetry export -f requirements.txt --without-hashes -o /tmp/requirements.txt && \
+    poetry export -f requirements.txt --extras backtest --without-hashes -o /tmp/requirements.txt && \
     pip install -r /tmp/requirements.txt && \
     pip uninstall -y poetry poetry-plugin-export && rm /tmp/requirements.txt
 
