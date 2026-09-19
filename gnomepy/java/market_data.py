@@ -57,7 +57,9 @@ class MarketDataClient:
     Pass ``cache_dir=None`` to disable caching.
 
     Usage:
-        from gnomepy.java import ensure_jvm_started, MarketDataClient, SchemaType
+        from gnomepy.java._jvm import ensure_jvm_started
+        from gnomepy.java.market_data import MarketDataClient
+        from gnomepy.java.enums import SchemaType
 
         ensure_jvm_started()
         client = MarketDataClient()
