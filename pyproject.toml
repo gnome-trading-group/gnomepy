@@ -1,6 +1,6 @@
 [project]
 name = "gnomepy"
-version = "2.14.0"
+version = "2.16.0"
 description = ""
 authors = [
     {name = "mprey",email = "masonprey7@gmail.com"}
@@ -14,13 +14,13 @@ dependencies = [
     "pytz (>=2025.1,<2026.0)",
     "pyyaml (>=6.0,<7.0)",
     "click (>=8.1,<9.0)",
+    "jpype1 (>=1.5.0,<2.0.0)",
 ]
 
 [project.optional-dependencies]
 backtest = [
     "numpy (>=2.2.4,<3.0.0)",
     "pandas (>=2.2.3,<3.0.0)",
-    "jpype1 (>=1.5.0,<2.0.0)",
     "pyarrow (>=23.0.1,<24.0.0)",
     "plotly (>=6.6.0,<6.7.0)",
     "dash (>=2.18.0,<3.0.0)",

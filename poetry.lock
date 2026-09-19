@@ -1626,10 +1626,9 @@ files = [
 name = "jpype1"
 version = "1.6.0"
 description = "A Python to Java bridge"
-optional = true
+optional = false
 python-versions = ">=3.8"
 groups = ["main"]
-markers = "extra == \"backtest\""
 files = [
     {file = "jpype1-1.6.0-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:533cf7ced58a4b74272f3d1e962fe33f305184d2fcb3856ca79867d5b6f0fb8b"},
     {file = "jpype1-1.6.0-cp310-cp310-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:597063698c074e5bf34e696626423a528cdf099989e22a837e889a0d671fd9e4"},
@@ -2059,7 +2058,6 @@ files = [
     {file = "packaging-26.0-py3-none-any.whl", hash = "sha256:b36f1fef9334a5588b4166f8bcd26a14e521f2b55e6b9de3aaa80d3ff7a37529"},
     {file = "packaging-26.0.tar.gz", hash = "sha256:00243ae351a257117b6a241061796684b084ed1c516a08c48a3f7e147a9d80b4"},
 ]
-markers = {main = "extra == \"backtest\""}
 
 [[package]]
 name = "pandas"
@@ -3298,10 +3296,10 @@ cffi = {version = ">=1.11", markers = "platform_python_implementation == \"PyPy\
 cffi = ["cffi (>=1.11)"]
 
 [extras]
-backtest = ["anthropic", "boto3-stubs", "dash", "dash-bootstrap-components", "jpype1", "numpy", "pandas", "pandas-stubs", "plotly", "pyarrow", "scipy"]
+backtest = ["anthropic", "boto3-stubs", "dash", "dash-bootstrap-components", "numpy", "pandas", "pandas-stubs", "plotly", "pyarrow", "scipy"]
 tardis = ["tardis-dev"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.14"
-content-hash = "9b328d3f8d874ea9ef17cc37df76070bf0eb86769a56018ddcc858754dcccc30"
+content-hash = "789a11adcc01284cad5f91cc8e6ce325ef917564dbd7af09daff1c281b39c226"
