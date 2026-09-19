@@ -22,7 +22,7 @@ from gnomepy.java.strategy.config import SessionConfig
 from gnomepy.java.strategy.runner import run_strategy_session
 from gnomepy.registry.api import RegistryClient
 from gnomepy.remote import cancel_backtest, get_backtest, list_backtests, submit_backtest
-from gnomepy.sweep import expand_sweep, get_param_value, sweep_params
+from gnomepy.sweep import expand_scenarios_and_sweeps, get_param_value, scenario_names, sweep_params
 from gnomepy.utils import uuid7
 
 
@@ -265,12 +265,13 @@ def backtest_run(
     strategy = strategy_path or java_strategy or None
     parsed = yaml.safe_load(Path(config).read_text())
     params = sweep_params(parsed)
+    scenarios = scenario_names(parsed)
     use_cache = not no_cache
 
-    if not params:
+    if not params and not scenarios:
         _run_single(config, strategy, output, job_id or uuid7(), no_progress, use_cache)
     else:
-        _run_sweep(config, parsed, params, strategy, output, job_id, no_progress, use_cache)
+        _run_sweep(config, parsed, params, scenarios, strategy, output, job_id, no_progress, use_cache)
 
 
 def _run_single(config: str, strategy, output: str | None, job_id: str, no_progress: bool, cache: bool = True) -> None:
@@ -301,26 +302,33 @@ def _run_sweep(
     config: str,
     parsed: dict,
     params: dict,
+    scenarios: list[str],
     strategy,
     output: str | None,
     sweep_id: str | None,
     no_progress: bool,
     cache: bool = True,
 ) -> None:
-    configs = expand_sweep(parsed)
+    jobs = expand_scenarios_and_sweeps(parsed)
     sweep_id = sweep_id or uuid7()
     click.echo(f"sweep_id: {sweep_id}")
-    click.echo(f"sweep: {len(configs)} jobs across {list(params.keys())}")
-    for param, values in params.items():
-        click.echo(f"  {param}: {values}")
+    if scenarios:
+        click.echo(f"scenarios: {scenarios}")
+    if params:
+        click.echo(f"sweep: {len(jobs)} jobs across {list(params.keys())}")
+        for param, values in params.items():
+            click.echo(f"  {param}: {values}")
+    else:
+        click.echo(f"scenarios: {len(jobs)} jobs")
 
     is_s3 = output is not None and output.startswith("s3://")
     out_base: Path | str = output if is_s3 else (Path(output) if output else Path.cwd() / sweep_id)
 
     jobs_summary = []
-    for i, cfg in enumerate(configs):
+    for i, (scenario_name, cfg) in enumerate(jobs):
         this_job_id = f"{sweep_id}-{i:04d}"
-        click.echo(f"[{i + 1}/{len(configs)}] {this_job_id}")
+        label = f"[{scenario_name}] " if scenario_name else ""
+        click.echo(f"[{i + 1}/{len(jobs)}] {label}{this_job_id}")
         tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
         try:
             yaml.dump(cfg, tmp, default_flow_style=False)
@@ -335,6 +343,7 @@ def _run_sweep(
             job_entry: dict = {
                 "job_index": i,
                 "job_id": this_job_id,
+                "scenario": scenario_name,
                 "config_params": {k: get_param_value(cfg, k) for k in params},
                 "status": "COMPLETED" if results is not None else "NO_RESULTS",
             }
@@ -357,6 +366,7 @@ def _run_sweep(
                         "config": "config.yaml",
                         "job_index": i,
                         "sweep_id": sweep_id,
+                        "scenario": scenario_name,
                         "config_params": job_entry["config_params"],
                     }
                     (job_out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -370,6 +380,7 @@ def _run_sweep(
             jobs_summary.append({
                 "job_index": i,
                 "job_id": this_job_id,
+                "scenario": scenario_name,
                 "config_params": {k: get_param_value(cfg, k) for k in params},
                 "status": "FAILED",
                 "error": str(e),
@@ -380,17 +391,19 @@ def _run_sweep(
     completed = sum(1 for j in jobs_summary if j["status"] == "COMPLETED")
 
     if not is_s3:
-        summary = {
+        summary: dict = {
             "sweep_id": sweep_id,
-            "job_count": len(configs),
+            "job_count": len(jobs),
             "completed_count": completed,
             "sweep_params": {k: [str(v) for v in vals] for k, vals in params.items()},
             "jobs": jobs_summary,
         }
+        if scenarios:
+            summary["scenarios"] = scenarios
         out_base.mkdir(parents=True, exist_ok=True)
         (out_base / "sweep_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 
-    click.echo(f"sweep complete: {completed}/{len(configs)} completed, results saved to {out_base}")
+    click.echo(f"sweep complete: {completed}/{len(jobs)} completed, results saved to {out_base}")
 
 
 def _generate_report(results, base_path: str) -> None:
@@ -430,13 +443,16 @@ def backtest_submit(config: str, research_commit: str, dry_run: bool) -> None:
     config_yaml = Path(config).read_text()
     parsed = yaml.safe_load(config_yaml)
     params = sweep_params(parsed)
+    scenarios = scenario_names(parsed)
 
+    all_jobs = expand_scenarios_and_sweeps(parsed)
+    if scenarios:
+        click.echo(f"scenarios: {scenarios}")
     if params:
-        configs = expand_sweep(parsed)
-        click.echo(f"sweep: {len(configs)} jobs across {list(params.keys())}")
+        click.echo(f"sweep: {len(all_jobs)} jobs across {list(params.keys())}")
         for param, values in params.items():
             click.echo(f"  {param}: {values}")
-    else:
+    elif not scenarios:
         click.echo("no sweep parameters — single job")
 
     if dry_run:

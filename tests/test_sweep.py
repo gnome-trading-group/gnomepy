@@ -8,8 +8,11 @@ import pytest
 from gnomepy.sweep import (
     _collect_sweeps_recursive,
     _set_nested,
+    expand_scenarios,
+    expand_scenarios_and_sweeps,
     expand_sweep,
     get_param_value,
+    scenario_names,
     sweep_params,
 )
 
@@ -263,3 +266,260 @@ def test_get_param_value_dict_value():
 def test_get_param_value_missing_key():
     config = _base_config()
     assert get_param_value(config, "profiles.default.nonexistent.field") == ""
+
+
+# ---------------------------------------------------------------------------
+# scenario helpers
+# ---------------------------------------------------------------------------
+
+def _scenario_config(**strategy_args):
+    """Base config with two scenarios but no sweep params."""
+    return {
+        "strategy": {"class_name": "test:Arb", "args": {"max_position": 100, **strategy_args}},
+        "profiles": {
+            "exchange_a": {
+                "fee_model": {"type": "static", "taker_fee": 0.07, "maker_fee": 0.0},
+                "network_latency": {"type": "static", "latency_nanos": 50_000_000},
+                "order_processing_latency": {"type": "static", "latency_nanos": 5_000_000},
+                "queue_model": {"type": "risk_averse"},
+            }
+        },
+        "scenarios": {
+            "baseball": {
+                "start_date": "2026-08-24T00:00:00",
+                "end_date": "2026-08-24T02:00:00",
+                "listings": [
+                    {"listing_id": 100, "profile": "exchange_a"},
+                    {"listing_id": 101, "profile": "exchange_a"},
+                ],
+                "strategy_args": {"event_ids": [[1, 2]]},
+            },
+            "football": {
+                "start_date": "2026-09-01T00:00:00",
+                "end_date": "2026-09-01T03:00:00",
+                "listings": [
+                    {"listing_id": 200, "profile": "exchange_a"},
+                    {"listing_id": 201, "profile": "exchange_a"},
+                ],
+                "strategy_args": {"event_ids": [[3, 4]]},
+            },
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# scenario_names
+# ---------------------------------------------------------------------------
+
+def test_scenario_names_with_scenarios():
+    config = _scenario_config()
+    assert scenario_names(config) == ["baseball", "football"]
+
+
+def test_scenario_names_without_scenarios():
+    config = _base_config(alpha=0.9)
+    assert scenario_names(config) == []
+
+
+def test_scenario_names_empty_scenarios():
+    config = {"strategy": {"class_name": "test:S", "args": {}}, "scenarios": {}}
+    assert scenario_names(config) == []
+
+
+# ---------------------------------------------------------------------------
+# expand_scenarios
+# ---------------------------------------------------------------------------
+
+def test_expand_scenarios_no_scenarios():
+    config = _base_config(alpha=0.9)
+    result = expand_scenarios(config)
+    assert len(result) == 1
+    name, cfg = result[0]
+    assert name == ""
+    assert cfg["strategy"]["args"]["alpha"] == 0.9
+    assert "scenarios" not in cfg
+
+
+def test_expand_scenarios_single():
+    config = {
+        "strategy": {"class_name": "test:Arb", "args": {"max_position": 100}},
+        "profiles": {"exchange_a": {}},
+        "scenarios": {
+            "baseball": {
+                "start_date": "2026-08-24T00:00:00",
+                "end_date": "2026-08-24T02:00:00",
+                "listings": [{"listing_id": 100, "profile": "exchange_a"}],
+            }
+        },
+    }
+    result = expand_scenarios(config)
+    assert len(result) == 1
+    name, cfg = result[0]
+    assert name == "baseball"
+    assert cfg["start_date"] == "2026-08-24T00:00:00"
+    assert cfg["end_date"] == "2026-08-24T02:00:00"
+    assert cfg["listings"] == [{"listing_id": 100, "profile": "exchange_a"}]
+    assert "scenarios" not in cfg
+
+
+def test_expand_scenarios_multiple():
+    config = _scenario_config()
+    result = expand_scenarios(config)
+    assert len(result) == 2
+    names = [name for name, _ in result]
+    assert names == ["baseball", "football"]
+
+
+def test_expand_scenarios_strategy_args_merge():
+    config = _scenario_config()
+    result = expand_scenarios(config)
+    baseball_cfg = dict(result)["baseball"]
+    # scenario strategy_args override should be present
+    assert baseball_cfg["strategy"]["args"]["event_ids"] == [[1, 2]]
+    # top-level strategy arg should be preserved
+    assert baseball_cfg["strategy"]["args"]["max_position"] == 100
+
+
+def test_expand_scenarios_strategy_args_override():
+    config = {
+        "strategy": {"class_name": "test:Arb", "args": {"max_position": 100, "threshold": 5}},
+        "profiles": {},
+        "scenarios": {
+            "test": {
+                "start_date": "2026-01-01T00:00:00",
+                "end_date": "2026-01-02T00:00:00",
+                "listings": [],
+                "strategy_args": {"threshold": 10},
+            }
+        },
+    }
+    _, cfg = expand_scenarios(config)[0]
+    assert cfg["strategy"]["args"]["threshold"] == 10
+    assert cfg["strategy"]["args"]["max_position"] == 100
+
+
+def test_expand_scenarios_no_strategy_args():
+    config = {
+        "strategy": {"class_name": "test:Arb", "args": {"max_position": 100}},
+        "profiles": {},
+        "scenarios": {
+            "test": {
+                "start_date": "2026-01-01T00:00:00",
+                "end_date": "2026-01-02T00:00:00",
+                "listings": [],
+            }
+        },
+    }
+    _, cfg = expand_scenarios(config)[0]
+    assert cfg["strategy"]["args"] == {"max_position": 100}
+
+
+def test_expand_scenarios_profiles_merge():
+    config = {
+        "strategy": {"class_name": "test:Arb", "args": {}},
+        "profiles": {"exchange_a": {"fee_model": {"type": "static", "taker_fee": 0.07}}},
+        "scenarios": {
+            "test": {
+                "start_date": "2026-01-01T00:00:00",
+                "end_date": "2026-01-02T00:00:00",
+                "listings": [],
+                "profiles": {"exchange_b": {"fee_model": {"type": "static", "taker_fee": 0.05}}},
+            }
+        },
+    }
+    _, cfg = expand_scenarios(config)[0]
+    assert "exchange_a" in cfg["profiles"]
+    assert "exchange_b" in cfg["profiles"]
+
+
+def test_expand_scenarios_no_scenarios_key_in_output():
+    config = _scenario_config()
+    for _, cfg in expand_scenarios(config):
+        assert "scenarios" not in cfg
+
+
+def test_expand_scenarios_deep_copy_isolation():
+    config = _scenario_config()
+    result = expand_scenarios(config)
+    _, cfg0 = result[0]
+    cfg0["strategy"]["args"]["max_position"] = 999
+    _, cfg1 = result[1]
+    assert cfg1["strategy"]["args"]["max_position"] == 100
+
+
+def test_expand_scenarios_preserves_top_level_fields():
+    config = {**_scenario_config(), "record_depth": 10}
+    for _, cfg in expand_scenarios(config):
+        assert cfg["record_depth"] == 10
+        assert "scenarios" not in cfg
+
+
+# ---------------------------------------------------------------------------
+# expand_scenarios_and_sweeps
+# ---------------------------------------------------------------------------
+
+def test_expand_scenarios_and_sweeps_scenarios_only():
+    config = _scenario_config()
+    result = expand_scenarios_and_sweeps(config)
+    assert len(result) == 2
+    names = [name for name, _ in result]
+    assert names == ["baseball", "football"]
+
+
+def test_expand_scenarios_and_sweeps_sweeps_only():
+    config = _base_config(alpha=[0.9, 0.95])
+    result = expand_scenarios_and_sweeps(config)
+    assert len(result) == 2
+    names = [name for name, _ in result]
+    assert all(name == "" for name in names)
+
+
+def test_expand_scenarios_and_sweeps_cartesian():
+    config = _scenario_config(threshold=[5, 10, 15])
+    result = expand_scenarios_and_sweeps(config)
+    assert len(result) == 6  # 2 scenarios × 3 threshold values
+    # first 3 should be baseball
+    assert all(name == "baseball" for name, _ in result[:3])
+    assert all(name == "football" for name, _ in result[3:])
+    # sweep values cycle correctly within each scenario
+    thresholds_baseball = [cfg["strategy"]["args"]["threshold"] for _, cfg in result[:3]]
+    assert thresholds_baseball == [5, 10, 15]
+
+
+def test_expand_scenarios_and_sweeps_no_scenarios_no_sweeps():
+    config = _base_config(alpha=0.9)
+    result = expand_scenarios_and_sweeps(config)
+    assert len(result) == 1
+    name, cfg = result[0]
+    assert name == ""
+    assert cfg["strategy"]["args"]["alpha"] == 0.9
+
+
+def test_expand_scenarios_and_sweeps_scenario_has_no_scenarios_key():
+    config = _scenario_config(threshold=[5, 10])
+    for _, cfg in expand_scenarios_and_sweeps(config):
+        assert "scenarios" not in cfg
+
+
+# ---------------------------------------------------------------------------
+# sweep_params with scenarios
+# ---------------------------------------------------------------------------
+
+def test_sweep_params_with_scenarios():
+    config = _scenario_config(threshold=[5, 10, 15])
+    params = sweep_params(config)
+    assert "threshold" in params
+    assert params["threshold"] == [5, 10, 15]
+
+
+def test_sweep_params_with_scenarios_no_sweeps():
+    config = {
+        "strategy": {"class_name": "test:Arb", "args": {"max_position": 100}},
+        "profiles": {},
+        "scenarios": {
+            "a": {"start_date": "2026-01-01T00:00:00", "end_date": "2026-01-02T00:00:00", "listings": []},
+            "b": {"start_date": "2026-02-01T00:00:00", "end_date": "2026-02-02T00:00:00", "listings": []},
+        },
+    }
+    params = sweep_params(config)
+    assert params == {}

@@ -106,7 +106,76 @@ def expand_sweep(config: dict) -> list[dict]:
 
 
 def sweep_params(config: dict) -> dict[str, list]:
-    """Return the swept parameter names and their candidate values."""
+    """Return the swept parameter names and their candidate values.
+
+    When scenarios are present, collects sweeps from the first scenario's flattened
+    config since sweep dimensions are shared across all scenarios.
+    """
+    if "scenarios" in config:
+        scenario_configs = expand_scenarios(config)
+        if not scenario_configs:
+            return {}
+        _, first = scenario_configs[0]
+        arg_sweeps = _collect_sweeps(first.get("strategy", {}).get("args", {}))
+        profile_sweeps = _collect_sweeps_recursive(first.get("profiles", {}), "profiles")
+        return {**arg_sweeps, **profile_sweeps}
     arg_sweeps = _collect_sweeps(config.get("strategy", {}).get("args", {}))
     profile_sweeps = _collect_sweeps_recursive(config.get("profiles", {}), "profiles")
     return {**arg_sweeps, **profile_sweeps}
+
+
+def scenario_names(config: dict) -> list[str]:
+    """Return the list of scenario names defined in the config, or [] if none."""
+    return list(config.get("scenarios", {}).keys())
+
+
+def expand_scenarios(config: dict) -> list[tuple[str, dict]]:
+    """Expand the scenarios section into (name, flat_config) pairs.
+
+    Each flat config has top-level listings/start_date/end_date from the scenario,
+    with scenario strategy_args shallow-merged into strategy.args and scenario
+    profiles shallow-merged into the top-level profiles.
+
+    Returns [("", config)] when no scenarios key is present, preserving backward
+    compatibility with single-scenario configs.
+    """
+    if "scenarios" not in config:
+        return [("", copy.deepcopy(config))]
+
+    result = []
+    for name, scenario in config["scenarios"].items():
+        c = {k: copy.deepcopy(v) for k, v in config.items() if k != "scenarios"}
+
+        c["start_date"] = scenario["start_date"]
+        c["end_date"] = scenario["end_date"]
+        c["listings"] = copy.deepcopy(scenario["listings"])
+
+        if "strategy_args" in scenario:
+            if "strategy" not in c:
+                c["strategy"] = {"args": {}}
+            if "args" not in c["strategy"]:
+                c["strategy"]["args"] = {}
+            c["strategy"]["args"] = {**c["strategy"]["args"], **copy.deepcopy(scenario["strategy_args"])}
+
+        if "profiles" in scenario:
+            c["profiles"] = {**c.get("profiles", {}), **copy.deepcopy(scenario["profiles"])}
+
+        result.append((name, c))
+
+    return result
+
+
+def expand_scenarios_and_sweeps(config: dict) -> list[tuple[str, dict]]:
+    """Expand scenarios × sweep params into (scenario_name, flat_config) pairs.
+
+    Total jobs = len(scenarios) × len(sweep_combinations). Jobs are ordered
+    scenario-first: all sweep combinations for scenario 0, then scenario 1, etc.
+
+    Falls back to expand_sweep behavior when no scenarios are present (scenario_name
+    will be "" for all jobs).
+    """
+    result = []
+    for scenario_name, scenario_config in expand_scenarios(config):
+        for expanded in expand_sweep(scenario_config):
+            result.append((scenario_name, expanded))
+    return result
