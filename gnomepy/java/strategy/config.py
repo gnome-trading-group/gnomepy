@@ -101,19 +101,25 @@ QueueConfig = Union[OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQ
 
 
 @dataclass
-class SimulationConfig:
+class SimulationProfile:
     fee: FeeConfig = field(default_factory=StaticFeeConfig)
     network_latency: LatencyModelConfig = field(default_factory=StaticLatencyConfig)
     order_latency: LatencyModelConfig = field(default_factory=StaticLatencyConfig)
     queue: QueueConfig = field(default_factory=RiskAverseQueueConfig)
 
-    def to_properties(self) -> dict[str, str]:
+    def to_properties(self, prefix: str) -> dict[str, str]:
         props: dict[str, str] = {}
-        props.update(self.fee.to_properties("simulation.fee"))
-        props.update(self.network_latency.to_properties("simulation.network.latency"))
-        props.update(self.order_latency.to_properties("simulation.order.latency"))
-        props.update(self.queue.to_properties("simulation.queue"))
+        props.update(self.fee.to_properties(f"{prefix}.fee"))
+        props.update(self.network_latency.to_properties(f"{prefix}.network.latency"))
+        props.update(self.order_latency.to_properties(f"{prefix}.order.latency"))
+        props.update(self.queue.to_properties(f"{prefix}.queue"))
         return props
+
+
+@dataclass
+class ListingSessionConfig:
+    listing_id: int
+    profile: str
 
 
 @dataclass
@@ -125,17 +131,17 @@ class StrategyConfig:
 @dataclass
 class SessionConfig:
     mode: str
-    listings: list[int]
+    listings: list[ListingSessionConfig]
+    profiles: dict[str, SimulationProfile]
     session_id: str | None = None
     strategy_id: int | None = None
     strategy: StrategyConfig | None = None
-    simulation: SimulationConfig = field(default_factory=SimulationConfig)
 
     def to_properties(self) -> dict[str, str]:
         """Flatten to the Properties key format expected by TradingOrchestrator."""
         props: dict[str, str] = {
             "mode": self.mode,
-            "listings": ",".join(str(lid) for lid in self.listings),
+            "listings": ",".join(str(lsc.listing_id) for lsc in self.listings),
         }
         if self.session_id is not None:
             props["session.id"] = self.session_id
@@ -150,7 +156,10 @@ class SessionConfig:
             for k, v in self.strategy.args.items():
                 props[f"strategy.args.{k}"] = str(v)
         if self.mode == "paper":
-            props.update(self.simulation.to_properties())
+            for name, profile in self.profiles.items():
+                props.update(profile.to_properties(f"simulation.profiles.{name}"))
+            for lsc in self.listings:
+                props[f"simulation.listing.{lsc.listing_id}.profile"] = lsc.profile
         return props
 
     @staticmethod
@@ -163,23 +172,39 @@ class SessionConfig:
                 class_name=s["class_name"],
                 args=s.get("args") or {},
             )
-        simulation = _parse_simulation_config(data.get("simulation", {}))
+
+        raw_listings = data.get("listings", [])
+        listings = [
+            ListingSessionConfig(listing_id=entry["listing_id"], profile=entry["profile"])
+            for entry in raw_listings
+        ]
+
+        raw_profiles = data.get("profiles", {})
+        profiles = {name: _parse_simulation_profile(cfg) for name, cfg in raw_profiles.items()}
+
+        if data.get("mode") == "paper":
+            for lsc in listings:
+                if lsc.profile not in profiles:
+                    raise ValueError(
+                        f"Listing {lsc.listing_id} references profile '{lsc.profile}' which is not defined"
+                    )
+
         return SessionConfig(
             session_id=data.get("session_id"),
             strategy_id=data.get("strategy_id"),
             mode=data["mode"],
-            listings=list(data["listings"]),
+            listings=listings,
+            profiles=profiles,
             strategy=strategy,
-            simulation=simulation,
         )
 
 
-def _parse_simulation_config(sim: dict) -> SimulationConfig:
+def _parse_simulation_profile(sim: dict) -> SimulationProfile:
     fee = _parse_fee_config(sim.get("fee", {}))
     network_latency = _parse_latency_config(sim.get("network_latency", {}))
     order_latency = _parse_latency_config(sim.get("order_latency", {}))
     queue = _parse_queue_config(sim.get("queue", {}))
-    return SimulationConfig(fee=fee, network_latency=network_latency, order_latency=order_latency, queue=queue)
+    return SimulationProfile(fee=fee, network_latency=network_latency, order_latency=order_latency, queue=queue)
 
 
 def _parse_fee_config(cfg: dict) -> FeeConfig:

@@ -230,7 +230,7 @@ def backtest() -> None:
     "--config",
     type=click.Path(exists=True, dir_okay=False),
     required=True,
-    help="YAML backtest config file",
+    help="YAML backtest config file (supports sweep and scenario syntax)",
 )
 @click.option(
     "--strategy",
@@ -434,7 +434,7 @@ def _generate_report(results, base_path: str) -> None:
     "--config",
     type=click.Path(exists=True, dir_okay=False),
     required=True,
-    help="YAML backtest config file (supports sweep syntax)",
+    help="YAML backtest config file (supports sweep and scenario syntax)",
 )
 @click.option("--research-commit", default="main", show_default=True, help="gnomepy-research git ref")
 @click.option("--dry-run", is_flag=True, help="Preview sweep expansion without submitting")

@@ -1,0 +1,94 @@
+# Run the same arb strategy across multiple prediction market events simultaneously.
+# 3 events × 3 threshold values = 9 jobs.
+# Each scenario gets its own report; compare PnL/Sharpe across events to identify
+# where the edge is strongest.
+
+strategy:
+  class_name: "gnomepy_research.strategies.equivalent_event_arb:EquivalentEventArb"
+  args:
+    max_position: 100
+    min_pure_arb_bps: [5.0, 10.0, 20.0]   # sweep — 3 values
+    taker_edge_threshold_bps: 99999
+    processing_time_ns: 5000000
+    allow_scaling: false
+    imbalance_timeout_ns: 300000000000
+
+record_depth: 10
+
+scenarios:
+  baseball:
+    start_date: "2026-08-24T00:23:00"
+    end_date: "2026-08-24T02:12:00"
+    listings:
+      - listing_id: 217772
+        profile: kalshi
+      - listing_id: 217773
+        profile: kalshi
+      - listing_id: 229125
+        profile: polymarket
+      - listing_id: 229126
+        profile: polymarket
+    strategy_args:
+      event_ids: [[46259, 48600]]
+
+  football:
+    start_date: "2026-08-24T00:26:00"
+    end_date: "2026-08-24T03:09:00"
+    listings:
+      - listing_id: 222852
+        profile: kalshi
+      - listing_id: 222853
+        profile: kalshi
+      - listing_id: 97202
+        profile: polymarket
+      - listing_id: 97203
+        profile: polymarket
+    strategy_args:
+      event_ids: [[47431, 18169]]
+
+  csgo:
+    start_date: "2026-08-24T16:00:00"
+    end_date: "2026-08-24T17:10:00"
+    listings:
+      - listing_id: 253844
+        profile: polymarket
+      - listing_id: 253845
+        profile: polymarket
+      - listing_id: 246127
+        profile: kalshi
+      - listing_id: 246126
+        profile: kalshi
+    strategy_args:
+      event_ids: [[55038, 53146]]
+
+profiles:
+  polymarket:
+    fee_model:
+      type: parametric
+      taker_fee_rate: 0.07
+      maker_fee_rate: 0.0
+    network_latency:
+      type: static
+      latency_nanos: 50000000
+    order_processing_latency:
+      type: maker_taker
+      base_nanos: 5000000
+      taker_delay_nanos: 0
+      maker_delay_nanos: 0
+    queue_model:
+      type: risk_averse
+  kalshi:
+    fee_model:
+      type: parametric
+      taker_fee_rate: 0.07
+      maker_fee_rate: 0.0175
+    network_latency:
+      type: static
+      latency_nanos: 50000000
+    order_processing_latency:
+      type: maker_taker
+      base_nanos: 5000000
+      taker_delay_nanos: 0
+      maker_delay_nanos: 0
+    queue_model:
+      type: risk_averse
