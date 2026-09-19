@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import signal
 import time
 from pathlib import Path
@@ -132,3 +133,41 @@ def run_strategy_session(
 
     while True:
         time.sleep(1)
+
+
+def run_from_env() -> None:
+    """Entry point for ECS Fargate — reads config from env vars, runs strategy."""
+    strategy_class = os.environ["STRATEGY_CLASS"]
+    strategy_args = {
+        k.removeprefix("STRATEGY_ARGS_").lower(): v
+        for k, v in os.environ.items()
+        if k.startswith("STRATEGY_ARGS_")
+    }
+
+    py_strategy = _load_python_strategy(strategy_class, strategy_args or None)
+
+    classpath = discover_classpath("gnome-orchestrator")
+    ensure_jvm_started(classpath=classpath)
+
+    callback = _create_strategy_callback(py_strategy)
+    PythonStrategyAgent = jpype.JClass("group.gnometrading.strategies.PythonStrategyAgent")
+    PythonStrategyAgent.setCallback(callback)
+
+    # All session config is in env vars; Properties reads them via loadEnvironmentOverrides()
+    Orchestrator = jpype.JClass("group.gnometrading.di.Orchestrator")
+    Orchestrator.main(jpype.JArray(jpype.JString)([]))
+
+    System = jpype.JClass("java.lang.System")
+
+    def _shutdown(sig, frame):
+        System.exit(0)
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    while True:
+        time.sleep(1)
+
+
+if __name__ == "__main__":
+    run_from_env()

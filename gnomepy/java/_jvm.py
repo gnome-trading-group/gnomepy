@@ -10,13 +10,21 @@ from gnomepy.java._classpath import discover_classpath
 
 _lock = threading.Lock()
 
-# Required for Agrona's UnsafeBuffer used by SBE codecs
+# Required for Agrona's UnsafeBuffer, SBE codecs, and the orchestrator runtime
 DEFAULT_JVM_ARGS = [
     "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
     "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
     "--add-opens=java.base/java.nio=ALL-UNNAMED",
     "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
     "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=jdk.compiler/com.sun.tools.javac=ALL-UNNAMED",
+    "--add-exports=java.base/jdk.internal.ref=ALL-UNNAMED",
+    "--add-exports=java.base/jdk.internal.util=ALL-UNNAMED",
+    "--add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
+    "--add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED",
 ]
 
 
