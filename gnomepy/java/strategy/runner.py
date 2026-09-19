@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import signal
 import time
@@ -138,11 +139,8 @@ def run_strategy_session(
 def run_from_env() -> None:
     """Entry point for ECS Fargate — reads config from env vars, runs strategy."""
     strategy_class = os.environ["STRATEGY_CLASS"]
-    strategy_args = {
-        k.removeprefix("STRATEGY_ARGS_").lower(): v
-        for k, v in os.environ.items()
-        if k.startswith("STRATEGY_ARGS_")
-    }
+    args_json = os.environ.get("STRATEGY_ARGS_JSON", "")
+    strategy_args = json.loads(args_json) if args_json else {}
 
     py_strategy = _load_python_strategy(strategy_class, strategy_args or None)
 
