@@ -140,7 +140,7 @@ class SessionConfig:
     def to_properties(self) -> dict[str, Any]:
         props: dict[str, Any] = {
             "mode": self.mode,
-            "listings": ",".join(str(lsc.listing_id) for lsc in self.listings),
+            "listings": [lsc.listing_id for lsc in self.listings],
         }
         if self.session_id is not None:
             props["session.id"] = self.session_id
