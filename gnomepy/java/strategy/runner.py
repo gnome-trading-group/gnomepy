@@ -142,10 +142,14 @@ def run_from_env() -> None:
     args_json = os.environ.get("STRATEGY_ARGS_JSON", "")
     strategy_args = json.loads(args_json) if args_json else {}
 
-    py_strategy = _load_python_strategy(strategy_class, strategy_args or None)
-
     classpath = discover_classpath("gnome-orchestrator")
     ensure_jvm_started(classpath=classpath)
+
+    # Must load TradingOrchestrator before Orchestrator.main() — its static initializer
+    # sets instanceClass, which Orchestrator.main() uses to instantiate the orchestrator.
+    jpype.JClass("group.gnometrading.trading.TradingOrchestrator")
+
+    py_strategy = _load_python_strategy(strategy_class, strategy_args or None)
 
     callback = _create_strategy_callback(py_strategy)
     PythonStrategyAgent = jpype.JClass("group.gnometrading.strategies.PythonStrategyAgent")
