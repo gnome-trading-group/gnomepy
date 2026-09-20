@@ -18,6 +18,17 @@ strategy:
     cooldown_ticks: 50
     processing_time_ns: 500000
 
+sweep:
+  profiles:
+    default:
+      queue_model:
+        - type: optimistic
+        - type: risk_averse
+        - type: probabilistic
+          cancel_ahead_probability: 0.3
+        - type: probabilistic
+          cancel_ahead_probability: 0.7
+
 start_date: "2026-01-01T00:00:00"
 end_date: "2026-01-03T00:00:00"
 
@@ -38,9 +49,4 @@ profiles:
       type: static
       latency_nanos: 1000000
     queue_model:
-      - type: optimistic
-      - type: risk_averse
-      - type: probabilistic
-        cancel_ahead_probability: 0.3
-      - type: probabilistic
-        cancel_ahead_probability: 0.7
+      type: risk_averse

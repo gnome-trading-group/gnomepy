@@ -20,14 +20,23 @@ def _is_sweep_range(value: Any) -> bool:
     return isinstance(value, dict) and {"min", "max", "step"} <= value.keys()
 
 
-def _collect_sweeps(args: dict) -> dict[str, list]:
-    sweeps: dict[str, list] = {}
-    for key, value in args.items():
+def _collect_sweeps_from_section(sweep_section: dict) -> tuple[dict[str, list], dict[str, list]]:
+    """Extract strategy arg sweeps and profile sweeps from the top-level sweep section.
+
+    sweep.strategy keys map to strategy.args overrides.
+    sweep.profiles mirrors the profiles structure for profile-level sweeps.
+    """
+    arg_sweeps: dict[str, list] = {}
+    for key, value in sweep_section.get("strategy", {}).items():
         if isinstance(value, list):
-            sweeps[key] = value
+            arg_sweeps[key] = value
         elif _is_sweep_range(value):
-            sweeps[key] = _linspace(value["min"], value["max"], value["step"])
-    return sweeps
+            arg_sweeps[key] = _linspace(value["min"], value["max"], value["step"])
+
+    profile_sweeps = _collect_sweeps_recursive(
+        sweep_section.get("profiles", {}), "profiles"
+    )
+    return arg_sweeps, profile_sweeps
 
 
 def _collect_sweeps_recursive(d: dict, prefix: str) -> dict[str, list]:
@@ -73,21 +82,24 @@ def get_param_value(config: dict, key: str) -> str:
 
 
 def expand_sweep(config: dict) -> list[dict]:
-    """Expand sweep syntax in strategy.args and profiles into a list of individual configs.
+    """Expand the top-level ``sweep`` section into a list of individual configs.
 
-    List values and {min,max,step} ranges in strategy.args or within any profile
-    are expanded into the cartesian product. Scalar values are fixed across all jobs.
-    Returns [config] if no sweep parameters are found.
+    ``sweep.strategy`` keys override ``strategy.args`` values per job.
+    ``sweep.profiles`` keys (using the same nested structure as ``profiles``)
+    override profile leaf values per job. All values in ``strategy.args`` and
+    ``profiles`` are fixed and passed through as-is — only the ``sweep`` section
+    is expanded.
+
+    Returns ``[config]`` (with ``sweep`` stripped) when no sweep parameters are found.
     """
-    strategy_args = config.get("strategy", {}).get("args", {})
-    arg_sweeps = _collect_sweeps(strategy_args)
-
-    profile_sweeps = _collect_sweeps_recursive(config.get("profiles", {}), "profiles")
-
+    sweep_section = config.get("sweep", {})
+    arg_sweeps, profile_sweeps = _collect_sweeps_from_section(sweep_section)
     all_sweeps = {**arg_sweeps, **profile_sweeps}
 
     if not all_sweeps:
-        return [copy.deepcopy(config)]
+        c = copy.deepcopy(config)
+        c.pop("sweep", None)
+        return [c]
 
     keys = list(all_sweeps.keys())
     value_lists = [all_sweeps[k] for k in keys]
@@ -95,6 +107,7 @@ def expand_sweep(config: dict) -> list[dict]:
     expanded = []
     for combo in itertools.product(*value_lists):
         c = copy.deepcopy(config)
+        c.pop("sweep", None)
         for key, val in zip(keys, combo):
             if key in arg_sweeps:
                 c["strategy"]["args"][key] = val
@@ -116,11 +129,11 @@ def sweep_params(config: dict) -> dict[str, list]:
         if not scenario_configs:
             return {}
         _, first = scenario_configs[0]
-        arg_sweeps = _collect_sweeps(first.get("strategy", {}).get("args", {}))
-        profile_sweeps = _collect_sweeps_recursive(first.get("profiles", {}), "profiles")
-        return {**arg_sweeps, **profile_sweeps}
-    arg_sweeps = _collect_sweeps(config.get("strategy", {}).get("args", {}))
-    profile_sweeps = _collect_sweeps_recursive(config.get("profiles", {}), "profiles")
+        sweep_section = first.get("sweep", {})
+    else:
+        sweep_section = config.get("sweep", {})
+
+    arg_sweeps, profile_sweeps = _collect_sweeps_from_section(sweep_section)
     return {**arg_sweeps, **profile_sweeps}
 
 

@@ -7,11 +7,15 @@ strategy:
   class_name: "gnomepy_research.strategies.equivalent_event_arb:EquivalentEventArb"
   args:
     max_position: 100
-    min_pure_arb_bps: [5.0, 10.0, 20.0]   # sweep — 3 values
+    min_pure_arb_bps: 5.0
     taker_edge_threshold_bps: 99999
     processing_time_ns: 5000000
     allow_scaling: false
     imbalance_timeout_ns: 300000000000
+
+sweep:
+  strategy:
+    min_pure_arb_bps: [5.0, 10.0, 20.0]
 
 record_depth: 10
 
@@ -29,7 +33,7 @@ scenarios:
       - listing_id: 229126
         profile: polymarket
     strategy_args:
-      event_ids: [[46259, 48600]]
+      event_ids: [46259, 48600]
 
   football:
     start_date: "2026-08-24T00:26:00"
@@ -44,7 +48,7 @@ scenarios:
       - listing_id: 97203
         profile: polymarket
     strategy_args:
-      event_ids: [[47431, 18169]]
+      event_ids: [47431, 18169]
 
   csgo:
     start_date: "2026-08-24T16:00:00"
@@ -59,7 +63,7 @@ scenarios:
       - listing_id: 246126
         profile: kalshi
     strategy_args:
-      event_ids: [[55038, 53146]]
+      event_ids: [55038, 53146]
 
 profiles:
   polymarket:

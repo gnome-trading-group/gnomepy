@@ -18,6 +18,12 @@ strategy:
     cooldown_ticks: 50
     processing_time_ns: 500000
 
+sweep:
+  profiles:
+    default:
+      network_latency:
+        latency_nanos: [0, 1000000, 5000000, 10000000, 50000000]
+
 start_date: "2026-01-01T00:00:00"
 end_date: "2026-01-03T00:00:00"
 
@@ -33,7 +39,7 @@ profiles:
       maker_fee: 0.0002
     network_latency:
       type: static
-      latency_nanos: [0, 1000000, 5000000, 10000000, 50000000]
+      latency_nanos: 5000000
     order_processing_latency:
       type: static
       latency_nanos: 1000000
