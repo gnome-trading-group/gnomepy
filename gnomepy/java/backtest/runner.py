@@ -300,7 +300,7 @@ class Backtest:
             py_strategy._metric_recorder = PyMetricRecorder(self._recorder.createMetricRecorder())
             py_strategy.register_metrics()
         callback = _create_python_callback(py_strategy)
-        return PythonStrategyAgent.create(position_view, security_master, callback)
+        return PythonStrategyAgent.create(jpype.JInt(0), position_view, security_master, callback)
 
     def add_warning(self, message: str) -> None:
         """Add an arbitrary warning to be included in backtest results and metadata."""
