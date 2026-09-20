@@ -137,9 +137,8 @@ class SessionConfig:
     strategy_id: int | None = None
     strategy: StrategyConfig | None = None
 
-    def to_properties(self) -> dict[str, str]:
-        """Flatten to the Properties key format expected by TradingOrchestrator."""
-        props: dict[str, str] = {
+    def to_properties(self) -> dict[str, Any]:
+        props: dict[str, Any] = {
             "mode": self.mode,
             "listings": ",".join(str(lsc.listing_id) for lsc in self.listings),
         }
@@ -154,7 +153,7 @@ class SessionConfig:
                 props["strategy.class"] = self.strategy.class_name
         if self.strategy and self.strategy.args:
             for k, v in self.strategy.args.items():
-                props[f"strategy.args.{k}"] = str(v)
+                props[f"strategy.args.{k}"] = v
         if self.mode == "paper":
             for name, profile in self.profiles.items():
                 props.update(profile.to_properties(f"simulation.profiles.{name}"))
