@@ -54,6 +54,7 @@ class Intent:
         take_size: int = 0,
         take_order_type: OrderType | None = None,
         take_limit_price: int = 0,
+        post_only: bool = False,
     ):
         self._ensure_class()
         self._java = self._java_class()
@@ -70,6 +71,8 @@ class Intent:
             enc.takeSize(jpype.JLong(take_size))
             enc.takeOrderType(take_order_type.to_java())
             enc.takeLimitPrice(jpype.JLong(take_limit_price))
+        if post_only:
+            enc.flags().postOnly(True)
 
     @property
     def raw(self):
@@ -125,6 +128,10 @@ class Intent:
     @property
     def take_limit_price(self) -> int:
         return int(self._java.decoder.takeLimitPrice())
+
+    @property
+    def post_only(self) -> bool:
+        return bool(self._java.decoder.flags().postOnly())
 
 
 @dataclass

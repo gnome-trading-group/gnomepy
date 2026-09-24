@@ -42,6 +42,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "ExecType": ("gnomepy.java.enums", "ExecType"),
     "OrderStatus": ("gnomepy.java.enums", "OrderStatus"),
     "OrderType": ("gnomepy.java.enums", "OrderType"),
+    "RejectReason": ("gnomepy.java.enums", "RejectReason"),
     "SchemaType": ("gnomepy.java.enums", "SchemaType"),
     "Side": ("gnomepy.java.enums", "Side"),
     "TimeInForce": ("gnomepy.java.enums", "TimeInForce"),

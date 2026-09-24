@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from gnomepy.java.enums import ExecType, OrderStatus, Side
+from gnomepy.java.enums import ExecType, OrderStatus, RejectReason, Side
 from gnomepy.java.statics import Scales
 
 
@@ -23,6 +23,7 @@ class ExecutionReport:
     timestamp_recv: int
     exchange_id: int
     security_id: int
+    reject_reason: RejectReason | None = None
 
     @classmethod
     def _from_java(cls, java_report) -> ExecutionReport:
@@ -41,4 +42,5 @@ class ExecutionReport:
             timestamp_recv=int(dec.timestampRecv()),
             exchange_id=int(dec.exchangeId()),
             security_id=int(dec.securityId()),
+            reject_reason=RejectReason.from_java(dec.rejectReason()),
         )

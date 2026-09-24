@@ -103,6 +103,25 @@ class OrderStatus(Enum):
         return cls(str(java_enum.name()))
 
 
+class RejectReason(Enum):
+    UNKNOWN = "UNKNOWN"
+    INVALID_PRICE = "INVALID_PRICE"
+    INVALID_SIZE = "INVALID_SIZE"
+    RISK_LIMIT_EXCEEDED = "RISK_LIMIT_EXCEEDED"
+    EXCHANGE_REJECTED = "EXCHANGE_REJECTED"
+    POST_ONLY_WOULD_CROSS = "POST_ONLY_WOULD_CROSS"
+
+    def to_java(self):
+        return _java_enum("group.gnometrading.schemas.RejectReason", self.value)
+
+    @classmethod
+    def from_java(cls, java_enum) -> RejectReason | None:
+        name = str(java_enum.name())
+        if name == "NULL_VAL":
+            return None
+        return cls(name)
+
+
 class SchemaType(Enum):
     MBO = "mbo"
     MBP_10 = "mbp-10"
