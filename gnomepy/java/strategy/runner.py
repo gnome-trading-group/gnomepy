@@ -101,7 +101,7 @@ def run_strategy_session(
         gnome_root: Root directory of GNOME repos for JAR discovery.
     """
     classpath = [jar] if jar else discover_classpath("gnome-orchestrator", gnome_root)
-    ensure_jvm_started(classpath=classpath)
+    ensure_jvm_started(classpath=classpath, jvm_args=["-XX:+UseZGC", "-XX:ConcGCThreads=2"])
 
     effective_strategy = strategy
     if effective_strategy is None and config.strategy is not None:
@@ -143,7 +143,7 @@ def run_from_env() -> None:
     strategy_args = json.loads(args_json) if args_json else {}
 
     classpath = discover_classpath("gnome-orchestrator")
-    ensure_jvm_started(classpath=classpath)
+    ensure_jvm_started(classpath=classpath, jvm_args=["-XX:+UseZGC", "-XX:ConcGCThreads=2"])
 
     # Must load TradingOrchestrator before Orchestrator.main() — its static initializer
     # sets instanceClass, which Orchestrator.main() uses to instantiate the orchestrator.
