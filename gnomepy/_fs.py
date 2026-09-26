@@ -102,3 +102,13 @@ def fs_download_file(fs: pafs.FileSystem, remote_path: str, local_path: Path) ->
     Path(local_path).parent.mkdir(parents=True, exist_ok=True)
     with fs.open_input_file(remote_path) as f:
         Path(local_path).write_bytes(f.read())
+
+
+def fs_read_bytes(fs: pafs.FileSystem, path: str) -> bytes:
+    with fs.open_input_file(path) as f:
+        return f.read()
+
+
+def fs_write_bytes(fs: pafs.FileSystem, path: str, data: bytes) -> None:
+    with fs.open_output_stream(path) as f:
+        f.write(data)
