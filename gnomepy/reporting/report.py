@@ -188,6 +188,8 @@ class BacktestReport:
     @property
     def metadata(self):
         """BacktestMetadata from the results (None if not available)."""
+        if self._results is None:
+            return None
         return self._results.metadata
 
     # -- Fills ---------------------------------------------------------------
@@ -195,6 +197,29 @@ class BacktestReport:
     @property
     def fills(self) -> pd.DataFrame:
         return self._curves.fills
+
+    # -- Raw frames ----------------------------------------------------------
+
+    @property
+    def market_df(self) -> pd.DataFrame:
+        """Market records, with a ``mid_price`` column added."""
+        return self._market_df
+
+    @property
+    def intent_df(self) -> pd.DataFrame:
+        """Intent records emitted by the strategy."""
+        return self._intent_df
+
+    def custom_metrics(self, name: str | None = None) -> pd.DataFrame | dict[str, pd.DataFrame]:
+        """Custom strategy metric streams recorded via ``register_metrics``.
+
+        Args:
+            name: If given, return the DataFrame for that named buffer.
+                  If None, return a dict mapping buffer name -> DataFrame.
+        """
+        if self._results is None:
+            return pd.DataFrame() if name is not None else {}
+        return self._results.custom_metrics(name)
 
     # -- Sharpe --------------------------------------------------------------
 
