@@ -34,6 +34,7 @@ class AssetClass(IntEnum):
 @dataclass
 class Exchange:
     exchange_id: int
+    exchange_code: str
     exchange_name: str
     region: str
     schema_type: str
