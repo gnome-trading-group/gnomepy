@@ -111,6 +111,9 @@ class Event:
     expiry: str | None
     date_modified: str
     date_created: str
+    exchange_id: int | None = None
+    native_event_id: str | None = None
+    native_url: str | None = None
 
 
 @dataclass
@@ -131,17 +134,6 @@ class ContractRelationship:
     confidence: float
     method: str
     date_created: str
-
-
-@dataclass
-class ExchangeEvent:
-    exchange_event_id: int
-    exchange_id: int
-    event_id: int
-    native_event_id: str
-    raw_title: str
-    date_created: str
-    native_url: str | None = None
 
 
 @dataclass

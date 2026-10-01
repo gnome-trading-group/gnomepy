@@ -14,7 +14,6 @@ from gnomepy.registry.types import (
     Event,
     EventContract,
     Exchange,
-    ExchangeEvent,
     Listing,
     ListingSpec,
     Security,
@@ -88,6 +87,8 @@ class RegistryClient:
         event_id: Optional[int] = None,
         category: Optional[str] = None,
         resolved: Optional[bool] = None,
+        exchange_id: Optional[int] = None,
+        native_event_id: Optional[str] = None,
     ) -> list[Event]:
         return self._get("/events", _parse_kwarg_params(locals()), Event)
 
@@ -110,9 +111,6 @@ class RegistryClient:
         relationship_type: Optional[str] = None,
     ) -> list[ContractRelationship]:
         return self._get("/contract-relationships", _parse_kwarg_params(locals()), ContractRelationship)
-
-    def get_exchange_events(self, *, exchange_id: Optional[int] = None, event_id: Optional[int] = None) -> list[ExchangeEvent]:
-        return self._get("/exchange-events", _parse_kwarg_params(locals()), ExchangeEvent)
 
     def create_currency(self, **kwargs) -> dict:
         return self._post("/currencies", {_to_camel_case(k): v for k, v in kwargs.items()})
@@ -155,9 +153,6 @@ class RegistryClient:
 
     def bulk_create_contract_relationships(self, items: list[dict]) -> list[dict]:
         return self._post_bulk("/contract-relationships", items)
-
-    def bulk_create_exchange_events(self, items: list[dict]) -> list[dict]:
-        return self._post_bulk("/exchange-events", items)
 
     def patch_event_contract(self, event_contract_id: int, **kwargs) -> dict:
         body = {_to_camel_case(k): v for k, v in kwargs.items()}
