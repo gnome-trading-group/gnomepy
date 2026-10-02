@@ -36,7 +36,7 @@ profiles:
 # Optional: number of book depth levels to record (1 = BBO only, max 10).
 # record_depth: 3
 
-# Optional: OMS risk parameters.
+# Optional: OMS risk parameters. Money limits are in price units (1e9 = $1).
 # risk:
 #   policies:
-#     MAX_NOTIONAL: { maxNotionalValue: 1000000 }
+#     MAX_NOTIONAL: { maxNotionalValue: 1000000000000000 }  # $1,000,000

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import jpype
 
 from gnomepy.java.enums import Side, OrderType
+from gnomepy.java.statics import Scales
 
 
 class Intent:
@@ -136,7 +137,11 @@ class Intent:
 
 @dataclass
 class PositionInfo:
-    """Python view of an OMS position."""
+    """Python view of an OMS position.
+
+    ``avg_entry_price`` is in price units (1e9 = $1). ``realized_pnl`` and
+    ``total_fees`` are money values, also in price units (1e9 = $1).
+    """
 
     listing_id: int
     net_quantity: int
@@ -204,7 +209,7 @@ class PositionViewWrapper:
             size = ((size + lot - 1) // lot) * lot
         min_notional = int(spec.minNotional())
         if min_notional > 0 and price > 0:
-            min_size = (min_notional + price - 1) // price
+            min_size = (min_notional * int(Scales.SIZE) + price - 1) // price
             if lot > 0:
                 min_size = ((min_size + lot - 1) // lot) * lot
             size = max(size, min_size)

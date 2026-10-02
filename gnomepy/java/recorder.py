@@ -300,7 +300,9 @@ class BacktestResults:
         side, order_type, submit_price, submit_size,
         filled_qty, leaves_qty, avg_fill_price, total_fee, final_status.
 
-        ``avg_fill_price`` is totalCost / filledQty; 0 if the order was never filled.
+        ``total_cost`` is the filled notional in price units (1e9 = $1), never rescaled.
+        ``avg_fill_price`` is total_cost * SIZE_SCALE / filled_qty (rounded); 0 if the
+        order was never filled.
         ``side`` values: "None", "Bid", "Ask".
         ``order_type`` values: "Limit", "Market".
         ``final_status`` values: "Filled", "PartialFill", "Cancelled", "Rejected", "Expired".
@@ -319,13 +321,14 @@ class BacktestResults:
         df["order_type"] = _decode_bytes(df["order_type"].values, _OTYPE_MAP)
         df["final_status"] = _decode_bytes(df["final_status"].values, _STATUS_MAP)
 
-        # avg_fill_price = totalCost / filledQty (per-unit, in raw scaled units)
+        # total_cost is notional in price units, so rescaling by SIZE_SCALE
+        # recovers a per-unit price in price units.
         filled_qty = df["filled_qty"].values
         total_cost = df["total_cost"].values
         with np.errstate(divide="ignore", invalid="ignore"):
-            df["avg_fill_price"] = np.where(
-                filled_qty > 0, total_cost / filled_qty, 0
-            ).astype(np.int64)
+            df["avg_fill_price"] = np.rint(np.where(
+                filled_qty > 0, total_cost * float(self.SIZE_SCALE) / filled_qty, 0
+            )).astype(np.int64)
 
         df["submit_timestamp"] = pd.to_datetime(df["submit_timestamp"])
         df["ack_timestamp"] = pd.to_datetime(df["ack_timestamp"])

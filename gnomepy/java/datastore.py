@@ -88,6 +88,8 @@ class DataStore:
         if self._schemas is not None:
             return len(self._schemas)
         ensure_jvm_started()
+        # Older-version records have a different size, so count only after migrating.
+        self._migrate_if_needed()
         schema_cls = get_schema_class(self._schema_type)
         proto = jpype.JClass(schema_cls._java_class)()
         msg_size = int(proto.totalMessageSize())

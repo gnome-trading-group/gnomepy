@@ -159,13 +159,15 @@ class StrategyConfig:
 class RiskConfig:
     """OMS risk policy configuration.
 
-    Keys are RiskPolicyType enum names; values are parameter dicts.
+    Keys are RiskPolicyType enum names; values are parameter dicts. Money
+    limits (maxNotionalValue, maxLoss) are in price units (1e9 = $1); size
+    limits (maxOrderSize) are in size units (1e6 = 1 unit).
 
     Example::
 
         RiskConfig(policies={
-            "MAX_NOTIONAL": {"maxNotionalValue": 100_000},
-            "MAX_ORDER_SIZE": {"maxOrderSize": 5_000},
+            "MAX_NOTIONAL": {"maxNotionalValue": 100_000 * 1_000_000_000},
+            "MAX_ORDER_SIZE": {"maxOrderSize": 5_000 * 1_000_000},
             "KILL_SWITCH": {},
         })
     """
