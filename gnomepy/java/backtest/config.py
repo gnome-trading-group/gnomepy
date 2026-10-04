@@ -168,8 +168,9 @@ class RiskConfig:
         RiskConfig(policies={
             "MAX_NOTIONAL": {"maxNotionalValue": 100_000 * 1_000_000_000},
             "MAX_ORDER_SIZE": {"maxOrderSize": 5_000 * 1_000_000},
-            "KILL_SWITCH": {},
         })
+
+    KILL_SWITCH is rejected: it stops all trading, which has no meaning in a backtest.
     """
 
     policies: dict[str, dict[str, object]] = field(default_factory=dict)

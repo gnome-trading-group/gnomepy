@@ -97,6 +97,7 @@ class ListingSpec:
     min_notional: int
     contract_multiplier: int
     recorded_at: str
+    min_size: int = 0
 
 
 @dataclass

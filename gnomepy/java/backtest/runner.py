@@ -235,7 +235,8 @@ class Backtest:
         SecurityMaster = jpype.JClass("group.gnometrading.SecurityMaster")
         security_master = SecurityMaster(RegistryConnection(registry_host, registry_api_key))
 
-        java_oms = BacktestDriverFactory.buildOms(java_config.risk, security_master)
+        prices = BacktestDriverFactory.buildPrices(java_config)
+        java_oms = BacktestDriverFactory.buildOms(java_config.risk, security_master, prices)
 
         tracker = java_oms.getPositionTracker()
         for lsc in java_config.listings:
@@ -262,7 +263,7 @@ class Backtest:
             logger.debug("market data caching enabled: %s", md_cache._root)
 
         self._driver = BacktestDriverFactory.create(
-            java_config, security_master, java_oms, java_strategy, self._recorder, s3
+            java_config, security_master, java_oms, java_strategy, self._recorder, s3, prices
         )
 
     def _resolve_strategy(self, java_config, java_oms, security_master):

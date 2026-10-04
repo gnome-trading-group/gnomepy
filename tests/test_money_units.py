@@ -110,8 +110,10 @@ class TestOrdersAvgFillPrice:
 
 
 class _FakeSecurityMaster:
-    def __init__(self, lot_size: int, min_notional: int):
-        self._spec = SimpleNamespace(lotSize=lambda: lot_size, minNotional=lambda: min_notional)
+    def __init__(self, lot_size: int, min_notional: int, min_size: int):
+        self._spec = SimpleNamespace(
+            lotSize=lambda: lot_size, minNotional=lambda: min_notional, minSize=lambda: min_size
+        )
 
     def getListing(self, exchange_id, security_id):
         return SimpleNamespace(listingId=lambda: 1)
@@ -120,8 +122,8 @@ class _FakeSecurityMaster:
         return self._spec
 
 
-def _wrapper(lot_size: int, min_notional: int) -> PositionViewWrapper:
-    return PositionViewWrapper(None, _FakeSecurityMaster(lot_size, min_notional))
+def _wrapper(lot_size: int, min_notional: int, min_size: int = 0) -> PositionViewWrapper:
+    return PositionViewWrapper(None, _FakeSecurityMaster(lot_size, min_notional, min_size))
 
 
 class TestCompliantSize:
@@ -146,3 +148,14 @@ class TestCompliantSize:
         pv = _wrapper(lot_size=SIZE_SCALE, min_notional=0)
         size = pv.compliant_size(1, 1, desired_size=1_500_000, price=PRICE_SCALE)
         assert size == 2 * SIZE_SCALE
+
+    def test_min_size_raises_small_order(self):
+        # Polymarket: 5-share minimum, 0.01-share lots
+        pv = _wrapper(lot_size=SIZE_SCALE // 100, min_notional=0, min_size=5 * SIZE_SCALE)
+        size = pv.compliant_size(1, 1, desired_size=2 * SIZE_SCALE, price=PRICE_SCALE // 10)
+        assert size == 5 * SIZE_SCALE
+
+    def test_min_size_rounded_up_to_lot(self):
+        pv = _wrapper(lot_size=2 * SIZE_SCALE, min_notional=0, min_size=5 * SIZE_SCALE)
+        size = pv.compliant_size(1, 1, desired_size=1, price=PRICE_SCALE)
+        assert size == 6 * SIZE_SCALE

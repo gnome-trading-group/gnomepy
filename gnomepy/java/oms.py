@@ -163,7 +163,6 @@ class TrackedOrderInfo:
     state: str
     cumulative_qty: int
     leaves_qty: int
-    avg_fill_price: int
 
 
 class PositionViewWrapper:
@@ -203,16 +202,13 @@ class PositionViewWrapper:
         spec = self._sm.getListingSpec(int(listing_id))
         if spec is None:
             return desired_size
-        size = desired_size
         lot = int(spec.lotSize())
-        if lot > 0:
-            size = ((size + lot - 1) // lot) * lot
+        size = max(desired_size, int(spec.minSize()))
         min_notional = int(spec.minNotional())
         if min_notional > 0 and price > 0:
-            min_size = (min_notional * int(Scales.SIZE) + price - 1) // price
-            if lot > 0:
-                min_size = ((min_size + lot - 1) // lot) * lot
-            size = max(size, min_size)
+            size = max(size, (min_notional * int(Scales.SIZE) + price - 1) // price)
+        if lot > 0:
+            size = ((size + lot - 1) // lot) * lot
         return size
 
 
@@ -237,5 +233,4 @@ def _tracked_order_from_java(tracked) -> TrackedOrderInfo:
         state=str(tracked.getState().name()),
         cumulative_qty=int(tracked.getFilledQty()),
         leaves_qty=int(tracked.getLeavesQty()),
-        avg_fill_price=int(tracked.getAvgFillPrice()),
     )
