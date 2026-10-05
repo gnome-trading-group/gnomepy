@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+from gnomepy.java.enums import Side
 from gnomepy.java.oms import PositionViewWrapper
 from gnomepy.java.recorder import BacktestResults
 from gnomepy.java.statics import Scales
@@ -110,9 +111,12 @@ class TestOrdersAvgFillPrice:
 
 
 class _FakeSecurityMaster:
-    def __init__(self, lot_size: int, min_notional: int, min_size: int):
+    def __init__(self, lot_size: int, min_notional: int, min_size: int, tick_size: int = 0):
         self._spec = SimpleNamespace(
-            lotSize=lambda: lot_size, minNotional=lambda: min_notional, minSize=lambda: min_size
+            lotSize=lambda: lot_size,
+            minNotional=lambda: min_notional,
+            minSize=lambda: min_size,
+            tickSize=lambda: tick_size,
         )
 
     def getListing(self, exchange_id, security_id):
@@ -159,3 +163,29 @@ class TestCompliantSize:
         pv = _wrapper(lot_size=2 * SIZE_SCALE, min_notional=0, min_size=5 * SIZE_SCALE)
         size = pv.compliant_size(1, 1, desired_size=1, price=PRICE_SCALE)
         assert size == 6 * SIZE_SCALE
+
+
+class TestCompliantPrice:
+    CENT = PRICE_SCALE // 100
+
+    def _pv(self, tick_size: int) -> PositionViewWrapper:
+        return PositionViewWrapper(None, _FakeSecurityMaster(0, 0, 0, tick_size=tick_size))
+
+    def test_bids_round_down_and_asks_round_up(self):
+        pv = self._pv(self.CENT)
+        off_tick = 41 * self.CENT + self.CENT // 2  # $0.415
+        assert pv.compliant_price(1, 1, off_tick, Side.BID) == 41 * self.CENT
+        assert pv.compliant_price(1, 1, off_tick, Side.ASK) == 42 * self.CENT
+
+    def test_on_tick_prices_are_unchanged(self):
+        pv = self._pv(self.CENT)
+        assert pv.compliant_price(1, 1, 37 * self.CENT, Side.BID) == 37 * self.CENT
+        assert pv.compliant_price(1, 1, 37 * self.CENT, Side.ASK) == 37 * self.CENT
+
+    def test_sub_cent_tick(self):
+        pv = self._pv(self.CENT // 10)
+        assert pv.compliant_price(1, 1, 412_345_678, Side.BID) == 412_000_000
+        assert pv.compliant_price(1, 1, 412_345_678, Side.ASK) == 413_000_000
+
+    def test_no_tick_leaves_the_price(self):
+        assert self._pv(0).compliant_price(1, 1, 412_345_678, Side.ASK) == 412_345_678

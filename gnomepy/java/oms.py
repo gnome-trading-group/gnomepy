@@ -195,6 +195,20 @@ class PositionViewWrapper:
             return 0
         return int(pos.getEffectiveQuantity())
 
+    def compliant_price(self, exchange_id: int, security_id: int, price: int, side: Side) -> int:
+        """Rounds a price onto the listing's tick, never more aggressively: bids down, asks up.
+
+        The OMS rejects an order priced off its listing's tick, so strategies round before sending.
+        """
+        listing_id = self._resolve_listing_id(exchange_id, security_id)
+        spec = self._sm.getListingSpec(int(listing_id))
+        tick = int(spec.tickSize()) if spec is not None else 0
+        if tick <= 0:
+            return price
+        if side == Side.BID:
+            return (price // tick) * tick
+        return -((-price) // tick) * tick
+
     def compliant_size(self, exchange_id: int, security_id: int, desired_size: int, price: int) -> int:
         if desired_size <= 0:
             return desired_size
