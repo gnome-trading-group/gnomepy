@@ -70,6 +70,47 @@ def _create_python_callback(py_strategy: Strategy):
     return _Proxy()
 
 
+def _to_python(value):
+    """Converts a value Jackson read from YAML (Java String, boxed number, List, Map) to its Python type."""
+    # Java checks first: JPype's boxed numbers and strings subclass Python's own types.
+    if isinstance(value, jpype.JString):
+        return str(value)
+    if isinstance(value, jpype.JClass("java.lang.Boolean")):
+        return bool(value)
+    if isinstance(value, (jpype.JClass("java.lang.Double"), jpype.JClass("java.lang.Float"))):
+        return float(value)
+    if isinstance(value, jpype.JClass("java.lang.Number")):
+        return int(value)
+    if isinstance(value, jpype.JClass("java.util.Map")):
+        return {str(k): _to_python(v) for k, v in dict(value).items()}
+    if isinstance(value, jpype.JClass("java.util.List")):
+        return [_to_python(v) for v in value]
+    return value
+
+
+# Reflection does not narrow or widen boxed arguments, so each one is boxed as its parameter's primitive type.
+_PRIMITIVE_BOXES = {
+    "int": "java.lang.Integer",
+    "long": "java.lang.Long",
+    "short": "java.lang.Short",
+    "byte": "java.lang.Byte",
+    "double": "java.lang.Double",
+    "float": "java.lang.Float",
+    "boolean": "java.lang.Boolean",
+}
+
+
+def _to_java_arg(value, param_type):
+    box = _PRIMITIVE_BOXES.get(str(param_type.getName()))
+    if box is None:
+        return value
+    if box == "java.lang.Boolean":
+        return jpype.JClass(box).valueOf(bool(value))
+    if box in ("java.lang.Double", "java.lang.Float"):
+        return jpype.JClass(box).valueOf(float(value))
+    return jpype.JClass(box).valueOf(int(value))
+
+
 def _instantiate_java_strategy(class_name: str, strategy_args: dict):
     """Resolve a Java FQN and instantiate it via reflection.
 
@@ -120,7 +161,7 @@ def _instantiate_java_strategy(class_name: str, strategy_args: dict):
         )
 
     ctor, names = candidates[0]
-    ordered = [strategy_args[n] for n in names]
+    ordered = [_to_java_arg(strategy_args[n], p.getType()) for n, p in zip(names, ctor.getParameters())]
     return ctor.newInstance(ordered)
 
 
@@ -281,7 +322,7 @@ class Backtest:
             class_name = str(java_config.strategy.className)
             args = {}
             if java_config.strategy.args is not None:
-                args = {str(k): v for k, v in dict(java_config.strategy.args).items()}
+                args = {str(k): _to_python(v) for k, v in dict(java_config.strategy.args).items()}
             if ":" in class_name:
                 py_strategy = _load_python_strategy(class_name, args)
                 return self._wrap_python_strategy(py_strategy, java_oms, security_master, position_view, PythonStrategyAgent)
@@ -298,19 +339,34 @@ class Backtest:
 
     def _wrap_python_strategy(self, py_strategy, java_oms, security_master, position_view, PythonStrategyAgent):
         if self._recorder is not None:
-            py_strategy._metric_recorder = PyMetricRecorder(self._recorder.createMetricRecorder())
-            py_strategy.register_metrics()
+            java_metrics = self._recorder.createMetricRecorder()
+        else:
+            # Strategies declare and write metrics the same way whether or not the run records them.
+            java_metrics = jpype.JClass("group.gnometrading.backtest.recorder.MetricRecorder").discarding()
+        py_strategy._metric_recorder = PyMetricRecorder(java_metrics)
         callback = _create_python_callback(py_strategy)
-        return PythonStrategyAgent.create(jpype.JInt(0), position_view, security_master, callback)
+        agent = PythonStrategyAgent.create(jpype.JInt(0), position_view, security_master, callback)
+        # After create, which runs onInit, so self.positions is available inside register_metrics.
+        py_strategy.register_metrics()
+        return agent
 
     def add_warning(self, message: str) -> None:
         """Add an arbitrary warning to be included in backtest results and metadata."""
         self._warnings.append(message)
 
     def _install_warning_handler(self) -> None:
+        if self._warning_handler is not None:
+            return
         WarningHandler = jpype.JClass("group.gnometrading.backtest.recorder.WarningHandler")
         self._warning_handler = WarningHandler()
         jpype.JClass("java.util.logging.Logger").getLogger("group.gnometrading").addHandler(self._warning_handler)
+
+    def _remove_warning_handler(self) -> None:
+        # The logger is global to the JVM: a handler left on it would collect every later run's warnings too.
+        if self._warning_handler is None:
+            return
+        jpype.JClass("java.util.logging.Logger").getLogger("group.gnometrading").removeHandler(self._warning_handler)
+        self._warning_handler = None
 
     def _collect_java_warnings(self) -> None:
         if self._warning_handler is None:
@@ -322,17 +378,23 @@ class Backtest:
     def run(self, progress: bool = True) -> BacktestResults | None:
         """Prepare data and fully execute the backtest."""
         t0 = time.time()
-        self._build_driver()
+        # Before the build, so warnings raised while building are kept too.
         self._install_warning_handler()
-        self._driver.prepareData()
+        try:
+            self._build_driver()
+            self._driver.prepareData()
 
-        if not progress:
             end_ns = int(self._end_date.replace(tzinfo=pytz.UTC).timestamp()) * 1_000_000_000
-            self._driver.executeUntil(jpype.JLong(end_ns))
-        else:
-            self._run_with_progress()
+            if not progress:
+                self._driver.executeUntil(jpype.JLong(end_ns))
+            else:
+                self._run_with_progress()
 
-        self._collect_java_warnings()
+            self._collect_java_warnings()
+        finally:
+            self._remove_warning_handler()
+        if self._recorder is not None:
+            self._recorder.closeOpenOrders(jpype.JLong(end_ns))
         wall_time = time.time() - t0
         event_count = int(self._driver.getEventsProcessed())
 
@@ -467,8 +529,8 @@ class Backtest:
     def run_until(self, timestamp: int) -> BacktestResults | None:
         """Run the backtest until a specific nanosecond timestamp."""
         if self._driver is None:
-            self._build_driver()
             self._install_warning_handler()
+            self._build_driver()
             self._driver.prepareData()
         self._driver.executeUntil(jpype.JLong(timestamp))
         self._collect_java_warnings()

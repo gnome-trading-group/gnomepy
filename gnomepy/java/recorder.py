@@ -21,7 +21,7 @@ from gnomepy.metadata import BacktestMetadata
 # Byte-encoding constants mirrored from BacktestRecorder.java
 _SIDE_MAP = {0: "None", 1: "Bid", 2: "Ask"}
 _OTYPE_MAP = {0: "Limit", 1: "Market"}
-_STATUS_MAP = {0: "Filled", 1: "PartialFill", 2: "Cancelled", 3: "Rejected", 4: "Expired"}
+_STATUS_MAP = {0: "Filled", 1: "PartialFill", 2: "Cancelled", 3: "Rejected", 4: "Expired", 5: "Open"}
 
 
 # SBE null for int64 price and size fields: the recorder writes it for an empty book side or a tick with no trade.
@@ -31,7 +31,10 @@ _STREAMS = ("market", "orders", "fills", "intents")
 
 # (price columns, size columns) per stream. Market columns depend on the recorded depth, so they are matched by name.
 _UNIT_COLUMNS = {
-    "orders": (("submit_price", "avg_fill_price"), ("submit_size", "filled_qty", "leaves_qty")),
+    "orders": (
+        ("submit_price", "final_price", "avg_fill_price"),
+        ("submit_size", "final_size", "filled_qty", "leaves_qty"),
+    ),
     "fills": (("fill_price", "book_bid_price", "book_ask_price"), ("fill_qty", "leaves_qty")),
     "intents": (("bid_price", "ask_price", "take_limit_price"), ("bid_size", "ask_size", "take_size")),
 }
@@ -319,15 +322,19 @@ class BacktestResults:
 
         Columns: submit_timestamp (index), ack_timestamp, terminal_timestamp,
         exchange_id, security_id, strategy_id, client_oid,
-        side, order_type, submit_price, submit_size,
-        filled_qty, leaves_qty, avg_fill_price, total_fee, final_status.
+        side, order_type, submit_price, submit_size, final_price, final_size,
+        modify_count, filled_qty, leaves_qty, avg_fill_price, total_fee, final_status.
+
+        ``final_price`` / ``final_size`` are the order's price and size after its last
+        acknowledged modify (the submitted ones if it was never modified).
 
         ``total_cost`` is the filled notional in price units (1e9 = $1), never rescaled.
         ``avg_fill_price`` is total_cost * SIZE_SCALE / filled_qty (rounded); 0 if the
         order was never filled.
         ``side`` values: "None", "Bid", "Ask".
         ``order_type`` values: "Limit", "Market".
-        ``final_status`` values: "Filled", "PartialFill", "Cancelled", "Rejected", "Expired".
+        ``final_status`` values: "Filled", "PartialFill", "Cancelled", "Rejected", "Expired", and
+        "Open" for orders still working when the run ended.
         """
         return self._frame("orders", scale_prices, self._build_orders_df)
 
@@ -351,6 +358,8 @@ class BacktestResults:
                 filled_qty > 0, total_cost * float(self.SIZE_SCALE) / filled_qty, 0
             )).astype(np.int64)
 
+        # A market order has no price; its price columns hold the SBE null.
+        _null_to_nan(df, [c for c in ("submit_price", "final_price") if c in df.columns])
         df["submit_timestamp"] = pd.to_datetime(df["submit_timestamp"])
         df["ack_timestamp"] = pd.to_datetime(df["ack_timestamp"])
         df["terminal_timestamp"] = pd.to_datetime(df["terminal_timestamp"])

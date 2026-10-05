@@ -193,3 +193,62 @@ def test_sbe_nulls_from_the_java_recorder_become_nan():
     assert np.isnan(df["bid_size_0"].iloc[0])
     assert df["bid_price_0"].iloc[1] == pytest.approx(0.4)
     assert df["last_trade_price"].isna().all()
+
+
+class _FakeOrderRecorder:
+    """One order buffer of LONG/BYTE columns standing in for the Java recorder."""
+
+    def __init__(self, columns: dict[str, tuple[str, list]]):
+        self._columns = [_TypedColumn(name, t, i) for i, (name, (t, _)) in enumerate(columns.items())]
+        self._values = [vals for _, vals in columns.values()]
+
+    def getOrderRecordCount(self):
+        return len(self._values[0])
+
+    def getOrderRecords(self):
+        return self
+
+    def getCount(self):
+        return len(self._values[0])
+
+    def getColumns(self):
+        return self._columns
+
+    def getLongColumn(self, idx):
+        return self._values[idx]
+
+    def getByteColumn(self, idx):
+        return self._values[idx]
+
+
+class _TypedColumn(_Column):
+    def __init__(self, name, col_type, idx):
+        super().__init__(name, idx)
+        self._type = col_type
+
+    def type(self):
+        return self._type
+
+
+def test_market_order_price_is_nan_not_the_sbe_null():
+    null = np.iinfo(np.int64).min
+    recorder = _FakeOrderRecorder({
+        "submit_timestamp": ("LONG", [1, 2]),
+        "ack_timestamp": ("LONG", [0, 0]),
+        "terminal_timestamp": ("LONG", [3, 4]),
+        "side": ("BYTE", [1, 2]),
+        "order_type": ("BYTE", [0, 1]),
+        "final_status": ("BYTE", [0, 0]),
+        "submit_price": ("LONG", [500_000_000, null]),
+        "final_price": ("LONG", [510_000_000, null]),
+        "submit_size": ("LONG", [1_000_000, 2_000_000]),
+        "final_size": ("LONG", [1_000_000, 2_000_000]),
+        "filled_qty": ("LONG", [1_000_000, 2_000_000]),
+        "leaves_qty": ("LONG", [0, 0]),
+        "total_cost": ("LONG", [500_000_000, 1_000_000_000]),
+    })
+    df = BacktestResults(recorder).orders_df()
+    assert df["submit_price"].iloc[0] == pytest.approx(0.5)
+    assert df["final_price"].iloc[0] == pytest.approx(0.51)
+    assert np.isnan(df["submit_price"].iloc[1])
+    assert np.isnan(df["final_price"].iloc[1])
