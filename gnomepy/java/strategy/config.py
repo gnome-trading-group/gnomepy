@@ -110,6 +110,7 @@ class SimulationProfile:
     network_latency: LatencyModelConfig = field(default_factory=StaticLatencyConfig)
     order_latency: LatencyModelConfig = field(default_factory=StaticLatencyConfig)
     queue: QueueConfig = field(default_factory=RiskAverseQueueConfig)
+    self_trade_prevention: str = "CANCEL_INCOMING"
 
     def to_properties(self, prefix: str) -> dict[str, str]:
         props: dict[str, str] = {}
@@ -117,6 +118,7 @@ class SimulationProfile:
         props.update(self.network_latency.to_properties(f"{prefix}.network.latency"))
         props.update(self.order_latency.to_properties(f"{prefix}.order.latency"))
         props.update(self.queue.to_properties(f"{prefix}.queue"))
+        props[f"{prefix}.self.trade.prevention"] = self.self_trade_prevention
         return props
 
 
@@ -211,7 +213,13 @@ def _parse_simulation_profile(sim: dict) -> SimulationProfile:
     network_latency = _parse_latency_config(sim.get("network_latency", {}))
     order_latency = _parse_latency_config(sim.get("order_latency", {}))
     queue = _parse_queue_config(sim.get("queue", {}))
-    return SimulationProfile(fee=fee, network_latency=network_latency, order_latency=order_latency, queue=queue)
+    return SimulationProfile(
+        fee=fee,
+        network_latency=network_latency,
+        order_latency=order_latency,
+        queue=queue,
+        self_trade_prevention=sim.get("self_trade_prevention", "CANCEL_INCOMING"),
+    )
 
 
 def _parse_fee_config(cfg: dict) -> FeeConfig:

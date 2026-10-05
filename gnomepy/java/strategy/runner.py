@@ -121,19 +121,7 @@ def run_strategy_session(
     props = config.to_properties()
     java_args = jpype.JArray(jpype.JString)([f"--{k}={v}" for k, v in props.items()])
 
-    System = jpype.JClass("java.lang.System")
-    jpype.JClass("group.gnometrading.trading.TradingOrchestrator")
-    Orchestrator = jpype.JClass("group.gnometrading.di.Orchestrator")
-    Orchestrator.main(java_args)
-
-    def _shutdown(sig, frame):
-        System.exit(0)
-
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
-
-    while True:
-        time.sleep(1)
+    _run_until_signalled(java_args)
 
 
 def run_from_env() -> None:
@@ -145,10 +133,6 @@ def run_from_env() -> None:
     classpath = discover_classpath("gnome-orchestrator")
     ensure_jvm_started(classpath=classpath, jvm_args=STRATEGY_JVM_OPTIONS)
 
-    # Must load TradingOrchestrator before Orchestrator.main() — its static initializer
-    # sets instanceClass, which Orchestrator.main() uses to instantiate the orchestrator.
-    jpype.JClass("group.gnometrading.trading.TradingOrchestrator")
-
     py_strategy = _load_python_strategy(strategy_class, strategy_args or None)
 
     callback = _create_strategy_callback(py_strategy)
@@ -156,12 +140,22 @@ def run_from_env() -> None:
     PythonStrategyAgent.setCallback(callback)
 
     # All session config is in env vars; Properties reads them via loadEnvironmentOverrides()
-    Orchestrator = jpype.JClass("group.gnometrading.di.Orchestrator")
-    Orchestrator.main(jpype.JArray(jpype.JString)([]))
+    _run_until_signalled(jpype.JArray(jpype.JString)([]))
 
+
+def _run_until_signalled(java_args) -> None:
+    """Starts the trading orchestrator and blocks until SIGINT/SIGTERM, then closes it and exits the JVM."""
+    # Must load TradingOrchestrator before Orchestrator.start() — its static initializer
+    # sets instanceClass, which Orchestrator.start() uses to instantiate the orchestrator.
+    jpype.JClass("group.gnometrading.trading.TradingOrchestrator")
+    Orchestrator = jpype.JClass("group.gnometrading.di.Orchestrator")
+    orchestrator = Orchestrator.start(java_args)
     System = jpype.JClass("java.lang.System")
 
     def _shutdown(sig, frame):
+        # Closed here, not left to the orchestrator's JVM shutdown hook: JPype's own hook interrupts every
+        # non-daemon thread while other hooks run, which would cut agents off mid-close.
+        orchestrator.close()
         System.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)

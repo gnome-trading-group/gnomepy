@@ -61,3 +61,9 @@ def test_measure_processing_time_and_seed_reach_java():
 def test_gaussian_seed_is_optional():
     assert GaussianLatencyConfig(mu=1e6, sigma=1e5)._to_java().seed is None
     assert int(GaussianLatencyConfig(mu=1e6, sigma=1e5, seed=7)._to_java().seed) == 7
+
+
+def test_self_trade_prevention_reaches_java():
+    profile = ExchangeProfileConfig(self_trade_prevention="CANCEL_RESTING")._to_java()
+    assert str(profile.selfTradePrevention.name()) == "CANCEL_RESTING"
+    assert str(ExchangeProfileConfig()._to_java().selfTradePrevention.name()) == "CANCEL_INCOMING"

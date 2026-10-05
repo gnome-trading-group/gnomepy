@@ -118,6 +118,9 @@ class ExchangeProfileConfig:
     queue_model: Union[
         OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig
     ] = field(default_factory=RiskAverseQueueConfig)
+    # What the venue does when our order would trade with our own resting order:
+    # "CANCEL_INCOMING" (Kalshi taker_at_cross) or "CANCEL_RESTING" (Kalshi maker, which our Kalshi gateway sends).
+    self_trade_prevention: str = "CANCEL_INCOMING"
 
     def _to_java(self):
         cls = jpype.JClass("group.gnometrading.simulation.config.ExchangeProfileConfig")
@@ -126,6 +129,9 @@ class ExchangeProfileConfig:
         obj.networkLatency = self.network_latency._to_java()
         obj.orderProcessingLatency = self.order_processing_latency._to_java()
         obj.queueModel = self.queue_model._to_java()
+        obj.selfTradePrevention = jpype.JClass(
+            "group.gnometrading.simulation.book.SelfTradePrevention"
+        ).valueOf(self.self_trade_prevention)
         return obj
 
 

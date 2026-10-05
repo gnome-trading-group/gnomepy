@@ -38,3 +38,17 @@ def test_seed_parsed_from_yaml(tmp_path):
     cfg = SessionConfig.from_yaml(path)
     assert cfg.seed == 42
     assert cfg.profiles["default"].network_latency.seed == 5
+
+
+def test_self_trade_prevention_written_and_parsed(tmp_path):
+    profile = SimulationProfile(self_trade_prevention="CANCEL_RESTING")
+    props = profile.to_properties("simulation.profiles.kalshi")
+    assert props["simulation.profiles.kalshi.self.trade.prevention"] == "CANCEL_RESTING"
+
+    path = tmp_path / "session.yaml"
+    path.write_text(
+        "mode: paper\n"
+        "listings:\n  - listing_id: 7\n    profile: kalshi\n"
+        "profiles:\n  kalshi:\n    self_trade_prevention: CANCEL_RESTING\n"
+    )
+    assert SessionConfig.from_yaml(path).profiles["kalshi"].self_trade_prevention == "CANCEL_RESTING"
