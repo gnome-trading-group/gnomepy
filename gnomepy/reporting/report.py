@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-from gnomepy.reporting.metrics import Curves, build_curves, compute_sharpe
+from gnomepy.reporting.metrics import Curves, build_curves, compute_max_drawdown, compute_sharpe, mid_price
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
@@ -23,9 +23,7 @@ def _with_mid_price(market_df: pd.DataFrame) -> pd.DataFrame:
         return market_df
     if "bid_price_0" in market_df.columns and "ask_price_0" in market_df.columns:
         df = market_df.copy()
-        bid = df["bid_price_0"].astype(float).where(df["bid_price_0"] > 0)
-        ask = df["ask_price_0"].astype(float).where(df["ask_price_0"] > 0)
-        df["mid_price"] = ((bid.fillna(ask) + ask.fillna(bid)) / 2.0).ffill()
+        df["mid_price"] = mid_price(df)
         return df
     return market_df
 
@@ -83,6 +81,39 @@ def _extract_config(backtest) -> dict:
     return config
 
 
+def _since(series: pd.Series, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:
+    """The part of a cumulative series inside the window, measured from its value just before the window."""
+    before = series[series.index < start]
+    baseline = float(before.iloc[-1]) if not before.empty else 0.0
+    return series.loc[start:end] - baseline
+
+
+def _since_by_symbol(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+    before = df[df.index < start]
+    baseline = before.iloc[-1] if not before.empty else 0.0
+    return df.loc[start:end] - baseline
+
+
+def _window_curves(curves: Curves, start: pd.Timestamp, end: pd.Timestamp) -> Curves:
+    """Cuts full-run curves to a window. Position is a level and keeps its value; PnL, fees, volume and notional
+    count only what happened inside the window."""
+    fills = curves.fills.loc[start:end] if not curves.fills.empty else curves.fills
+    return Curves(
+        pnl=_since(curves.pnl, start, end),
+        pnl_by_symbol=_since_by_symbol(curves.pnl_by_symbol, start, end),
+        position=curves.position.loc[start:end],
+        position_by_symbol=curves.position_by_symbol.loc[start:end],
+        fees=_since(curves.fees, start, end),
+        fees_by_symbol=_since_by_symbol(curves.fees_by_symbol, start, end),
+        volume=_since(curves.volume, start, end),
+        volume_by_symbol=_since_by_symbol(curves.volume_by_symbol, start, end),
+        notional=_since(curves.notional, start, end),
+        notional_by_symbol=_since_by_symbol(curves.notional_by_symbol, start, end),
+        fills=fills,
+        fill_count=len(fills),
+    )
+
+
 class BacktestReport:
     """Wraps ``BacktestResults`` and exposes tick-level curves plus scalar summaries."""
 
@@ -105,13 +136,19 @@ class BacktestReport:
             self._config = _config_from_metadata(results.metadata)
         else:
             self._config = None
-        self._market_df: pd.DataFrame = _with_mid_price(results.market_records_df())
-        self._exec_df: pd.DataFrame = results.fills_df()
+        # Curves are built on the full run and then cut to the window, so inventory and cash carried into the
+        # window keep their value.
+        self._full_market_df: pd.DataFrame = _with_mid_price(results.market_records_df())
+        self._full_exec_df: pd.DataFrame = results.fills_df()
+        self._market_df = self._full_market_df
+        self._exec_df = self._full_exec_df
         self._intent_df: pd.DataFrame = results.intent_records_df()
+        self._window: tuple[pd.Timestamp, pd.Timestamp] | None = None
 
         if start_date is not None or end_date is not None:
             start = pd.Timestamp(start_date) if start_date is not None else self._market_df.index.min()
             end = pd.Timestamp(end_date) if end_date is not None else self._market_df.index.max()
+            self._window = (start, end)
             self._market_df = self._market_df.loc[start:end]
             if not self._exec_df.empty:
                 self._exec_df = self._exec_df.loc[start:end]
@@ -132,12 +169,18 @@ class BacktestReport:
         obj._config = config
         obj._market_df = _with_mid_price(market_df)
         obj._exec_df = exec_df
+        obj._full_market_df = obj._market_df
+        obj._full_exec_df = exec_df
         obj._intent_df = intent_df if intent_df is not None else pd.DataFrame()
+        obj._window = None
         return obj
 
     @cached_property
     def _curves(self) -> Curves:
-        return build_curves(self._market_df, self._exec_df)
+        curves = build_curves(self._full_market_df, self._full_exec_df)
+        if self._window is None:
+            return curves
+        return _window_curves(curves, *self._window)
 
     # -- Total curves --------------------------------------------------------
 
@@ -254,12 +297,17 @@ class BacktestReport:
             final_positions = {}
 
         sharpe = self.sharpe_metrics()
+        windowed = self._window is not None
 
         return {
             "backtest_id": self._results.backtest_id if self._results else None,
             "duration_seconds": duration,
-            "market_record_count": int(self._results.market_record_count) if self._results else len(self._market_df),
-            "intent_record_count": int(self._results.intent_record_count) if self._results else len(self._intent_df),
+            "market_record_count": (
+                int(self._results.market_record_count) if self._results and not windowed else len(self._market_df)
+            ),
+            "intent_record_count": (
+                int(self._results.intent_record_count) if self._results and not windowed else len(self._intent_df)
+            ),
             "fill_count": c.fill_count,
             "total_volume": total_volume,
             "total_notional": total_notional,
@@ -268,6 +316,7 @@ class BacktestReport:
             "total_fees": total_fees,
             "final_pnl": final_pnl,
             "final_pnl_by_symbol": final_pnl_by_symbol,
+            "max_drawdown": compute_max_drawdown(c.pnl),
             "sharpe": sharpe["sharpe"],
             "sortino": sharpe["sortino"],
             "sharpe_std": sharpe["sharpe_std"],

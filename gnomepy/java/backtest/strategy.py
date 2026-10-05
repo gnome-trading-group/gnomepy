@@ -82,5 +82,9 @@ class Strategy(ABC):
         """
 
     def simulate_processing_time(self) -> int:
-        """Override to simulate strategy processing latency in nanoseconds."""
+        """Simulated time in nanoseconds between seeing an event and orders leaving.
+
+        0 (the default) means none. Ignored when the backtest config sets
+        ``measure_processing_time``, which charges measured wall-clock time instead.
+        """
         return 0

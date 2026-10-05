@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from gnomepy.reporting.metrics import mid_price
+
 if TYPE_CHECKING:
     from gnomepy.java.recorder import BacktestResults
 
@@ -75,9 +77,7 @@ def _ensure_mid_price(market_df: pd.DataFrame) -> pd.DataFrame:
     if market_df.empty or "mid_price" in market_df.columns:
         return market_df
     df = market_df.copy()
-    bid = df["bid_price_0"].astype(float).where(df["bid_price_0"] > 0)
-    ask = df["ask_price_0"].astype(float).where(df["ask_price_0"] > 0)
-    df["mid_price"] = ((bid.fillna(ask) + ask.fillna(bid)) / 2.0).ffill()
+    df["mid_price"] = mid_price(df)
     return df
 
 

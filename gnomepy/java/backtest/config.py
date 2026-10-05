@@ -46,14 +46,23 @@ class StaticLatencyConfig:
 
 @dataclass
 class GaussianLatencyConfig:
+    """Normally distributed latency in nanoseconds, truncated at zero.
+
+    ``seed`` pins this model's draws. Left as ``None``, the model takes its own
+    stream derived from ``BacktestConfig.seed``, the listing and its role.
+    """
+
     mu: float = 0.0
     sigma: float = 0.0
+    seed: int | None = None
 
     def _to_java(self):
         cls = jpype.JClass("group.gnometrading.simulation.config.LatencyConfig$Gaussian")
         obj = cls()
         obj.mu = float(self.mu)
         obj.sigma = float(self.sigma)
+        if self.seed is not None:
+            obj.seed = jpype.JObject(self.seed, jpype.JClass("java.lang.Long"))
         return obj
 
 
@@ -212,6 +221,8 @@ class BacktestConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     record: bool = True
     record_depth: int = 1
+    measure_processing_time: bool = False
+    seed: int | None = None
 
     def _to_java(self):
         cls = jpype.JClass("group.gnometrading.backtest.config.BacktestConfig")
@@ -249,5 +260,8 @@ class BacktestConfig:
         obj.risk = self.risk._to_java()
         obj.record = self.record
         obj.recordDepth = jpype.JInt(self.record_depth)
+        obj.measureProcessingTime = self.measure_processing_time
+        if self.seed is not None:
+            obj.seed = jpype.JLong(self.seed)
 
         return obj

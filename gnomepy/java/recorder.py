@@ -24,6 +24,51 @@ _OTYPE_MAP = {0: "Limit", 1: "Market"}
 _STATUS_MAP = {0: "Filled", 1: "PartialFill", 2: "Cancelled", 3: "Rejected", 4: "Expired"}
 
 
+# SBE null for int64 price and size fields: the recorder writes it for an empty book side or a tick with no trade.
+_NULL_LONG = np.iinfo(np.int64).min
+
+_STREAMS = ("market", "orders", "fills", "intents")
+
+# (price columns, size columns) per stream. Market columns depend on the recorded depth, so they are matched by name.
+_UNIT_COLUMNS = {
+    "orders": (("submit_price", "avg_fill_price"), ("submit_size", "filled_qty", "leaves_qty")),
+    "fills": (("fill_price", "book_bid_price", "book_ask_price"), ("fill_qty", "leaves_qty")),
+    "intents": (("bid_price", "ask_price", "take_limit_price"), ("bid_size", "ask_size", "take_size")),
+}
+
+
+def _unit_columns(stream: str, df: pd.DataFrame) -> tuple[list[str], list[str]]:
+    if stream == "market":
+        prices = [c for c in df.columns if c.startswith(("bid_price_", "ask_price_")) or c == "last_trade_price"]
+        sizes = [c for c in df.columns if c.startswith(("bid_size_", "ask_size_")) or c == "last_trade_size"]
+        return prices, sizes
+    prices, sizes = _UNIT_COLUMNS[stream]
+    return [c for c in prices if c in df.columns], [c for c in sizes if c in df.columns]
+
+
+def _null_to_nan(df: pd.DataFrame, columns: list[str]) -> None:
+    for col in columns:
+        values = df[col]
+        if (values == _NULL_LONG).any():
+            df[col] = values.astype(float).where(values != _NULL_LONG)
+
+
+def _rescale(df: pd.DataFrame, stream: str, to_scaled: bool) -> pd.DataFrame:
+    """Converts a stream between raw units (1e9 price, 1e6 size) and scaled ones (dollars, units)."""
+    if df.empty:
+        return df
+    prices, sizes = _unit_columns(stream, df)
+    out = df.copy()
+    for columns, scale in ((prices, Scales.PRICE), (sizes, Scales.SIZE)):
+        for col in columns:
+            if to_scaled:
+                out[col] = out[col] / scale
+                continue
+            raw = np.rint(out[col] * scale)
+            out[col] = raw if raw.isna().any() else raw.astype(np.int64)
+    return out
+
+
 def _decode_bytes(arr: np.ndarray, mapping: dict) -> list[str]:
     return [mapping.get(int(v), "Unknown") for v in arr]
 
@@ -136,10 +181,8 @@ class BacktestResults:
     def __init__(self, java_recorder, metadata: BacktestMetadata | None = None):
         self._java = java_recorder
         self._metadata = metadata
-        self._cached_market_df = None
-        self._cached_orders_df = None
-        self._cached_fills_df = None
-        self._cached_intent_df = None
+        # Keyed by (stream, scaled). Either form is derived from the other, so the two never disagree.
+        self._frames: dict[tuple[str, bool], pd.DataFrame] = {}
         self._cached_custom_dfs: dict[str, pd.DataFrame] | None = None
 
     @property
@@ -169,10 +212,10 @@ class BacktestResults:
         result = cls.__new__(cls)
         result._java = None
         result._metadata = metadata
-        result._cached_market_df = market_df if market_df is not None else pd.DataFrame()
-        result._cached_orders_df = orders_df if orders_df is not None else pd.DataFrame()
-        result._cached_fills_df = fills_df if fills_df is not None else pd.DataFrame()
-        result._cached_intent_df = intent_df if intent_df is not None else pd.DataFrame()
+        frames = (market_df, orders_df, fills_df, intent_df)
+        result._frames = {
+            (stream, True): df if df is not None else pd.DataFrame() for stream, df in zip(_STREAMS, frames)
+        }
         result._cached_custom_dfs = dict(custom_metrics) if custom_metrics else {}
         return result
 
@@ -200,10 +243,7 @@ class BacktestResults:
         if fs_exists(fs, meta_path):
             result._metadata = BacktestMetadata.from_dict(fs_read_json(fs, meta_path))
 
-        result._cached_market_df = fs_read_parquet(fs, f"{base}/market.parquet")
-        result._cached_orders_df = fs_read_parquet(fs, f"{base}/orders.parquet")
-        result._cached_fills_df = fs_read_parquet(fs, f"{base}/fills.parquet")
-        result._cached_intent_df = fs_read_parquet(fs, f"{base}/intents.parquet")
+        result._frames = {(stream, True): fs_read_parquet(fs, f"{base}/{stream}.parquet") for stream in _STREAMS}
 
         result._cached_custom_dfs = {}
         custom_dir = f"{base}/custom"
@@ -219,25 +259,25 @@ class BacktestResults:
     @property
     def market_record_count(self) -> int:
         if self._java is None:
-            return len(self._cached_market_df) if self._cached_market_df is not None else 0
+            return len(self._frames.get(("market", True), ()))
         return int(self._java.getMarketRecordCount())
 
     @property
     def order_record_count(self) -> int:
         if self._java is None:
-            return len(self._cached_orders_df) if self._cached_orders_df is not None else 0
+            return len(self._frames.get(("orders", True), ()))
         return int(self._java.getOrderRecordCount())
 
     @property
     def fill_record_count(self) -> int:
         if self._java is None:
-            return len(self._cached_fills_df) if self._cached_fills_df is not None else 0
+            return len(self._frames.get(("fills", True), ()))
         return int(self._java.getFillRecordCount())
 
     @property
     def intent_record_count(self) -> int:
         if self._java is None:
-            return len(self._cached_intent_df) if self._cached_intent_df is not None else 0
+            return len(self._frames.get(("intents", True), ()))
         return int(self._java.getIntentRecordCount())
 
     @property
@@ -255,37 +295,19 @@ class BacktestResults:
         bid_price_0 … bid_price_{D-1}, bid_size_0 … ask_size_{D-1},
         last_trade_price, last_trade_size.
 
-        ``imbalance`` is in bps: (bidSz - askSz) × 10 000 / (bidSz + askSz).
+        An empty book side, and the trade columns on a tick with no trade, are NaN.
         """
-        if self._cached_market_df is not None:
-            return self._cached_market_df
+        return self._frame("market", scale_prices, self._build_market_df)
 
-        n = self.market_record_count
-        if n == 0:
+    def _build_market_df(self) -> pd.DataFrame:
+        if self._java is None or self.market_record_count == 0:
             return pd.DataFrame()
 
         df = _buffer_to_df(self._java.getMarketRecords())
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df = df.set_index("timestamp")
-
-        if scale_prices:
-            D = self.record_depth
-            price_cols = (
-                [f"bid_price_{l}" for l in range(D)]
-                + [f"ask_price_{l}" for l in range(D)]
-                + ["last_trade_price"]
-            )
-            size_cols = (
-                [f"bid_size_{l}" for l in range(D)]
-                + [f"ask_size_{l}" for l in range(D)]
-                + ["last_trade_size"]
-            )
-            for col in price_cols:
-                df[col] = df[col] / self.PRICE_SCALE
-            for col in size_cols:
-                df[col] = df[col] / self.SIZE_SCALE
-
-        self._cached_market_df = df
+        prices, sizes = _unit_columns("market", df)
+        _null_to_nan(df, prices + sizes)
         return df
 
     # ------------------------------------------------------------------
@@ -307,11 +329,10 @@ class BacktestResults:
         ``order_type`` values: "Limit", "Market".
         ``final_status`` values: "Filled", "PartialFill", "Cancelled", "Rejected", "Expired".
         """
-        if self._cached_orders_df is not None:
-            return self._cached_orders_df
+        return self._frame("orders", scale_prices, self._build_orders_df)
 
-        n = self.order_record_count
-        if n == 0:
+    def _build_orders_df(self) -> pd.DataFrame:
+        if self._java is None or self.order_record_count == 0:
             return pd.DataFrame()
 
         df = _buffer_to_df(self._java.getOrderRecords())
@@ -333,16 +354,7 @@ class BacktestResults:
         df["submit_timestamp"] = pd.to_datetime(df["submit_timestamp"])
         df["ack_timestamp"] = pd.to_datetime(df["ack_timestamp"])
         df["terminal_timestamp"] = pd.to_datetime(df["terminal_timestamp"])
-        df = df.set_index("submit_timestamp")
-
-        if scale_prices:
-            for col in ["submit_price", "avg_fill_price"]:
-                df[col] = df[col] / self.PRICE_SCALE
-            for col in ["submit_size", "filled_qty", "leaves_qty"]:
-                df[col] = df[col] / self.SIZE_SCALE
-
-        self._cached_orders_df = df
-        return df
+        return df.set_index("submit_timestamp")
 
     # ------------------------------------------------------------------
     # Fill records
@@ -357,28 +369,25 @@ class BacktestResults:
 
         ``book_*`` columns reflect the BBO at fill time and can be used to
         compute slippage: ``(fill_price - book_mid_price) / book_mid_price × 10000``
-        (sign-adjusted per side).
+        (sign-adjusted per side). They are NaN when that side of the book was empty
+        or no book had been seen yet.
         """
-        if self._cached_fills_df is not None:
-            return self._cached_fills_df
+        return self._frame("fills", scale_prices, self._build_fills_df)
 
-        n = self.fill_record_count
-        if n == 0:
+    def _build_fills_df(self) -> pd.DataFrame:
+        if self._java is None or self.fill_record_count == 0:
             return pd.DataFrame()
 
         df = _buffer_to_df(self._java.getFillRecords())
         df["side"] = _decode_bytes(df["side"].values, _SIDE_MAP)
-
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df = df.set_index("timestamp")
 
-        if scale_prices:
-            for col in ["fill_price", "book_bid_price", "book_ask_price"]:
-                df[col] = df[col] / self.PRICE_SCALE
-            for col in ["fill_qty", "leaves_qty"]:
-                df[col] = df[col] / self.SIZE_SCALE
-
-        self._cached_fills_df = df
+        book = ["book_bid_price", "book_ask_price"]
+        _null_to_nan(df, book)
+        # The recorder leaves these at 0 when no book was seen for the listing before the fill.
+        for col in book:
+            df[col] = df[col].astype(float).where(df[col] != 0)
         return df
 
     # ------------------------------------------------------------------
@@ -387,28 +396,25 @@ class BacktestResults:
 
     def intent_records_df(self, scale_prices: bool = True) -> pd.DataFrame:
         """One row per strategy intent published to the OMS."""
-        if self._cached_intent_df is not None:
-            return self._cached_intent_df
+        return self._frame("intents", scale_prices, self._build_intent_df)
 
-        n = self.intent_record_count
-        if n == 0:
+    def _build_intent_df(self) -> pd.DataFrame:
+        if self._java is None or self.intent_record_count == 0:
             return pd.DataFrame()
 
         df = _buffer_to_df(self._java.getIntentRecords())
-
         df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df = df.set_index("timestamp")
+        return df.set_index("timestamp")
 
-        if scale_prices:
-            for col in ["bid_price", "ask_price", "take_limit_price"]:
-                if col in df.columns:
-                    df[col] = df[col] / self.PRICE_SCALE
-            for col in ["bid_size", "ask_size", "take_size"]:
-                if col in df.columns:
-                    df[col] = df[col] / self.SIZE_SCALE
-
-        self._cached_intent_df = df
-        return df
+    def _frame(self, stream: str, scaled: bool, build) -> pd.DataFrame:
+        key = (stream, scaled)
+        if key not in self._frames:
+            other = (stream, not scaled)
+            if other not in self._frames:
+                self._frames[(stream, False)] = build()
+            if key not in self._frames:
+                self._frames[key] = _rescale(self._frames[other], stream, to_scaled=scaled)
+        return self._frames[key]
 
     # ------------------------------------------------------------------
     # Custom strategy metrics

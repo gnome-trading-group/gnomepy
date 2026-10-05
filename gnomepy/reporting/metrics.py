@@ -20,6 +20,22 @@ def _is_buy(side) -> bool:
     return "BID" in str(side).upper()
 
 
+def mid_price(market_df: pd.DataFrame) -> pd.Series:
+    """Mid of the top level, carried forward per symbol.
+
+    Defined only while both sides are quoted: a one-sided book has no mid, so
+    the last two-sided mid stands until the book is two-sided again. Carrying
+    forward within each ``(exchange_id, security_id)`` keeps one listing's mid
+    from leaking into another's rows.
+    """
+    bid = market_df["bid_price_0"].astype(float)
+    ask = market_df["ask_price_0"].astype(float)
+    mid = ((bid + ask) / 2.0).where((bid > 0) & (ask > 0))
+    if "exchange_id" in market_df.columns and "security_id" in market_df.columns:
+        return mid.groupby([market_df["exchange_id"], market_df["security_id"]], sort=False).ffill()
+    return mid.ffill()
+
+
 # ---------------------------------------------------------------------------
 # Internal vectorized primitives
 # ---------------------------------------------------------------------------
@@ -45,7 +61,7 @@ def _signed_fills(executions_df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df.assign(signed_qty=pd.Series(dtype=float), cash_flow=pd.Series(dtype=float))
 
-    df = df.sort_index()
+    df = df.sort_index(kind="stable")
     is_buy = df["side"].map(_is_buy)
     df["signed_qty"] = df["fill_qty"].where(is_buy, -df["fill_qty"]).astype(float)
     fee = df["fee"].fillna(0.0).astype(float)
@@ -171,12 +187,10 @@ def build_curves(
     if not fills.empty:
         fills = _per_symbol_cumsums(fills)
 
-    mkt = market_df.sort_index().copy()
+    mkt = market_df.sort_index(kind="stable").copy()
     if "mid_price" not in mkt.columns:
         if "bid_price_0" in mkt.columns and "ask_price_0" in mkt.columns:
-            bid = mkt["bid_price_0"].astype(float).where(mkt["bid_price_0"] > 0)
-            ask = mkt["ask_price_0"].astype(float).where(mkt["ask_price_0"] > 0)
-            mkt["mid_price"] = ((bid.fillna(ask) + ask.fillna(bid)) / 2.0).ffill().fillna(0.0)
+            mkt["mid_price"] = mid_price(mkt).fillna(0.0)
         else:
             mkt["mid_price"] = 0.0
     mkt["_seq"] = range(len(mkt))
@@ -217,9 +231,10 @@ def build_curves(
         state = sym_fills[["position", "cash", "cum_fees", "cum_volume", "cum_notional"]].reset_index()
         state.columns = ["timestamp", "position", "cash", "cum_fees", "cum_volume", "cum_notional"]
 
+        # Stable sorts keep rows sharing a timestamp in seq_vals order, so each result row maps back to its tick.
         merged = pd.merge_asof(
-            mkt_rows.sort_values("timestamp"),
-            state.sort_values("timestamp"),
+            mkt_rows.sort_values("timestamp", kind="stable"),
+            state.sort_values("timestamp", kind="stable"),
             on="timestamp",
             direction="backward",
         ).fillna(0.0)
@@ -322,7 +337,9 @@ def compute_sharpe(
     if pnl_curve.empty or len(pnl_curve) < 2:
         return empty
 
-    resampled = pnl_curve.resample(bar).last().dropna()
+    # A bar with no tick keeps the last PnL. Dropping it instead would fold several bars into one return while
+    # annualization still counts every bar, overstating Sharpe on sparse feeds.
+    resampled = pnl_curve.resample(bar).last().ffill()
     bar_pnl = resampled.diff().dropna()
 
     if len(bar_pnl) < 2:
@@ -338,8 +355,8 @@ def compute_sharpe(
 
     mean_pnl = float(bar_pnl.mean())
     std_pnl = float(bar_pnl.std(ddof=1))
-    downside = bar_pnl[bar_pnl < 0]
-    downside_std = float(downside.std(ddof=1)) if len(downside) > 1 else 0.0
+    # Downside deviation: root mean square of the shortfall below zero, over every bar.
+    downside_std = float(np.sqrt(np.mean(np.minimum(bar_pnl.to_numpy(), 0.0) ** 2)))
 
     sharpe = (mean_pnl / std_pnl * annualize_factor) if std_pnl > 0 else 0.0
     sortino = (mean_pnl / downside_std * annualize_factor) if downside_std > 0 else 0.0
@@ -347,7 +364,8 @@ def compute_sharpe(
     bucket_sharpes = []
     chunk_size = max(len(bar_pnl) // n_buckets, 1)
     for i in range(n_buckets):
-        chunk = bar_pnl.iloc[i * chunk_size : (i + 1) * chunk_size]
+        stop = len(bar_pnl) if i == n_buckets - 1 else (i + 1) * chunk_size
+        chunk = bar_pnl.iloc[i * chunk_size : stop]
         if len(chunk) < 2:
             continue
         s = float(chunk.std(ddof=1))
@@ -370,3 +388,11 @@ def compute_sharpe(
         "bar": bar,
         "n_bars": len(bar_pnl),
     }
+
+
+def compute_max_drawdown(pnl_curve: pd.Series) -> float:
+    """Largest drop from a running peak of the PnL curve, at full resolution (>= 0)."""
+    if pnl_curve.empty:
+        return 0.0
+    values = pnl_curve.to_numpy(dtype=float)
+    return float(np.max(np.maximum.accumulate(values) - values))

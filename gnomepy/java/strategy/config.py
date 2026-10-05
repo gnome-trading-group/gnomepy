@@ -48,13 +48,17 @@ class StaticLatencyConfig:
 class GaussianLatencyConfig:
     mu: float = 0.0
     sigma: float = 0.0
+    seed: int | None = None
 
     def to_properties(self, prefix: str) -> dict[str, str]:
-        return {
+        props = {
             f"{prefix}.model": "gaussian",
             f"{prefix}.mu": str(self.mu),
             f"{prefix}.sigma": str(self.sigma),
         }
+        if self.seed is not None:
+            props[f"{prefix}.seed"] = str(self.seed)
+        return props
 
 
 @dataclass
@@ -136,6 +140,7 @@ class SessionConfig:
     session_id: str | None = None
     strategy_id: int | None = None
     strategy: StrategyConfig | None = None
+    seed: int | None = None
 
     def to_properties(self) -> dict[str, Any]:
         props: dict[str, Any] = {
@@ -159,6 +164,8 @@ class SessionConfig:
                 props.update(profile.to_properties(f"simulation.profiles.{name}"))
             for lsc in self.listings:
                 props[f"simulation.listing.{lsc.listing_id}.profile"] = lsc.profile
+            if self.seed is not None:
+                props["simulation.seed"] = str(self.seed)
         return props
 
     @staticmethod
@@ -189,6 +196,7 @@ class SessionConfig:
                     )
 
         return SessionConfig(
+            seed=data.get("seed"),
             session_id=data.get("session_id"),
             strategy_id=data.get("strategy_id"),
             mode=data["mode"],
@@ -219,7 +227,7 @@ def _parse_fee_config(cfg: dict) -> FeeConfig:
 def _parse_latency_config(cfg: dict) -> LatencyModelConfig:
     model_type = cfg.get("model", "static")
     if model_type == "gaussian":
-        return GaussianLatencyConfig(mu=cfg.get("mu", 0.0), sigma=cfg.get("sigma", 0.0))
+        return GaussianLatencyConfig(mu=cfg.get("mu", 0.0), sigma=cfg.get("sigma", 0.0), seed=cfg.get("seed"))
     if model_type == "maker_taker":
         return MakerTakerLatencyConfig(
             base_nanos=cfg.get("base_nanos", 0),
