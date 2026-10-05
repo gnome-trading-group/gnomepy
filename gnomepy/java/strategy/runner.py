@@ -14,7 +14,7 @@ import jpype
 from jpype import JImplements, JOverride
 
 from gnomepy.java._classpath import discover_classpath
-from gnomepy.java._jvm import ensure_jvm_started
+from gnomepy.java._jvm import STRATEGY_JVM_OPTIONS, ensure_jvm_started
 from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.oms import PositionViewWrapper
 from gnomepy.java.schemas import wrap_schema
@@ -101,7 +101,7 @@ def run_strategy_session(
         gnome_root: Root directory of GNOME repos for JAR discovery.
     """
     classpath = [jar] if jar else discover_classpath("gnome-orchestrator", gnome_root)
-    ensure_jvm_started(classpath=classpath, jvm_args=["-XX:+UseZGC", "-XX:ConcGCThreads=2"])
+    ensure_jvm_started(classpath=classpath, jvm_args=STRATEGY_JVM_OPTIONS)
 
     effective_strategy = strategy
     if effective_strategy is None and config.strategy is not None:
@@ -137,13 +137,13 @@ def run_strategy_session(
 
 
 def run_from_env() -> None:
-    """Entry point for ECS Fargate — reads config from env vars, runs strategy."""
+    """Entry point for a strategy session instance — reads config from env vars, runs strategy."""
     strategy_class = os.environ["STRATEGY_CLASS"]
     args_json = os.environ.get("STRATEGY_ARGS_JSON", "")
     strategy_args = json.loads(args_json) if args_json else {}
 
     classpath = discover_classpath("gnome-orchestrator")
-    ensure_jvm_started(classpath=classpath, jvm_args=["-XX:+UseZGC", "-XX:ConcGCThreads=2"])
+    ensure_jvm_started(classpath=classpath, jvm_args=STRATEGY_JVM_OPTIONS)
 
     # Must load TradingOrchestrator before Orchestrator.main() — its static initializer
     # sets instanceClass, which Orchestrator.main() uses to instantiate the orchestrator.

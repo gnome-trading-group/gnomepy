@@ -7,6 +7,7 @@ from typing import Optional
 
 import requests
 
+from gnomepy.auth import get_id_token
 from gnomepy.config import config, resolve_registry_api_key
 from gnomepy.registry.types import (
     ContractRelationship,
@@ -247,6 +248,17 @@ class RegistryClient:
         res.raise_for_status()
         return res.json()
 
+    def _post_as_operator(self, path: str, body: dict) -> dict:
+        # Routes that must name a person in the audit log are served under /cognito and only accept the
+        # `gnomepy login` ID token, never the API key.
+        res = requests.post(
+            self.base_url + "/cognito" + path,
+            json=body,
+            headers={"Authorization": get_id_token(), "Content-Type": "application/json"},
+        )
+        res.raise_for_status()
+        return res.json()
+
     def _patch(self, path: str, params: dict, body: dict) -> dict:
         res = requests.patch(
             self.base_url + path,
@@ -305,6 +317,10 @@ class RegistryClient:
         config: dict,
         research_commit: str | None = None,
         region: str | None = None,
+        instance_type: str | None = None,
+        orchestrator_version: str | None = None,
+        gnomepy_version: str | None = None,
+        availability_zone: str | None = None,
     ) -> dict:
         body = {
             "sessionId": session_id,
@@ -312,11 +328,16 @@ class RegistryClient:
             "mode": mode,
             "config": config,
         }
-        if research_commit is not None:
-            body["researchCommit"] = research_commit
-        if region is not None:
-            body["region"] = region
+        optional = {
+            "researchCommit": research_commit,
+            "region": region,
+            "instanceType": instance_type,
+            "orchestratorVersion": orchestrator_version,
+            "gnomepyVersion": gnomepy_version,
+            "availabilityZone": availability_zone,
+        }
+        body.update({key: value for key, value in optional.items() if value is not None})
         return self._post("/strategy-sessions/launch", body)
 
     def stop_strategy_session(self, session_id: str) -> dict:
-        return self._post("/strategy-sessions/stop", {"sessionId": session_id})
+        return self._post_as_operator("/strategy-sessions/stop", {"sessionId": session_id})

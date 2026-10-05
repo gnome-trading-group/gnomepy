@@ -626,8 +626,21 @@ def strategy_run(config: str, strategy_path: str | None, jar: str | None) -> Non
 @click.option("--research-commit", default=None, help="gnomepy-research git ref to pin")
 @click.option("--session-id", default=None, help="Explicit session ID (default: generated UUID)")
 @click.option("--region", default=None, help="AWS region override (use when listings span multiple exchange regions)")
-def strategy_deploy(config: str, research_commit: str | None, session_id: str | None, region: str | None) -> None:
-    """Deploy a strategy session to ECS Fargate."""
+@click.option("--instance-type", default=None, help="EC2 instance type, e.g. c7i.4xlarge (default: by latency profile)")
+@click.option("--availability-zone", default=None, help="Availability zone within the region (default: any)")
+@click.option("--orchestrator-version", default=None, help="gnome-orchestrator release (default: latest)")
+@click.option("--gnomepy-version", default=None, help="gnomepy release (default: latest)")
+def strategy_deploy(
+    config: str,
+    research_commit: str | None,
+    session_id: str | None,
+    region: str | None,
+    instance_type: str | None,
+    availability_zone: str | None,
+    orchestrator_version: str | None,
+    gnomepy_version: str | None,
+) -> None:
+    """Deploy a strategy session to its own EC2 instance."""
     session_config = SessionConfig.from_yaml(config)
     if session_config.strategy_id is None:
         raise click.ClickException(
@@ -643,10 +656,16 @@ def strategy_deploy(config: str, research_commit: str | None, session_id: str | 
         config=session_config.to_properties(),
         research_commit=research_commit,
         region=region,
+        instance_type=instance_type,
+        orchestrator_version=orchestrator_version,
+        gnomepy_version=gnomepy_version,
+        availability_zone=availability_zone,
     )
-    click.echo(f"session_id: {result['session_id']}")
-    click.echo(f"status:     {result['status']}")
-    click.echo(f"task_arn:   {result.get('task_arn', '')}")
+    click.echo(f"session_id:           {result['session_id']}")
+    click.echo(f"status:               {result['status']}")
+    click.echo(f"instance_id:          {result.get('instance_id') or ''}")
+    click.echo(f"instance_type:        {result.get('instance_type') or ''}")
+    click.echo(f"orchestrator_version: {result.get('orchestrator_version') or ''}")
 
 
 @strategy.command(name="list")
@@ -684,8 +703,11 @@ def strategy_status(session_id: str) -> None:
     click.echo(f"mode:               {s.mode}")
     click.echo(f"started_at:         {s.started_at or ''}")
     click.echo(f"stopped_at:         {s.stopped_at or ''}")
-    click.echo(f"task_arn:           {s.task_arn or ''}")
-    click.echo(f"task_definition_arn:{s.task_definition_arn or ''}")
+    click.echo(f"instance_id:        {s.instance_id or ''}")
+    click.echo(f"instance_type:      {s.instance_type or ''}")
+    click.echo(f"region / az:        {s.launch_region or ''} / {s.availability_zone or ''}")
+    click.echo(f"orchestrator:       {s.orchestrator_version or ''}")
+    click.echo(f"gnomepy:            {s.gnomepy_version or ''}")
     click.echo(f"research_commit:    {s.research_commit or ''}")
     if s.failure_reason:
         click.echo(f"failure_reason:     {s.failure_reason}")

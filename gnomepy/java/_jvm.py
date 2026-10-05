@@ -27,6 +27,11 @@ DEFAULT_JVM_ARGS = [
     "--add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED",
 ]
 
+# Live and paper strategy sessions. Kept here, beside DEFAULT_JVM_ARGS, so the Python runner and the EC2
+# bootstrap that launches Java strategies (which reads STRATEGY_JVM_ARGS) cannot drift apart.
+STRATEGY_JVM_OPTIONS = ["-XX:+UseZGC", "-XX:ConcGCThreads=2"]
+STRATEGY_JVM_ARGS = [*DEFAULT_JVM_ARGS, *STRATEGY_JVM_OPTIONS]
+
 
 def ensure_jvm_started(
     classpath: list[str] | None = None,

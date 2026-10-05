@@ -167,8 +167,12 @@ class StrategySession:
     date_created: str
     date_modified: str
     research_commit: str | None = None
-    task_arn: str | None = None
-    task_definition_arn: str | None = None
+    instance_id: str | None = None
+    instance_type: str | None = None
+    launch_region: str | None = None
+    availability_zone: str | None = None
+    orchestrator_version: str | None = None
+    gnomepy_version: str | None = None
     failure_reason: str | None = None
     started_at: str | None = None
     stopped_at: str | None = None
