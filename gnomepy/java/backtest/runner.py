@@ -88,81 +88,42 @@ def _to_python(value):
     return value
 
 
-# Reflection does not narrow or widen boxed arguments, so each one is boxed as its parameter's primitive type.
-_PRIMITIVE_BOXES = {
-    "int": "java.lang.Integer",
-    "long": "java.lang.Long",
-    "short": "java.lang.Short",
-    "byte": "java.lang.Byte",
-    "double": "java.lang.Double",
-    "float": "java.lang.Float",
-    "boolean": "java.lang.Boolean",
-}
+def _to_java_value(value):
+    """Converts a Python strategy argument to the Java value StrategyFactory matches to a constructor parameter."""
+    # bool first: it subclasses int.
+    if isinstance(value, bool):
+        return jpype.JClass("java.lang.Boolean").valueOf(value)
+    if isinstance(value, int):
+        return jpype.JClass("java.lang.Long").valueOf(value)
+    if isinstance(value, float):
+        return jpype.JClass("java.lang.Double").valueOf(value)
+    if isinstance(value, dict):
+        result = jpype.JClass("java.util.LinkedHashMap")()
+        for k, v in value.items():
+            result.put(str(k), _to_java_value(v))
+        return result
+    if isinstance(value, (list, tuple)):
+        result = jpype.JClass("java.util.ArrayList")()
+        for v in value:
+            result.add(_to_java_value(v))
+        return result
+    return value
 
 
-def _to_java_arg(value, param_type):
-    box = _PRIMITIVE_BOXES.get(str(param_type.getName()))
-    if box is None:
-        return value
-    if box == "java.lang.Boolean":
-        return jpype.JClass(box).valueOf(bool(value))
-    if box in ("java.lang.Double", "java.lang.Float"):
-        return jpype.JClass(box).valueOf(float(value))
-    return jpype.JClass(box).valueOf(int(value))
-
-
-def _instantiate_java_strategy(class_name: str, strategy_args: dict):
-    """Resolve a Java FQN and instantiate it via reflection.
-
-    Requires the class to be compiled with -parameters so parameter names are
-    retained in the class file. With empty strategy_args, uses the no-arg constructor.
-    """
+def _create_java_strategy(class_name: str, strategy_id: int, position_view, security_master, args):
+    """Builds a Java strategy as the orchestrator does live: infrastructure first, then ``args`` by parameter name."""
+    StrategyFactory = jpype.JClass("group.gnometrading.strategies.StrategyFactory")
     try:
-        cls = jpype.JClass(class_name)
+        jpype.JClass(class_name)
     except Exception as e:
         raise RuntimeError(
             f"Failed to load Java strategy class {class_name!r}. "
             "Make sure the JAR containing it is on the JVM classpath "
             "(set GNOME_JARS, pass extra_jars=, or use --jar)."
         ) from e
-
-    if not strategy_args:
-        try:
-            return cls()
-        except Exception as e:
-            raise RuntimeError(
-                f"{class_name} has no no-arg constructor; "
-                "supply strategy_args matching one of its constructors."
-            ) from e
-
-    requested = set(strategy_args.keys())
-    constructors = list(cls.class_.getConstructors())
-    candidates = []
-    for ctor in constructors:
-        params = list(ctor.getParameters())
-        names = [str(p.getName()) for p in params]
-        if set(names) == requested:
-            candidates.append((ctor, names))
-
-    if not candidates:
-        available = [
-            [str(p.getName()) for p in ctor.getParameters()] for ctor in constructors
-        ]
-        raise RuntimeError(
-            f"No constructor on {class_name} matches keys "
-            f"{sorted(requested)}. Available constructors: {available}. "
-            "If parameter names show as 'arg0/arg1/...', the class was "
-            "compiled without -parameters; enable it in the maven-compiler-plugin."
-        )
-    if len(candidates) > 1:
-        raise RuntimeError(
-            f"Ambiguous: multiple constructors on {class_name} match "
-            f"{sorted(requested)}"
-        )
-
-    ctor, names = candidates[0]
-    ordered = [_to_java_arg(strategy_args[n], p.getType()) for n, p in zip(names, ctor.getParameters())]
-    return ctor.newInstance(ordered)
+    return StrategyFactory.createWithOwnBuffers(
+        class_name, jpype.JInt(strategy_id), position_view, security_master, args
+    )
 
 
 def _load_python_strategy(import_path: str, kwargs: dict | None = None) -> Strategy:
@@ -274,21 +235,23 @@ class Backtest:
         registry_api_key = self._registry_api_key or os.environ.get("REGISTRY_API_KEY") or resolve_registry_api_key()
         RegistryConnection = jpype.JClass("group.gnometrading.RegistryConnection")
         SecurityMaster = jpype.JClass("group.gnometrading.SecurityMaster")
-        security_master = SecurityMaster(RegistryConnection(registry_host, registry_api_key))
+        registry = RegistryConnection(registry_host, registry_api_key)
+        security_master = SecurityMaster(registry)
 
         context = BacktestDriverFactory.buildContext(java_config)
-        java_oms = BacktestDriverFactory.buildOms(java_config.risk, security_master, context)
+        java_oms = BacktestDriverFactory.buildOms(java_config, security_master, registry, context)
 
+        strategy_id = int(java_config.strategyId)
         tracker = java_oms.getPositionTracker()
         for lsc in java_config.listings:
-            tracker.registerSlot(jpype.JInt(0), jpype.JInt(int(lsc.listingId)))
+            tracker.registerSlot(jpype.JInt(strategy_id), jpype.JInt(int(lsc.listingId)))
 
         if java_config.record:
             self._recorder = jpype.JClass(
                 "group.gnometrading.backtest.recorder.BacktestRecorder"
             )(jpype.JInt(int(java_config.recordDepth)))
 
-        java_strategy = self._resolve_strategy(java_config, java_oms, security_master)
+        java_strategy = self._resolve_strategy(java_config, java_oms, security_master, strategy_id)
 
         if self._s3_client is None:
             s3 = jpype.JClass("software.amazon.awssdk.services.s3.S3Client").create()
@@ -307,11 +270,8 @@ class Backtest:
             java_config, security_master, java_oms, java_strategy, self._recorder, s3, context
         )
 
-    def _resolve_strategy(self, java_config, java_oms, security_master):
-        position_view = java_oms.getPositionTracker().createPositionView(jpype.JInt(0))
-        PythonStrategyAgent = jpype.JClass(
-            "group.gnometrading.strategies.PythonStrategyAgent"
-        )
+    def _resolve_strategy(self, java_config, java_oms, security_master, strategy_id):
+        position_view = java_oms.getPositionTracker().createPositionView(jpype.JInt(strategy_id))
         strategy = self._strategy
 
         if strategy is None:
@@ -320,24 +280,28 @@ class Backtest:
                     "No strategy provided and config has no strategy.class_name"
                 )
             class_name = str(java_config.strategy.className)
-            args = {}
-            if java_config.strategy.args is not None:
-                args = {str(k): _to_python(v) for k, v in dict(java_config.strategy.args).items()}
+            java_args = java_config.strategy.args
             if ":" in class_name:
+                args = {str(k): _to_python(v) for k, v in dict(java_args).items()} if java_args is not None else {}
                 py_strategy = _load_python_strategy(class_name, args)
-                return self._wrap_python_strategy(py_strategy, java_oms, security_master, position_view, PythonStrategyAgent)
-            return _instantiate_java_strategy(class_name, args)
+                return self._wrap_python_strategy(py_strategy, security_master, position_view, strategy_id)
+            if java_args is None:
+                java_args = jpype.JClass("java.util.HashMap")()
+            return _create_java_strategy(class_name, strategy_id, position_view, security_master, java_args)
 
         if isinstance(strategy, str) and ":" in strategy:
             py_strategy = _load_python_strategy(strategy, self._strategy_args)
-            return self._wrap_python_strategy(py_strategy, java_oms, security_master, position_view, PythonStrategyAgent)
+            return self._wrap_python_strategy(py_strategy, security_master, position_view, strategy_id)
 
         if isinstance(strategy, str):
-            return _instantiate_java_strategy(strategy, self._strategy_args)
+            return _create_java_strategy(
+                strategy, strategy_id, position_view, security_master, _to_java_value(self._strategy_args)
+            )
 
-        return self._wrap_python_strategy(strategy, java_oms, security_master, position_view, PythonStrategyAgent)
+        return self._wrap_python_strategy(strategy, security_master, position_view, strategy_id)
 
-    def _wrap_python_strategy(self, py_strategy, java_oms, security_master, position_view, PythonStrategyAgent):
+    def _wrap_python_strategy(self, py_strategy, security_master, position_view, strategy_id):
+        PythonStrategyAgent = jpype.JClass("group.gnometrading.strategies.PythonStrategyAgent")
         if self._recorder is not None:
             java_metrics = self._recorder.createMetricRecorder()
         else:
@@ -345,7 +309,7 @@ class Backtest:
             java_metrics = jpype.JClass("group.gnometrading.backtest.recorder.MetricRecorder").discarding()
         py_strategy._metric_recorder = PyMetricRecorder(java_metrics)
         callback = _create_python_callback(py_strategy)
-        agent = PythonStrategyAgent.create(jpype.JInt(0), position_view, security_master, callback)
+        agent = PythonStrategyAgent.create(jpype.JInt(strategy_id), position_view, security_master, callback)
         # After create, which runs onInit, so self.positions is available inside register_metrics.
         py_strategy.register_metrics()
         return agent

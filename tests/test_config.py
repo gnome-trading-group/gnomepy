@@ -13,6 +13,7 @@ from gnomepy.java.backtest.config import (
     OptimisticQueueConfig,
     ProbabilisticQueueConfig,
     RiskAverseQueueConfig,
+    PolicyConfig,
     RiskConfig,
     StaticFeeConfig,
     StaticLatencyConfig,
@@ -103,11 +104,13 @@ class TestStrategyConfig:
 class TestRiskConfig:
     def test_empty_default(self):
         cfg = RiskConfig()
-        assert cfg.policies == {}
+        assert cfg.policies == []
 
     def test_with_policies(self):
-        cfg = RiskConfig(policies={"MAX_NOTIONAL": {"maxNotionalValue": 1_000_000}})
-        assert "MAX_NOTIONAL" in cfg.policies
+        cfg = RiskConfig(policies=[PolicyConfig("MAX_NOTIONAL", {"maxNotionalValue": 1_000_000}, listing_id=7)])
+        assert cfg.policies[0].type == "MAX_NOTIONAL"
+        assert cfg.policies[0].listing_id == 7
+        assert cfg.policies[0].strategy_id == 0
 
 
 class TestBacktestConfig:

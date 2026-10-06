@@ -171,36 +171,59 @@ class StrategyConfig:
 
 
 @dataclass
+class PolicyConfig:
+    """One OMS risk policy.
+
+    ``type`` is a RiskPolicyType name. Targets work as in the registry: 0 means
+    every strategy or every listing, so a policy with neither applies to
+    everything. Money limits (maxNotionalValue, maxLoss) are in price units
+    (1e9 = $1); size limits (maxOrderSize) are in size units (1e6 = 1 unit).
+    """
+
+    type: str
+    params: dict[str, object] = field(default_factory=dict)
+    strategy_id: int = 0
+    listing_id: int = 0
+
+    def _to_java(self):
+        obj = jpype.JClass("group.gnometrading.backtest.config.RiskConfig$PolicyConfig")()
+        obj.type = str(self.type)
+        obj.strategyId = jpype.JInt(self.strategy_id)
+        obj.listingId = jpype.JInt(self.listing_id)
+        params = jpype.JClass("java.util.HashMap")()
+        for k, v in (self.params or {}).items():
+            params.put(str(k), v)
+        obj.params = params
+        return obj
+
+
+@dataclass
 class RiskConfig:
     """OMS risk policy configuration.
 
-    Keys are RiskPolicyType enum names; values are parameter dicts. Money
-    limits (maxNotionalValue, maxLoss) are in price units (1e9 = $1); size
-    limits (maxOrderSize) are in size units (1e6 = 1 unit).
-
     Example::
 
-        RiskConfig(policies={
-            "MAX_NOTIONAL": {"maxNotionalValue": 100_000 * 1_000_000_000},
-            "MAX_ORDER_SIZE": {"maxOrderSize": 5_000 * 1_000_000},
-        })
+        RiskConfig(policies=[
+            PolicyConfig("MAX_NOTIONAL", {"maxNotionalValue": 100_000 * 1_000_000_000}),
+            PolicyConfig("MAX_OPEN_ORDERS", {"maxOpenOrders": 3}, listing_id=7122),
+        ])
+
+    With ``from_registry``, the strategy's live policies for
+    ``BacktestConfig.strategy_id`` are loaded too, without kill switches.
 
     KILL_SWITCH is rejected: it stops all trading, which has no meaning in a backtest.
     """
 
-    policies: dict[str, dict[str, object]] = field(default_factory=dict)
+    policies: list[PolicyConfig] = field(default_factory=list)
+    from_registry: bool = False
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.backtest.config.RiskConfig")
-        HashMap = jpype.JClass("java.util.HashMap")
-        obj = cls()
-        policies_map = HashMap()
-        for policy_name, params in (self.policies or {}).items():
-            inner = HashMap()
-            for k, v in (params or {}).items():
-                inner.put(str(k), v)
-            policies_map.put(str(policy_name), inner)
-        obj.policies = policies_map
+        obj = jpype.JClass("group.gnometrading.backtest.config.RiskConfig")()
+        policies = jpype.JClass("java.util.ArrayList")()
+        for policy in self.policies:
+            policies.add(policy._to_java())
+        obj.policies = policies
+        obj.fromRegistry = self.from_registry
         return obj
 
 
@@ -224,6 +247,7 @@ class BacktestConfig:
     listings: list[ListingSimConfig]
     profiles: dict[str, ExchangeProfileConfig]
     strategy: StrategyConfig | None = None
+    strategy_id: int = 0
     risk: RiskConfig = field(default_factory=RiskConfig)
     record: bool = True
     record_depth: int = 1
@@ -263,6 +287,7 @@ class BacktestConfig:
 
         if self.strategy is not None:
             obj.strategy = self.strategy._to_java()
+        obj.strategyId = jpype.JInt(self.strategy_id)
         obj.risk = self.risk._to_java()
         obj.record = self.record
         obj.recordDepth = jpype.JInt(self.record_depth)

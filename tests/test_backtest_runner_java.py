@@ -8,8 +8,14 @@ import pytest
 
 from gnomepy.java._classpath import discover_classpath
 from gnomepy.java._jvm import ensure_jvm_started
-from gnomepy.java.backtest.config import BacktestConfig, ExchangeProfileConfig, ListingSimConfig
-from gnomepy.java.backtest.runner import Backtest, _to_java_arg, _to_python
+from gnomepy.java.backtest.config import (
+    BacktestConfig,
+    ExchangeProfileConfig,
+    ListingSimConfig,
+    RiskConfig,
+    PolicyConfig,
+)
+from gnomepy.java.backtest.runner import Backtest, _to_java_value, _to_python
 from gnomepy.java.backtest.strategy import Strategy
 
 
@@ -57,14 +63,36 @@ def test_yaml_args_become_python_types():
     assert _to_python(values) == [0.5, "x"]
 
 
-def test_python_numbers_are_boxed_as_the_parameter_type():
-    int_type = jpype.JClass("java.lang.Integer").TYPE
-    double_type = jpype.JClass("java.lang.Double").TYPE
-    string_type = jpype.JClass("java.lang.String").class_
+def test_python_args_become_java_values():
+    converted = _to_java_value({"depth": 3, "edge": 0.5, "on": True, "levels": [1, 2], "name": "mm"})
 
-    assert str(_to_java_arg(5, int_type).getClass().getName()) == "java.lang.Integer"
-    assert str(_to_java_arg(5, double_type).getClass().getName()) == "java.lang.Double"
-    assert _to_java_arg("s", string_type) == "s"
+    assert str(converted.get("depth").getClass().getName()) == "java.lang.Long"
+    assert str(converted.get("edge").getClass().getName()) == "java.lang.Double"
+    assert str(converted.get("on").getClass().getName()) == "java.lang.Boolean"
+    assert str(converted.get("levels").getClass().getName()) == "java.util.ArrayList"
+    assert converted.get("name") == "mm"
+
+
+def test_strategy_id_and_policies_reach_the_java_config():
+    config = BacktestConfig(
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 1, 2),
+        listings=[ListingSimConfig(listing_id=1, profile="default")],
+        profiles={"default": ExchangeProfileConfig()},
+        strategy_id=12,
+        risk=RiskConfig(
+            from_registry=True,
+            policies=[PolicyConfig(type="MAX_ORDER_SIZE", listing_id=1, params={"maxOrderSize": 5})],
+        ),
+    )
+    java = config._to_java()
+
+    assert int(java.strategyId) == 12
+    assert bool(java.risk.fromRegistry)
+    scoped = java.risk.policies.get(0)
+    assert str(scoped.type) == "MAX_ORDER_SIZE"
+    assert int(scoped.listingId) == 1
+    assert int(scoped.strategyId) == 0
 
 
 def test_warning_handler_is_removed_from_the_global_logger():
@@ -100,9 +128,8 @@ class _MetricsStrategy(Strategy):
 
 def test_register_metrics_runs_without_recording_and_after_init():
     strategy = _MetricsStrategy()
-    PythonStrategyAgent = jpype.JClass("group.gnometrading.strategies.PythonStrategyAgent")
 
-    _backtest()._wrap_python_strategy(strategy, None, None, None, PythonStrategyAgent)
+    _backtest()._wrap_python_strategy(strategy, None, None, 0)
 
     assert strategy.saw_positions is True
     strategy.buf.setDouble(strategy.buf.appendRow(), strategy.col, 1.0)

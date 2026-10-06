@@ -5,7 +5,7 @@ Public API:
     from gnomepy import (
         Strategy, Backtest, run_backtest,
         BacktestConfig, ListingSimConfig, ExchangeProfileConfig,
-        StrategyConfig, RiskConfig,
+        StrategyConfig, RiskConfig, PolicyConfig,
         StaticFeeConfig, StaticLatencyConfig, GaussianLatencyConfig,
         OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig,
         Intent, ExecutionReport, PositionViewWrapper,
@@ -26,6 +26,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "ProbabilisticQueueConfig": ("gnomepy.java.backtest.config", "ProbabilisticQueueConfig"),
     "RiskAverseQueueConfig": ("gnomepy.java.backtest.config", "RiskAverseQueueConfig"),
     "RiskConfig": ("gnomepy.java.backtest.config", "RiskConfig"),
+    "PolicyConfig": ("gnomepy.java.backtest.config", "PolicyConfig"),
     "StaticFeeConfig": ("gnomepy.java.backtest.config", "StaticFeeConfig"),
     "StaticLatencyConfig": ("gnomepy.java.backtest.config", "StaticLatencyConfig"),
     "StrategyConfig": ("gnomepy.java.backtest.config", "StrategyConfig"),

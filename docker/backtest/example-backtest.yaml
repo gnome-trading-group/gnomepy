@@ -36,7 +36,16 @@ profiles:
 # Optional: number of book depth levels to record (1 = BBO only, max 10).
 # record_depth: 3
 
-# Optional: OMS risk parameters. Money limits are in price units (1e9 = $1).
+# Optional: the strategy id the run trades as (default 0). Needed for risk.from_registry.
+# strategy_id: 12
+
+# Optional: OMS risk policies. Money limits are in price units (1e9 = $1).
+# Omitted or 0 strategy_id/listing_id means every strategy/listing.
 # risk:
+#   from_registry: true   # also load strategy_id's live policies (no kill switches)
 #   policies:
-#     MAX_NOTIONAL: { maxNotionalValue: 1000000000000000 }  # $1,000,000
+#     - type: MAX_NOTIONAL
+#       params: { maxNotionalValue: 1000000000000000 }  # $1,000,000
+#     - type: MAX_OPEN_ORDERS
+#       listing_id: 7122
+#       params: { maxOpenOrders: 3 }
