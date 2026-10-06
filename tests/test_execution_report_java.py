@@ -7,7 +7,7 @@ import pytest
 from gnomepy.java._classpath import discover_classpath
 from gnomepy.java._jvm import ensure_jvm_started
 from gnomepy.java.backtest.orders import ExecutionReport
-from gnomepy.java.enums import ExecType
+from gnomepy.java.enums import ExecType, RejectReason
 
 
 def _jar_available() -> bool:
@@ -64,3 +64,11 @@ def test_present_fields_pass_through():
     assert py.fill_price == 450_000_000
     assert py.fee == pytest.approx(1.5)
     assert py.timestamp_recv == 123
+
+
+def test_every_java_reject_reason_reads_into_python():
+    java_reasons = jpype.JClass("group.gnometrading.schemas.RejectReason").values()
+    for java_reason in java_reasons:
+        name = str(java_reason.name())
+        expected = None if name == "NULL_VAL" else RejectReason(name)
+        assert RejectReason.from_java(java_reason) == expected

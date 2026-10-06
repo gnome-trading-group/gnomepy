@@ -84,7 +84,9 @@ class Strategy(ABC):
     def simulate_processing_time(self) -> int:
         """Simulated time in nanoseconds between seeing an event and orders leaving.
 
-        0 (the default) means none. Ignored when the backtest config sets
+        The strategy handles no other event meanwhile: market data and execution
+        reports arriving during it wait their turn, in arrival order. 0 (the
+        default) means none. Ignored when the backtest config sets
         ``measure_processing_time``, which charges measured wall-clock time instead.
         """
         return 0
