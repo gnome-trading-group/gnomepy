@@ -67,7 +67,13 @@ class Intent:
         enc.bidSize(jpype.JLong(bid_size))
         enc.askPrice(jpype.JLong(ask_price))
         enc.askSize(jpype.JLong(ask_size))
-        if take_size > 0 and take_side is not None:
+        if take_size > 0:
+            # A take missing its side or type would otherwise be dropped or fail deep inside the encoder.
+            if take_side is None or take_order_type is None:
+                raise ValueError(
+                    "take_size > 0 needs both take_side and take_order_type (OrderType.MARKET or OrderType.LIMIT); "
+                    f"got take_side={take_side}, take_order_type={take_order_type}"
+                )
             enc.takeSide(take_side.to_java())
             enc.takeSize(jpype.JLong(take_size))
             enc.takeOrderType(take_order_type.to_java())

@@ -8,7 +8,18 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from gnomepy._fs import resolve_fs
 from gnomepy.reporting.metrics import Curves, build_curves, compute_max_drawdown, compute_sharpe, mid_price
+from gnomepy.reporting.plots import (
+    DEFAULT_MAX_POINTS,
+    assemble_html,
+    plot_cross_exchange_spread,
+    plot_pnl,
+    plot_pnl_by_symbol,
+    plot_position,
+    plot_spread,
+    resolve_sections,
+)
 
 if TYPE_CHECKING:
     import plotly.graph_objects as go
@@ -284,7 +295,13 @@ class BacktestReport:
         total_fees = float(c.fees.iloc[-1]) if not c.fees.empty else 0.0
         total_volume = float(c.volume.iloc[-1]) if not c.volume.empty else 0.0
         total_notional = float(c.notional.iloc[-1]) if not c.notional.empty else 0.0
-        final_position = float(c.position.iloc[-1]) if not c.position.empty else 0.0
+        # One listing's position is meaningful; a sum across different instruments is not, so it is NaN then and
+        # final_positions carries each listing's.
+        listings = len(c.position_by_symbol.columns)
+        if listings > 1:
+            final_position = float("nan")
+        else:
+            final_position = float(c.position.iloc[-1]) if not c.position.empty else 0.0
 
         if not c.pnl_by_symbol.empty:
             final_pnl_by_symbol = {str(col): float(c.pnl_by_symbol[col].iloc[-1]) for col in c.pnl_by_symbol.columns}
@@ -298,6 +315,7 @@ class BacktestReport:
 
         sharpe = self.sharpe_metrics()
         windowed = self._window is not None
+        metadata = self._results.metadata if self._results else None
 
         return {
             "backtest_id": self._results.backtest_id if self._results else None,
@@ -321,7 +339,9 @@ class BacktestReport:
             "sortino": sharpe["sortino"],
             "sharpe_std": sharpe["sharpe_std"],
             "pct_positive_buckets": sharpe["pct_positive_buckets"],
-            "warnings": self._results.metadata.warnings if self._results and self._results.metadata else [],
+            "oms_rejects": dict(metadata.oms_rejects) if metadata else {},
+            "oms_reject_count": sum(metadata.oms_rejects.values()) if metadata else 0,
+            "warnings": metadata.warnings if metadata else [],
         }
 
     def summary_df(self) -> pd.Series:
@@ -333,27 +353,22 @@ class BacktestReport:
 
     def plot_pnl(self, **kwargs) -> "go.Figure":
         """PnL + drawdown chart with mid overlay and fill markers."""
-        from gnomepy.reporting.plots import plot_pnl
         return plot_pnl(self, **kwargs)
 
     def plot_position(self, **kwargs) -> "go.Figure":
         """Position, cumulative fees, and cumulative volume subplots."""
-        from gnomepy.reporting.plots import plot_position
         return plot_position(self, **kwargs)
 
     def plot_cross_exchange_spread(self, **kwargs) -> "go.Figure":
         """Spread between two exchanges for the same security (bps)."""
-        from gnomepy.reporting.plots import plot_cross_exchange_spread
         return plot_cross_exchange_spread(self, **kwargs)
 
     def plot_spread(self, **kwargs) -> "go.Figure":
         """Bid-ask spread over time."""
-        from gnomepy.reporting.plots import plot_spread
         return plot_spread(self, **kwargs)
 
     def plot_pnl_by_symbol(self, **kwargs) -> "go.Figure":
         """Per-symbol PnL curves on a single chart."""
-        from gnomepy.reporting.plots import plot_pnl_by_symbol
         return plot_pnl_by_symbol(self, **kwargs)
 
     # -- HTML export ---------------------------------------------------------
@@ -368,7 +383,6 @@ class BacktestReport:
         plotly_cdn: bool | None = None,
     ) -> str:
         """Return the full HTML report as a string."""
-        from gnomepy.reporting.plots import DEFAULT_MAX_POINTS, assemble_html, resolve_sections
 
         cfg_exclude, cfg_sections, cfg_max_points, cfg_plotly_cdn = resolve_sections(self._config or {})
 
@@ -401,7 +415,6 @@ class BacktestReport:
         )
         path_str = str(path)
         if path_str.startswith("s3://"):
-            from gnomepy._fs import resolve_fs
             fs, normalized = resolve_fs(path_str)
             content = html.encode("utf-8")
             with fs.open_output_stream(normalized) as f:
@@ -414,7 +427,6 @@ class BacktestReport:
         data = self.summary()
         path_str = str(path)
         if path_str.startswith("s3://"):
-            from gnomepy._fs import resolve_fs
             fs, normalized = resolve_fs(path_str)
             content = (json.dumps(data, indent=2, default=str) + "\n").encode("utf-8")
             with fs.open_output_stream(normalized) as f:

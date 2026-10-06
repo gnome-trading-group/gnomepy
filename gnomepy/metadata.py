@@ -54,6 +54,10 @@ class BacktestMetadata:
     # Warnings from the run (e.g. missing S3 keys)
     warnings: list[str] = field(default_factory=list)
 
+    # Orders and modifies the OMS refused before they reached the venue, by reject reason. They have no order
+    # records: the refusal carries the order's ids but not its price or size.
+    oms_rejects: dict[str, int] = field(default_factory=dict)
+
     # Extensible
     extra: dict[str, Any] = field(default_factory=dict)
 

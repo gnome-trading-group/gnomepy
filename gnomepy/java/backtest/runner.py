@@ -498,6 +498,11 @@ class Backtest:
             python_version=env.get("python_version"),
             os_info=env.get("os_info"),
             warnings=self._warnings,
+            oms_rejects=(
+                {str(k): int(v) for k, v in dict(self._recorder.getOmsRejectCounts()).items()}
+                if self._recorder is not None
+                else {}
+            ),
         )
 
     def _run_with_progress(self):

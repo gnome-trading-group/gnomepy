@@ -11,7 +11,7 @@ import pytest
 def _jvm_available() -> bool:
     try:
         from gnomepy.java._classpath import discover_classpath
-        cp = discover_classpath()
+        cp = discover_classpath("gnome-backtest")
         return len(cp) > 0
     except Exception:
         return False

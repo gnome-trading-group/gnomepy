@@ -7,6 +7,7 @@ import pytest
 
 from gnomepy.java.recorder import BacktestResults
 from gnomepy.java.statics import Scales
+from gnomepy.metadata import BacktestMetadata
 from gnomepy.reporting.metrics import compute_max_drawdown, compute_sharpe, mid_price
 from gnomepy.reporting.report import BacktestReport
 
@@ -252,3 +253,40 @@ def test_market_order_price_is_nan_not_the_sbe_null():
     assert df["final_price"].iloc[0] == pytest.approx(0.51)
     assert np.isnan(df["submit_price"].iloc[1])
     assert np.isnan(df["final_price"].iloc[1])
+
+
+def test_final_position_is_nan_across_several_listings():
+    a = _market([100.0, 101.0], [0, 10], security_id=1)
+    b = _market([50.0, 51.0], [0, 10], security_id=2)
+    fills = pd.concat([
+        _fill(0, "Bid", 1.0, 100.0),
+        pd.DataFrame(
+            {"exchange_id": [1], "security_id": [2], "side": ["Ask"], "fill_qty": [3.0], "fill_price": [50.0],
+             "fee": [0.0]},
+            index=_ts(0),
+        ),
+    ])
+    summary = BacktestReport(BacktestResults.from_dataframes(market_df=pd.concat([a, b]), fills_df=fills)).summary()
+
+    assert np.isnan(summary["final_position"])
+    assert sorted(summary["final_positions"].values()) == [-3.0, 1.0]
+
+
+def test_final_position_for_one_listing_is_its_position():
+    results = BacktestResults.from_dataframes(market_df=_market([100.0, 101.0], [0, 10]), fills_df=_fill(0, "Bid", 2.0, 100.0))
+    assert BacktestReport(results).summary()["final_position"] == 2.0
+
+
+def test_oms_rejects_reach_the_summary():
+    from_metadata = BacktestMetadata(backtest_id="x", oms_rejects={"RISK_LIMIT_EXCEEDED": 3, "INVALID_SIZE": 2})
+    results = BacktestResults.from_dataframes(market_df=_market([100.0, 101.0], [0, 10]), metadata=from_metadata)
+
+    summary = BacktestReport(results).summary()
+
+    assert summary["oms_reject_count"] == 5
+    assert summary["oms_rejects"] == {"RISK_LIMIT_EXCEEDED": 3, "INVALID_SIZE": 2}
+
+
+def test_oms_rejects_survive_a_metadata_round_trip():
+    meta = BacktestMetadata(backtest_id="x", oms_rejects={"INVALID_PRICE": 4})
+    assert BacktestMetadata.from_dict(meta.to_dict()).oms_rejects == {"INVALID_PRICE": 4}
