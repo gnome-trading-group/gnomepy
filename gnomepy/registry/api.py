@@ -283,7 +283,7 @@ class RegistryClient:
         *,
         strategy_id: int | None = None,
         name: str | None = None,
-        status: int | None = None,
+        archived: bool | None = None,
     ) -> list[Strategy]:
         return self._get("/strategies", _parse_kwarg_params(locals()), Strategy)
 
@@ -341,3 +341,10 @@ class RegistryClient:
 
     def stop_strategy_session(self, session_id: str) -> dict:
         return self._post_as_operator("/strategy-sessions/stop", {"sessionId": session_id})
+
+    def stop_strategy_session_as_service(self, session_id: str, actor: str) -> dict:
+        """Stop a session from an automated caller (no `gnomepy login`), e.g. the launcher.
+
+        `actor` is recorded as who stopped it in the kill-switch audit log, e.g. "launcher:cs2-prematch".
+        """
+        return self._post("/strategy-sessions/stop", {"sessionId": session_id, "actor": actor})

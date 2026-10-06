@@ -150,11 +150,11 @@ class HedgeKeyword:
 class Strategy:
     strategy_id: int
     name: str
-    status: int
     date_modified: str
     date_created: str
     description: str | None = None
     parameters: dict | None = None
+    archived: bool = False
 
 
 @dataclass

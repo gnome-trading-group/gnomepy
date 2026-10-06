@@ -761,7 +761,7 @@ def strategy_get(identifier: str) -> None:
     s = strategies[0]
     click.echo(f"strategy_id: {s.strategy_id}")
     click.echo(f"name:        {s.name}")
-    click.echo(f"status:      {s.status}")
+    click.echo(f"archived:    {s.archived}")
     click.echo(f"description: {s.description or ''}")
     if s.parameters:
         click.echo(f"parameters:  {json.dumps(s.parameters)}")

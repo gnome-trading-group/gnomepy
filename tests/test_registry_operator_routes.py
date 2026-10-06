@@ -43,3 +43,22 @@ def test_stop_strategy_session_never_sends_the_api_key(captured):
     client.stop_strategy_session("s1")
 
     assert "x-api-key" not in {k.lower() for k in captured[0]["headers"]}
+
+
+def test_stop_strategy_session_as_service_uses_api_key_route_and_names_the_actor(monkeypatch):
+    calls = []
+
+    def fake_post(url, json, headers):
+        calls.append({"url": url, "json": json, "headers": headers})
+        return _Response()
+
+    monkeypatch.setattr(registry_api.requests, "post", fake_post)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    client.stop_strategy_session_as_service("s1", actor="launcher:cs2-prematch")
+
+    assert calls == [{
+        "url": "https://registry.example.com/api/strategy-sessions/stop",
+        "json": {"sessionId": "s1", "actor": "launcher:cs2-prematch"},
+        "headers": {"x-api-key": "service-key", "Content-Type": "application/json"},
+    }]
