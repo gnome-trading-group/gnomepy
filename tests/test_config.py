@@ -8,7 +8,8 @@ import pytest
 from gnomepy.java.backtest.config import (
     BacktestConfig,
     ExchangeProfileConfig,
-    GaussianLatencyConfig,
+    LogNormalLatencyConfig,
+    RecordedLatencyConfig,
     ListingSimConfig,
     OptimisticQueueConfig,
     ProbabilisticQueueConfig,
@@ -42,10 +43,16 @@ class TestLatencyConfigs:
         cfg = StaticLatencyConfig(latency_nanos=5_000_000)
         assert cfg.latency_nanos == 5_000_000
 
-    def test_gaussian_latency(self):
-        cfg = GaussianLatencyConfig(mu=1_000_000.0, sigma=200_000.0)
-        assert cfg.mu == 1_000_000.0
-        assert cfg.sigma == 200_000.0
+    def test_lognormal_latency_defaults(self):
+        cfg = LogNormalLatencyConfig()
+        assert (cfg.floor_nanos, cfg.median_nanos, cfg.p99_nanos) == (5_000_000, 12_000_000, 200_000_000)
+        assert cfg.seed is None
+
+    def test_profile_defaults_replay_market_data_and_model_orders(self):
+        cfg = ExchangeProfileConfig()
+        assert isinstance(cfg.market_data_latency, RecordedLatencyConfig)
+        assert cfg.market_data_latency.fallback.latency_nanos == 50_000_000
+        assert isinstance(cfg.network_latency, LogNormalLatencyConfig)
 
 
 class TestQueueConfigs:
@@ -68,18 +75,18 @@ class TestExchangeProfileConfig:
     def test_defaults(self):
         cfg = ExchangeProfileConfig()
         assert isinstance(cfg.fee_model, StaticFeeConfig)
-        assert isinstance(cfg.network_latency, StaticLatencyConfig)
+        assert isinstance(cfg.network_latency, LogNormalLatencyConfig)
         assert isinstance(cfg.order_processing_latency, StaticLatencyConfig)
         assert isinstance(cfg.queue_model, RiskAverseQueueConfig)
 
     def test_custom_profile(self):
         cfg = ExchangeProfileConfig(
             fee_model=StaticFeeConfig(taker_fee=0.001, maker_fee=-0.0002),
-            network_latency=GaussianLatencyConfig(mu=5e6, sigma=1e6),
+            network_latency=LogNormalLatencyConfig(floor_nanos=1_000_000),
             queue_model=OptimisticQueueConfig(),
         )
         assert cfg.fee_model.taker_fee == 0.001
-        assert isinstance(cfg.network_latency, GaussianLatencyConfig)
+        assert isinstance(cfg.network_latency, LogNormalLatencyConfig)
         assert isinstance(cfg.queue_model, OptimisticQueueConfig)
 
 

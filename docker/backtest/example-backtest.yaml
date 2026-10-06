@@ -24,9 +24,21 @@ profiles:
       type: static
       taker_fee: 0.0005
       maker_fee: 0.0002
+    # Market data reaches the strategy at the receive time recorded with each record (about 50ms after the venue
+    # event on Polymarket and Kalshi). Set a model here only to test fresher or staler data than was recorded.
+    # market_data_latency:
+    #   type: static
+    #   latency_nanos: 1000000
+    # Our order connection, each way: orders out and reports back. Omitted, it is a 5ms floor, 12ms median and
+    # 200ms p99 log-normal.
     network_latency:
       type: static
       latency_nanos: 5000000
+    # network_latency:
+    #   type: lognormal
+    #   floor_nanos: 5000000
+    #   median_nanos: 12000000
+    #   p99_nanos: 200000000
     order_processing_latency:
       type: static
       latency_nanos: 1000000

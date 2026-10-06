@@ -15,7 +15,8 @@ from gnomepy.java._jvm import ensure_jvm_started
 from gnomepy.java.backtest.config import (
     BacktestConfig,
     ExchangeProfileConfig,
-    GaussianLatencyConfig,
+    LogNormalLatencyConfig,
+    RecordedLatencyConfig,
     ListingSimConfig,
 )
 
@@ -58,9 +59,19 @@ def test_measure_processing_time_and_seed_reach_java():
     assert int(java.seed) == 1234
 
 
-def test_gaussian_seed_is_optional():
-    assert GaussianLatencyConfig(mu=1e6, sigma=1e5)._to_java().seed is None
-    assert int(GaussianLatencyConfig(mu=1e6, sigma=1e5, seed=7)._to_java().seed) == 7
+def test_lognormal_seed_is_optional():
+    assert LogNormalLatencyConfig()._to_java().seed is None
+    assert int(LogNormalLatencyConfig(seed=7)._to_java().seed) == 7
+
+
+def test_latency_configs_reach_java():
+    java = ExchangeProfileConfig(
+        market_data_latency=RecordedLatencyConfig(fallback=LogNormalLatencyConfig(floor_nanos=1)),
+        network_latency=LogNormalLatencyConfig(floor_nanos=2, median_nanos=3, p99_nanos=4),
+    )._to_java()
+    assert int(java.marketDataLatency.fallback.floorNanos) == 1
+    assert (int(java.networkLatency.floorNanos), int(java.networkLatency.medianNanos)) == (2, 3)
+    assert int(java.networkLatency.p99Nanos) == 4
 
 
 def test_self_trade_prevention_reaches_java():

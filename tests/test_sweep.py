@@ -86,7 +86,7 @@ def test_collect_recursive_list_of_dicts():
         "default": {
             "network_latency": [
                 {"type": "static", "latency_nanos": 5_000_000},
-                {"type": "gaussian", "mu": 5_000_000.0, "sigma": 1_000_000.0},
+                {"type": "lognormal", "median_nanos": 12_000_000},
             ]
         }
     }
@@ -208,7 +208,7 @@ def test_expand_profile_list_of_dicts():
             "default": {
                 "network_latency": [
                     {"type": "static", "latency_nanos": 5_000_000},
-                    {"type": "gaussian", "mu": 5_000_000.0, "sigma": 1_000_000.0},
+                    {"type": "lognormal", "median_nanos": 12_000_000},
                 ]
             }
         }
@@ -216,7 +216,7 @@ def test_expand_profile_list_of_dicts():
     result = expand_sweep(config)
     assert len(result) == 2
     assert result[0]["profiles"]["default"]["network_latency"] == {"type": "static", "latency_nanos": 5_000_000}
-    assert result[1]["profiles"]["default"]["network_latency"]["type"] == "gaussian"
+    assert result[1]["profiles"]["default"]["network_latency"]["type"] == "lognormal"
 
 
 def test_expand_list_of_dicts_does_not_share_references():

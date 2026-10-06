@@ -45,24 +45,46 @@ class StaticLatencyConfig:
 
 
 @dataclass
-class GaussianLatencyConfig:
-    """Normally distributed latency in nanoseconds, truncated at zero.
+class LogNormalLatencyConfig:
+    """A floor plus a log-normal tail, set by its floor, median and 99th percentile in nanoseconds.
 
-    ``seed`` pins this model's draws. Left as ``None``, the model takes its own
-    stream derived from ``BacktestConfig.seed``, the listing and its role.
+    The defaults come from recorded Polymarket and Kalshi market data with the
+    venues' publish batching taken out. ``seed`` pins this model's draws. Left as
+    ``None``, the model takes its own stream derived from ``BacktestConfig.seed``,
+    the listing and its role.
     """
 
-    mu: float = 0.0
-    sigma: float = 0.0
+    floor_nanos: int = 5_000_000
+    median_nanos: int = 12_000_000
+    p99_nanos: int = 200_000_000
     seed: int | None = None
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.simulation.config.LatencyConfig$Gaussian")
+        cls = jpype.JClass("group.gnometrading.simulation.config.LatencyConfig$LogNormal")
         obj = cls()
-        obj.mu = float(self.mu)
-        obj.sigma = float(self.sigma)
+        obj.floorNanos = jpype.JLong(self.floor_nanos)
+        obj.medianNanos = jpype.JLong(self.median_nanos)
+        obj.p99Nanos = jpype.JLong(self.p99_nanos)
         if self.seed is not None:
             obj.seed = jpype.JObject(self.seed, jpype.JClass("java.lang.Long"))
+        return obj
+
+
+@dataclass
+class RecordedLatencyConfig:
+    """Market data arrives at the receive time recorded with each record.
+
+    ``fallback`` is used only for a record with no usable receive time.
+    """
+
+    fallback: Union[StaticLatencyConfig, LogNormalLatencyConfig] = field(
+        default_factory=lambda: StaticLatencyConfig(latency_nanos=50_000_000)
+    )
+
+    def _to_java(self):
+        cls = jpype.JClass("group.gnometrading.simulation.config.LatencyConfig$Recorded")
+        obj = cls()
+        obj.fallback = self.fallback._to_java()
         return obj
 
 
@@ -109,10 +131,15 @@ class ExchangeProfileConfig:
     """Reusable simulation profile for a listing."""
 
     fee_model: Union[StaticFeeConfig, ParametricFeeConfig] = field(default_factory=StaticFeeConfig)
-    network_latency: Union[StaticLatencyConfig, GaussianLatencyConfig, MakerTakerLatencyConfig] = field(
-        default_factory=StaticLatencyConfig
+    # When market data reaches the strategy: by default, the receive time recorded with it.
+    market_data_latency: Union[RecordedLatencyConfig, StaticLatencyConfig, LogNormalLatencyConfig] = field(
+        default_factory=RecordedLatencyConfig
     )
-    order_processing_latency: Union[StaticLatencyConfig, GaussianLatencyConfig, MakerTakerLatencyConfig] = field(
+    # Our order connection: orders out and reports back.
+    network_latency: Union[StaticLatencyConfig, LogNormalLatencyConfig, MakerTakerLatencyConfig] = field(
+        default_factory=LogNormalLatencyConfig
+    )
+    order_processing_latency: Union[StaticLatencyConfig, LogNormalLatencyConfig, MakerTakerLatencyConfig] = field(
         default_factory=StaticLatencyConfig
     )
     queue_model: Union[
@@ -126,6 +153,7 @@ class ExchangeProfileConfig:
         cls = jpype.JClass("group.gnometrading.simulation.config.ExchangeProfileConfig")
         obj = cls()
         obj.feeModel = self.fee_model._to_java()
+        obj.marketDataLatency = self.market_data_latency._to_java()
         obj.networkLatency = self.network_latency._to_java()
         obj.orderProcessingLatency = self.order_processing_latency._to_java()
         obj.queueModel = self.queue_model._to_java()

@@ -6,7 +6,7 @@ Public API:
         Strategy, Backtest, run_backtest,
         BacktestConfig, ListingSimConfig, ExchangeProfileConfig,
         StrategyConfig, RiskConfig, PolicyConfig,
-        StaticFeeConfig, StaticLatencyConfig, GaussianLatencyConfig,
+        StaticFeeConfig, StaticLatencyConfig, LogNormalLatencyConfig, RecordedLatencyConfig,
         OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig,
         Intent, ExecutionReport, PositionViewWrapper,
         SchemaType, Side, Action,
@@ -18,7 +18,8 @@ import importlib
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "BacktestConfig": ("gnomepy.java.backtest.config", "BacktestConfig"),
     "ExchangeProfileConfig": ("gnomepy.java.backtest.config", "ExchangeProfileConfig"),
-    "GaussianLatencyConfig": ("gnomepy.java.backtest.config", "GaussianLatencyConfig"),
+    "LogNormalLatencyConfig": ("gnomepy.java.backtest.config", "LogNormalLatencyConfig"),
+    "RecordedLatencyConfig": ("gnomepy.java.backtest.config", "RecordedLatencyConfig"),
     "ListingSimConfig": ("gnomepy.java.backtest.config", "ListingSimConfig"),
     "MakerTakerLatencyConfig": ("gnomepy.java.backtest.config", "MakerTakerLatencyConfig"),
     "OptimisticQueueConfig": ("gnomepy.java.backtest.config", "OptimisticQueueConfig"),

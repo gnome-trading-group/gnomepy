@@ -1,5 +1,6 @@
-# Sweep over network latency to measure execution-latency sensitivity.
-# 5 jobs: 0 us, 1 ms, 5 ms, 10 ms, 50 ms round-trip.
+# Sweep over order-connection latency to measure execution-latency sensitivity.
+# 5 jobs: 0 us, 1 ms, 5 ms, 10 ms, 50 ms each way, for orders out and reports back.
+# Market data keeps its recorded arrival times; sweep market_data_latency instead to test data staleness.
 # Use this to understand how much alpha erodes as latency increases and to
 # set a realistic latency budget for live deployment.
 

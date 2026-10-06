@@ -45,16 +45,18 @@ class StaticLatencyConfig:
 
 
 @dataclass
-class GaussianLatencyConfig:
-    mu: float = 0.0
-    sigma: float = 0.0
+class LogNormalLatencyConfig:
+    floor_nanos: int = 5_000_000
+    median_nanos: int = 12_000_000
+    p99_nanos: int = 200_000_000
     seed: int | None = None
 
     def to_properties(self, prefix: str) -> dict[str, str]:
         props = {
-            f"{prefix}.model": "gaussian",
-            f"{prefix}.mu": str(self.mu),
-            f"{prefix}.sigma": str(self.sigma),
+            f"{prefix}.model": "lognormal",
+            f"{prefix}.floor.nanos": str(self.floor_nanos),
+            f"{prefix}.median.nanos": str(self.median_nanos),
+            f"{prefix}.p99.nanos": str(self.p99_nanos),
         }
         if self.seed is not None:
             props[f"{prefix}.seed"] = str(self.seed)
@@ -100,14 +102,14 @@ class ProbabilisticQueueConfig:
 
 
 FeeConfig = Union[StaticFeeConfig, ParametricFeeConfig]
-LatencyModelConfig = Union[StaticLatencyConfig, GaussianLatencyConfig, MakerTakerLatencyConfig]
+LatencyModelConfig = Union[StaticLatencyConfig, LogNormalLatencyConfig, MakerTakerLatencyConfig]
 QueueConfig = Union[OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig]
 
 
 @dataclass
 class SimulationProfile:
     fee: FeeConfig = field(default_factory=StaticFeeConfig)
-    network_latency: LatencyModelConfig = field(default_factory=StaticLatencyConfig)
+    network_latency: LatencyModelConfig = field(default_factory=LogNormalLatencyConfig)
     order_latency: LatencyModelConfig = field(default_factory=StaticLatencyConfig)
     queue: QueueConfig = field(default_factory=RiskAverseQueueConfig)
     self_trade_prevention: str = "CANCEL_INCOMING"
@@ -210,7 +212,9 @@ class SessionConfig:
 
 def _parse_simulation_profile(sim: dict) -> SimulationProfile:
     fee = _parse_fee_config(sim.get("fee", {}))
-    network_latency = _parse_latency_config(sim.get("network_latency", {}))
+    network_latency = (
+        _parse_latency_config(sim["network_latency"]) if "network_latency" in sim else LogNormalLatencyConfig()
+    )
     order_latency = _parse_latency_config(sim.get("order_latency", {}))
     queue = _parse_queue_config(sim.get("queue", {}))
     return SimulationProfile(
@@ -234,8 +238,14 @@ def _parse_fee_config(cfg: dict) -> FeeConfig:
 
 def _parse_latency_config(cfg: dict) -> LatencyModelConfig:
     model_type = cfg.get("model", "static")
-    if model_type == "gaussian":
-        return GaussianLatencyConfig(mu=cfg.get("mu", 0.0), sigma=cfg.get("sigma", 0.0), seed=cfg.get("seed"))
+    if model_type == "lognormal":
+        defaults = LogNormalLatencyConfig()
+        return LogNormalLatencyConfig(
+            floor_nanos=cfg.get("floor_nanos", defaults.floor_nanos),
+            median_nanos=cfg.get("median_nanos", defaults.median_nanos),
+            p99_nanos=cfg.get("p99_nanos", defaults.p99_nanos),
+            seed=cfg.get("seed"),
+        )
     if model_type == "maker_taker":
         return MakerTakerLatencyConfig(
             base_nanos=cfg.get("base_nanos", 0),
