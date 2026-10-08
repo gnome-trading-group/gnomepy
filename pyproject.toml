@@ -1,6 +1,6 @@
 [project]
 name = "gnomepy"
-version = "2.24.4"
+version = "2.24.5"
 description = ""
 authors = [
     {name = "mprey",email = "masonprey7@gmail.com"}

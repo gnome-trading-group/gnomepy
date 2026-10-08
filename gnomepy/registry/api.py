@@ -180,6 +180,9 @@ class RegistryClient:
     def bulk_patch_listings(self, items: list[dict]) -> list[dict]:
         return self._patch_bulk("/listings", items)
 
+    def bulk_patch_event_contracts(self, items: list[dict]) -> list[dict]:
+        return self._patch_bulk("/event-contracts", items)
+
     def _get(self, path: str, params: dict, output_type) -> list:
         all_items = []
         offset = 0

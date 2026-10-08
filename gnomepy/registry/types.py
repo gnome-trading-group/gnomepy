@@ -124,6 +124,8 @@ class EventContract:
     security_id: int
     outcome_label: str
     date_created: str
+    settlement_price: int | None = None
+    settled_at: str | None = None
 
 
 @dataclass
