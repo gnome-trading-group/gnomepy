@@ -167,6 +167,11 @@ def test_list_columns_roundtrip_and_dedupe(store):
     assert again.rows_written == 0
 
 
+def test_empty_warehouse_lists_nothing_and_reading_creates_nothing(store):
+    assert store.list() == []
+    assert not store._catalog.list_namespaces()
+
+
 def test_spec_rejects_nanosecond_timestamps():
     with pytest.raises(ValueError, match="microsecond"):
         TableSpec("bad", pa.schema([pa.field("t", pa.timestamp("ns"))]), key=("t",))

@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 from pyiceberg.catalog import Catalog
-from pyiceberg.exceptions import CommitFailedException, NoSuchTableError
+from pyiceberg.exceptions import CommitFailedException, NoSuchNamespaceError, NoSuchTableError
 from pyiceberg.expressions import AlwaysTrue, And, BooleanExpression, In, LessThanOrEqual
 from pyiceberg.table import Table
 from pyiceberg.transforms import DayTransform, IdentityTransform, MonthTransform, Transform
@@ -113,7 +113,6 @@ class DatasetStore:
         self.run_id = run_id
         self.loaded: list[InputRecord] = []
         self._catalog = catalog or open_catalog(self.config)
-        self._catalog.create_namespace_if_not_exists(self.namespace)
 
     def create(self, spec: TableSpec) -> Table:
         """Create the table if it doesn't exist; an existing table must already match the spec's columns."""
@@ -121,6 +120,8 @@ class DatasetStore:
         try:
             table = self._catalog.load_table(ident)
         except NoSuchTableError:
+            # Only writers get here: read-only roles can't create namespaces.
+            self._catalog.create_namespace_if_not_exists(self.namespace)
             table = self._catalog.create_table(
                 ident, schema=spec.full_schema(), properties={KEY_PROPERTY: ",".join(spec.key)}
             )
@@ -197,7 +198,10 @@ class DatasetStore:
         return rows.drop(columns=list(MANAGED_COLUMNS))
 
     def list(self) -> list[str]:
-        return sorted(ident[-1] for ident in self._catalog.list_tables(self.namespace))
+        try:
+            return sorted(ident[-1] for ident in self._catalog.list_tables(self.namespace))
+        except NoSuchNamespaceError:
+            return []
 
     def _ident(self, name: str) -> str:
         return f"{self.namespace}.{name}"

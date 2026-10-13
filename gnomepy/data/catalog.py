@@ -8,6 +8,8 @@ import boto3
 from pyiceberg.catalog import Catalog, load_catalog
 
 S3_TABLES_ENDPOINT = "https://s3tables.{region}.amazonaws.com/iceberg"
+TABLE_BUCKET_PARAMETER = "/gnome/research/table-bucket-arn"
+ARTIFACT_ROOT_PARAMETER = "/gnome/research/artifact-root"
 
 
 @dataclass(frozen=True)
@@ -28,15 +30,27 @@ class CatalogConfig:
 
     @classmethod
     def from_env(cls) -> CatalogConfig:
+        """Environment variables first, then the account's SSM parameters (gnome-pipelines' DataStack)."""
+        # The research catalog lives in one region; a session elsewhere still reads it there.
+        region = os.environ.get("GNOME_TABLES_REGION", "us-east-1")
         local = os.environ.get("GNOME_LOCAL_WAREHOUSE")
-        stage = os.environ.get("STAGE", "prod").lower()
+        table_bucket_arn = os.environ.get("GNOME_TABLE_BUCKET_ARN")
+        artifact_root = os.environ.get("GNOME_ARTIFACT_ROOT")
+        if local:
+            artifact_root = artifact_root or str(Path(local) / "files")
+        else:
+            missing = [name for name, value in ((TABLE_BUCKET_PARAMETER, table_bucket_arn),
+                                                (ARTIFACT_ROOT_PARAMETER, artifact_root)) if not value]
+            parameters = _ssm_parameters(region, missing) if missing else {}
+            table_bucket_arn = table_bucket_arn or parameters[TABLE_BUCKET_PARAMETER]
+            artifact_root = artifact_root or parameters[ARTIFACT_ROOT_PARAMETER]
         return cls(
-            table_bucket_arn=os.environ.get("GNOME_TABLE_BUCKET_ARN"),
+            table_bucket_arn=table_bucket_arn,
             local_warehouse=Path(local) if local else None,
             namespace=os.environ.get("GNOME_TABLES_NAMESPACE", "research"),
             artifact_namespace=os.environ.get("GNOME_ARTIFACTS_NAMESPACE", "artifacts"),
-            artifact_root=os.environ.get("GNOME_ARTIFACT_ROOT", f"s3://gnome-research-{stage}/artifacts"),
-            region=os.environ.get("AWS_REGION", "us-east-1"),
+            artifact_root=artifact_root,
+            region=region,
         )
 
 
@@ -66,6 +80,16 @@ def open_catalog(config: CatalogConfig) -> Catalog:
             },
         )
     raise ValueError("CatalogConfig needs table_bucket_arn or local_warehouse (set GNOME_TABLE_BUCKET_ARN)")
+
+
+def _ssm_parameters(region: str, names: list[str]) -> dict[str, str]:
+    response = boto3.client("ssm", region_name=region).get_parameters(Names=names)
+    if response["InvalidParameters"]:
+        raise ValueError(
+            f"SSM parameters {response['InvalidParameters']} not found in this account; "
+            "set GNOME_TABLE_BUCKET_ARN and GNOME_ARTIFACT_ROOT, or GNOME_LOCAL_WAREHOUSE"
+        )
+    return {p["Name"]: p["Value"] for p in response["Parameters"]}
 
 
 def _sso_credentials() -> dict[str, str]:
