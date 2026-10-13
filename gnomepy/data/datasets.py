@@ -148,7 +148,7 @@ class DatasetStore:
         """Append the rows of df that differ from the newest stored row for their key."""
         table = self.create(spec)
         _check_columns(spec, df)
-        frame = _to_microseconds(df[list(spec.schema.names)]).reset_index(drop=True)
+        frame = _as_stored(spec, df)
         frame[ROW_HASH] = _row_hashes(frame)
 
         frame = frame.drop_duplicates([*spec.key, ROW_HASH])
@@ -218,11 +218,17 @@ def _check_columns(spec: TableSpec, df: pd.DataFrame) -> None:
         )
 
 
+def _as_stored(spec: TableSpec, df: pd.DataFrame) -> pd.DataFrame:
+    # Hash the values as Iceberg will store them: the same data sent as float, int or a
+    # nullable extension dtype, or read back by load(), must hash the same or it re-appends.
+    rows = pa.Table.from_pandas(_to_microseconds(df[list(spec.schema.names)]), schema=spec.schema, preserve_index=False)
+    return rows.to_pandas()
+
+
 def _to_microseconds(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     for column in out.columns:
-        dtype = out[column].dtype
-        if isinstance(dtype, pd.DatetimeTZDtype) or np.issubdtype(dtype, np.datetime64):
+        if pd.api.types.is_datetime64_any_dtype(out[column].dtype):
             out[column] = out[column].dt.as_unit("us")
     return out
 

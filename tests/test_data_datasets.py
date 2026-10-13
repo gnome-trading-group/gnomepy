@@ -82,6 +82,14 @@ def test_correction_appends_and_as_of_returns_the_table_as_it_was_known(store):
     assert after[["match_id", "player_id", "rating"]].values.tolist() == [[1, 10, 1.5], [1, 11, 0.9], [2, 10, 1.0]]
 
 
+def test_same_values_in_another_dtype_write_nothing(store):
+    store.publish(SPEC, frame([(1, 10, 1.0), (1, 11, 2.0)]), ingested_at=T0)
+    as_ints = frame([(1, 10, 1), (1, 11, 2)]).astype({"match_id": "float64", "player_id": "Int64", "note": "string"})
+
+    assert store.publish(SPEC, as_ints, ingested_at=T1).rows_written == 0
+    assert store.publish(SPEC, store.load("player_stats"), ingested_at=T1).rows_written == 0
+
+
 def test_exact_duplicates_in_one_publish_are_collapsed(store):
     result = store.publish(SPEC, frame([(1, 10, 1.1), (1, 10, 1.1)]), ingested_at=T0)
 

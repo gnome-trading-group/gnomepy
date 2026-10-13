@@ -112,6 +112,7 @@ class RejectReason(Enum):
     POST_ONLY_WOULD_CROSS = "POST_ONLY_WOULD_CROSS"
     GATEWAY_REJECTED = "GATEWAY_REJECTED"
     HALTED = "HALTED"
+    RATE_LIMITED = "RATE_LIMITED"
 
     def to_java(self):
         return _java_enum("group.gnometrading.schemas.RejectReason", self.value)
