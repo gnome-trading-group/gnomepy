@@ -56,8 +56,8 @@ profiles:
 # risk:
 #   from_registry: true   # also load strategy_id's live policies (no kill switches)
 #   policies:
-#     - type: MAX_NOTIONAL
-#       params: { maxNotionalValue: 1000000000000000 }  # $1,000,000
+#     - type: MAX_ORDER_NOTIONAL
+#       params: { maxOrderNotional: 1000000000000000 }  # $1,000,000
 #     - type: MAX_OPEN_ORDERS
 #       listing_id: 7122
 #       params: { maxOpenOrders: 3 }

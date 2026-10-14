@@ -203,20 +203,23 @@ class PolicyConfig:
     """One OMS risk policy.
 
     ``type`` is a RiskPolicyType name. Targets work as in the registry: 0 means
-    every strategy or every listing, so a policy with neither applies to
-    everything. Money limits (maxNotionalValue, maxLoss) are in price units
-    (1e9 = $1); size limits (maxOrderSize) are in size units (1e6 = 1 unit).
+    every strategy, exchange or listing, so a policy with none applies to
+    everything; a policy names an exchange or a listing, not both. Money limits (maxOrderNotional, maxCapital, maxLoss) are in
+    price units (1e9 = $1); size limits (maxOrderSize, maxPosition) are in size
+    units (1e6 = 1 unit); maxOpenOrders and maxRejects are counts.
     """
 
     type: str
     params: dict[str, object] = field(default_factory=dict)
     strategy_id: int = 0
+    exchange_id: int = 0
     listing_id: int = 0
 
     def _to_java(self):
         obj = jpype.JClass("group.gnometrading.backtest.config.RiskConfig$PolicyConfig")()
         obj.type = str(self.type)
         obj.strategyId = jpype.JInt(self.strategy_id)
+        obj.exchangeId = jpype.JInt(self.exchange_id)
         obj.listingId = jpype.JInt(self.listing_id)
         params = jpype.JClass("java.util.HashMap")()
         for k, v in (self.params or {}).items():
@@ -232,7 +235,7 @@ class RiskConfig:
     Example::
 
         RiskConfig(policies=[
-            PolicyConfig("MAX_NOTIONAL", {"maxNotionalValue": 100_000 * 1_000_000_000}),
+            PolicyConfig("MAX_ORDER_NOTIONAL", {"maxOrderNotional": 100_000 * 1_000_000_000}),
             PolicyConfig("MAX_OPEN_ORDERS", {"maxOpenOrders": 3}, listing_id=7122),
         ])
 

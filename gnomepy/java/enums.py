@@ -113,6 +113,9 @@ class RejectReason(Enum):
     GATEWAY_REJECTED = "GATEWAY_REJECTED"
     HALTED = "HALTED"
     RATE_LIMITED = "RATE_LIMITED"
+    INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS"
+    SELF_TRADE = "SELF_TRADE"
+    MARKET_CLOSED = "MARKET_CLOSED"
 
     def to_java(self):
         return _java_enum("group.gnometrading.schemas.RejectReason", self.value)
