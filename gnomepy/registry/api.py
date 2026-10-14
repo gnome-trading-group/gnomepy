@@ -8,7 +8,7 @@ from typing import Optional
 import requests
 
 from gnomepy.auth import get_id_token
-from gnomepy.config import config, resolve_registry_api_key
+from gnomepy.config import config, resolve_alerts_api_url, resolve_registry_api_key
 from gnomepy.registry.types import (
     ContractRelationship,
     Currency,
@@ -344,6 +344,48 @@ class RegistryClient:
 
     def stop_strategy_session(self, session_id: str) -> dict:
         return self._post_as_operator("/strategy-sessions/stop", {"sessionId": session_id})
+
+    def send_alert(
+        self,
+        type: str,
+        title: str,
+        *,
+        status: str = "FIRING",
+        key: Optional[str] = None,
+        severity: Optional[str] = None,
+        body: Optional[str] = None,
+        actor: Optional[str] = None,
+        strategy_id: Optional[int] = None,
+        session_id: Optional[str] = None,
+        listing_id: Optional[int] = None,
+        exchange_id: Optional[int] = None,
+        account_id: Optional[int] = None,
+        mode: Optional[str] = None,
+        labels: Optional[dict[str, str]] = None,
+        links: Optional[list[dict[str, str]]] = None,
+        occurred_at: Optional[str] = None,
+        alerts_url: Optional[str] = None,
+    ) -> dict:
+        """Report an alert (POST /alerts on the alerts API, with this client's API key).
+
+        `type` is a catalog type (e.g. LAUNCH_FAILED) or CUSTOM, whose `severity` you choose (capped below paging).
+        Repeats of the same `key` while it fires are one alert; send `status="RESOLVED"` with that key to close it.
+        Without a key, one alert per type, session and strategy (and title, for CUSTOM).
+        """
+        payload = {
+            "type": type, "title": title, "status": status, "key": key, "severity": severity, "body": body,
+            "actor": actor, "strategyId": strategy_id, "sessionId": session_id, "listingId": listing_id,
+            "exchangeId": exchange_id, "accountId": account_id, "mode": mode, "labels": labels, "links": links,
+            "occurredAt": occurred_at,
+        }
+        url = (alerts_url or resolve_alerts_api_url()).rstrip("/") + "/alerts"
+        res = requests.post(
+            url,
+            json={k: v for k, v in payload.items() if v is not None},
+            headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+        )
+        res.raise_for_status()
+        return res.json()
 
     def stop_strategy_session_as_service(self, session_id: str, actor: str) -> dict:
         """Stop a session from an automated caller (no `gnomepy login`), e.g. the launcher.

@@ -12,6 +12,17 @@ def resolve_registry_api_key() -> str:
     return ""
 
 
+ALERTS_API_URL_PARAMETER = "/gnome/alerting/api-url"
+
+
+def resolve_alerts_api_url() -> str:
+    """Where alerts are reported: ALERTS_API_URL (a session has it), else the alerting stack's SSM parameter."""
+    if url := os.environ.get("ALERTS_API_URL"):
+        return url
+    response = boto3.client("ssm", region_name="us-east-1").get_parameter(Name=ALERTS_API_URL_PARAMETER)
+    return response["Parameter"]["Value"]
+
+
 class Config:
     REGISTRY_API_HOST: str
     CONTROLLER_API_URL: str

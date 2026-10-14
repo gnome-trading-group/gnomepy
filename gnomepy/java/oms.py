@@ -19,8 +19,10 @@ class Intent:
 
     Take fields (aggressive IOC order):
         take_side/take_size: aggressive order. size=0 means no take this tick.
-        take_order_type: MARKET or LIMIT (for IOC limit).
-        take_limit_price: price for IOC limit takes.
+        take_order_type: MARKET or LIMIT (for IOC limit). No venue takes a market order without a price, so the
+            OMS sends MARKET as an IOC limit at the best opposite price plus the MARKET_ORDER_SLIPPAGE risk
+            policy's allowance (0 when none applies), and refuses it while that side of the book is empty.
+        take_limit_price: price for IOC limit takes; send LIMIT to choose the worst price yourself.
 
     Usage:
         # Two-sided quote
