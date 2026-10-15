@@ -18,7 +18,7 @@ class _Response:
 def test_bulk_patch_event_contracts_sends_camel_case_batches(monkeypatch):
     calls = []
 
-    def fake_patch(url, json, headers):
+    def fake_patch(url, json, headers, timeout):
         calls.append({"url": url, "json": json, "headers": headers})
         return _Response([{"event_contract_id": item["eventContractId"]} for item in json])
 

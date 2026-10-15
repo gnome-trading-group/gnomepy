@@ -17,7 +17,7 @@ class _Response:
 def captured(monkeypatch):
     calls = []
 
-    def fake_post(url, json, headers):
+    def fake_post(url, json, headers, timeout):
         calls.append({"url": url, "json": json, "headers": headers})
         return _Response()
 

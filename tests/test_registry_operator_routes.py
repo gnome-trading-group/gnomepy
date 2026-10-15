@@ -16,7 +16,7 @@ class _Response:
 def captured(monkeypatch):
     calls = []
 
-    def fake_post(url, json, headers):
+    def fake_post(url, json, headers, timeout):
         calls.append({"url": url, "json": json, "headers": headers})
         return _Response()
 
@@ -48,7 +48,7 @@ def test_stop_strategy_session_never_sends_the_api_key(captured):
 def test_stop_strategy_session_as_service_uses_api_key_route_and_names_the_actor(monkeypatch):
     calls = []
 
-    def fake_post(url, json, headers):
+    def fake_post(url, json, headers, timeout):
         calls.append({"url": url, "json": json, "headers": headers})
         return _Response()
 

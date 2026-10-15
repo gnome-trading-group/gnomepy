@@ -24,6 +24,9 @@ from gnomepy.registry.types import (
 
 logger = logging.getLogger(__name__)
 
+# API Gateway gives up on an integration after 29s, so a request still open well past that is a dropped connection.
+REQUEST_TIMEOUT_SECONDS = 60
+
 
 def _to_camel_case(snake_str: str) -> str:
     camel = "".join(x.capitalize() for x in snake_str.lower().split("_"))
@@ -32,7 +35,12 @@ def _to_camel_case(snake_str: str) -> str:
 
 def _parse_kwarg_params(items) -> dict:
     params = dict(items)
-    return {_to_camel_case(k): v for k, v in params.items() if v is not None and k != "self"}
+    # The registry compares query flags with the string "true"; requests would send Python's "True".
+    return {
+        _to_camel_case(k): str(v).lower() if isinstance(v, bool) else v
+        for k, v in params.items()
+        if v is not None and k != "self"
+    }
 
 
 class RegistryClient:
@@ -190,7 +198,10 @@ class RegistryClient:
         logger.debug("GET %s params=%s page_size=%d", path, params, self._page_size)
         while True:
             page_params = {**params, "limit": self._page_size, "offset": offset}
-            res = requests.get(self.base_url + path, params=page_params, headers={"x-api-key": self.api_key})
+            res = requests.get(
+                self.base_url + path, params=page_params, headers={"x-api-key": self.api_key},
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
             res.raise_for_status()
             page = res.json()
             logger.debug("GET %s page=%d offset=%d got=%d total=%d", path, page_num, offset, len(page), len(all_items) + len(page))
@@ -217,6 +228,8 @@ class RegistryClient:
                 self.base_url + path,
                 json=batch,
                 headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+
+                timeout=REQUEST_TIMEOUT_SECONDS,
             )
             if not res.ok:
                 logger.error("POST %s failed (%d): %s", path, res.status_code, res.text)
@@ -235,6 +248,8 @@ class RegistryClient:
                 self.base_url + path,
                 json=batch,
                 headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+
+                timeout=REQUEST_TIMEOUT_SECONDS,
             )
             if not res.ok:
                 logger.error("PATCH %s failed (%d): %s", path, res.status_code, res.text)
@@ -247,6 +262,8 @@ class RegistryClient:
             self.base_url + path,
             json=body,
             headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
         res.raise_for_status()
         return res.json()
@@ -258,6 +275,8 @@ class RegistryClient:
             self.base_url + "/cognito" + path,
             json=body,
             headers={"Authorization": get_id_token(), "Content-Type": "application/json"},
+
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
         res.raise_for_status()
         return res.json()
@@ -268,6 +287,8 @@ class RegistryClient:
             params=params,
             json=body,
             headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
         res.raise_for_status()
         return res.json()
@@ -277,6 +298,8 @@ class RegistryClient:
             self.base_url + path,
             json=body,
             headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
         res.raise_for_status()
         return res.json()
@@ -383,6 +406,8 @@ class RegistryClient:
             url,
             json={k: v for k, v in payload.items() if v is not None},
             headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+
+            timeout=REQUEST_TIMEOUT_SECONDS,
         )
         res.raise_for_status()
         return res.json()
