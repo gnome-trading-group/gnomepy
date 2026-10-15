@@ -417,7 +417,7 @@ class BacktestReport:
         if path_str.startswith("s3://"):
             fs, normalized = resolve_fs(path_str)
             content = html.encode("utf-8")
-            with fs.open_output_stream(normalized) as f:
+            with fs.open_output_stream(normalized, compression=None) as f:
                 f.write(content)
         else:
             Path(path_str).write_text(html)
@@ -429,7 +429,7 @@ class BacktestReport:
         if path_str.startswith("s3://"):
             fs, normalized = resolve_fs(path_str)
             content = (json.dumps(data, indent=2, default=str) + "\n").encode("utf-8")
-            with fs.open_output_stream(normalized) as f:
+            with fs.open_output_stream(normalized, compression=None) as f:
                 f.write(content)
         else:
             Path(path_str).write_text(json.dumps(data, indent=2, default=str) + "\n")

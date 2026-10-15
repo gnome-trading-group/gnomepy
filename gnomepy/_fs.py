@@ -55,7 +55,7 @@ def fs_read_json(fs: pafs.FileSystem, path: str) -> dict:
 
 def fs_write_json(fs: pafs.FileSystem, path: str, data: dict) -> None:
     content = (json.dumps(data, indent=2, default=str) + "\n").encode()
-    with fs.open_output_stream(path) as f:
+    with fs.open_output_stream(path, compression=None) as f:
         f.write(content)
 
 
@@ -110,5 +110,7 @@ def fs_read_bytes(fs: pafs.FileSystem, path: str) -> bytes:
 
 
 def fs_write_bytes(fs: pafs.FileSystem, path: str, data: bytes) -> None:
-    with fs.open_output_stream(path) as f:
+    # pyarrow would otherwise compress by suffix, so bytes already gzipped for a .gz path got gzipped
+    # again; open_input_file never decompresses, so the write must store them exactly as given.
+    with fs.open_output_stream(path, compression=None) as f:
         f.write(data)
