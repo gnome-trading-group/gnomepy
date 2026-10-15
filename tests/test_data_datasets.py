@@ -90,6 +90,17 @@ def test_same_values_in_another_dtype_write_nothing(store):
     assert store.publish(SPEC, store.load("player_stats"), ingested_at=T1).rows_written == 0
 
 
+def test_a_row_hashes_the_same_whatever_it_is_published_with(store):
+    spec = TableSpec("ranks", pa.schema([pa.field("team", pa.int64(), nullable=False), pa.field("rank", pa.int64()),
+                                         pa.field("active", pa.bool_())]), key=("team",))
+    batch = pd.DataFrame({"team": [1, 2], "rank": [5, None], "active": [True, None]})
+    store.publish(spec, batch, ingested_at=T0)
+
+    alone = store.publish(spec, batch.iloc[:1], ingested_at=T1)
+
+    assert alone.rows_written == 0
+
+
 def test_exact_duplicates_in_one_publish_are_collapsed(store):
     result = store.publish(SPEC, frame([(1, 10, 1.1), (1, 10, 1.1)]), ingested_at=T0)
 

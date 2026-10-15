@@ -36,6 +36,13 @@ MANAGED_COLUMNS = tuple(f.name for f in MANAGED_FIELDS)
 KEY_PROPERTY = "gnome.key"
 COMMIT_ATTEMPTS = 4
 TRANSFORMS: dict[str, Transform] = {"identity": IdentityTransform(), "day": DayTransform(), "month": MonthTransform()}
+# Arrow hands back an integer or boolean column as float64 or object when the batch has a null in it,
+# and as int64 or bool when it doesn't, so a row's hash would depend on the rows published with it.
+NULLABLE_DTYPES = {
+    pa.int8(): pd.Int8Dtype(), pa.int16(): pd.Int16Dtype(), pa.int32(): pd.Int32Dtype(), pa.int64(): pd.Int64Dtype(),
+    pa.uint8(): pd.UInt8Dtype(), pa.uint16(): pd.UInt16Dtype(), pa.uint32(): pd.UInt32Dtype(),
+    pa.uint64(): pd.UInt64Dtype(), pa.bool_(): pd.BooleanDtype(),
+}
 
 
 @dataclass(frozen=True)
@@ -226,7 +233,7 @@ def _as_stored(spec: TableSpec, df: pd.DataFrame) -> pd.DataFrame:
     # Hash the values as Iceberg will store them: the same data sent as float, int or a
     # nullable extension dtype, or read back by load(), must hash the same or it re-appends.
     rows = pa.Table.from_pandas(_to_microseconds(df[list(spec.schema.names)]), schema=spec.schema, preserve_index=False)
-    return rows.to_pandas()
+    return rows.to_pandas(types_mapper=NULLABLE_DTYPES.get)
 
 
 def _to_microseconds(df: pd.DataFrame) -> pd.DataFrame:
