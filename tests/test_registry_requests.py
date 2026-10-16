@@ -32,3 +32,21 @@ def test_get_sends_bool_filters_as_lowercase_with_a_timeout(monkeypatch):
         {"url": "https://registry.example.com/api/events",
          "params": {"resolved": "false", "limit": 1000, "offset": 0}, "timeout": REQUEST_TIMEOUT_SECONDS},
     ]
+
+
+def test_get_fee_timelines_sends_only_the_given_bounds_and_keys_by_listing(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, headers, timeout):
+        calls.append({"url": url, "params": params})
+        return _Response([{"listingId": 7, "timeline": [{"effectiveFrom": "2026-01-01T00:00:00.000Z"}]},
+                          {"listingId": 9, "timeline": []}])
+
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    timelines = client.get_fee_timelines([7, 9], start="2026-01-01T00:00:00Z")
+
+    assert calls == [{"url": "https://registry.example.com/api/fees",
+                      "params": {"listingIds": "7,9", "from": "2026-01-01T00:00:00Z"}}]
+    assert timelines == {7: [{"effectiveFrom": "2026-01-01T00:00:00.000Z"}], 9: []}

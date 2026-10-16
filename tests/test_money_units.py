@@ -189,3 +189,19 @@ class TestCompliantPrice:
 
     def test_no_tick_leaves_the_price(self):
         assert self._pv(0).compliant_price(1, 1, 412_345_678, Side.ASK) == 412_345_678
+
+
+class TestSpecsAtTheBacktestsTime:
+    def test_a_clock_selects_the_spec_in_force_at_its_time(self):
+        class _DatedSecurityMaster(_FakeSecurityMaster):
+            def getListingSpec(self, listing_id, nanos=None):
+                tick = PRICE_SCALE // 100 if nanos is not None and nanos >= 1_000 else PRICE_SCALE // 10
+                return SimpleNamespace(tickSize=lambda: tick)
+
+        clock = SimpleNamespace(now=0)
+        clock.nanoTime = lambda: clock.now
+        pv = PositionViewWrapper(None, _DatedSecurityMaster(0, 0, 0), clock)
+
+        assert pv.compliant_price(1, 1, 415_000_000, Side.BID) == 400_000_000
+        clock.now = 1_000
+        assert pv.compliant_price(1, 1, 415_000_000, Side.BID) == 410_000_000

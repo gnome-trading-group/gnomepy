@@ -86,6 +86,9 @@ class Listing:
     date_modified: str
     date_created: str
     active: bool = True
+    # The venue's keys that fee schedules target: a coarse group (a Kalshi series) and the venue's own event id.
+    fee_group: str | None = None
+    fee_event: str | None = None
 
 
 @dataclass
@@ -98,6 +101,8 @@ class ListingSpec:
     contract_multiplier: int
     recorded_at: str
     min_size: int = 0
+    # When the spec held at the venue; recorded_at is when it was written.
+    effective_from: str | None = None
 
 
 @dataclass

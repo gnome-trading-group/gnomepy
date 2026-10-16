@@ -32,8 +32,8 @@ from gnomepy.metadata import BacktestMetadata
 from gnomepy.utils import generate_backtest_id
 
 
-def _create_python_callback(py_strategy: Strategy):
-    """Create a JPype proxy implementing PythonStrategyAgent.PythonStrategyCallback."""
+def _create_python_callback(py_strategy: Strategy, clock=None):
+    """Create a JPype proxy implementing PythonStrategyAgent.PythonStrategyCallback; ``clock`` is the backtest's."""
     ArrayList = jpype.JClass("java.util.ArrayList")
 
     def _to_java_list(intents):
@@ -65,7 +65,7 @@ def _create_python_callback(py_strategy: Strategy):
 
         @JOverride
         def onInit(self, positionView, securityMaster):
-            py_strategy._position_view = PositionViewWrapper(positionView, securityMaster)
+            py_strategy._position_view = PositionViewWrapper(positionView, securityMaster, clock)
 
     return _Proxy()
 
@@ -200,6 +200,8 @@ class Backtest:
         self._cache = cache
         self._original_config_path = original_config_path
         self._recorder = None
+        # The backtest's simulated clock, once built: Python strategies see listing specs as of its time.
+        self._clock = None
         self._driver = None
         self._start_date = None
         self._end_date = None
@@ -239,6 +241,7 @@ class Backtest:
         security_master = SecurityMaster(registry)
 
         context = BacktestDriverFactory.buildContext(java_config)
+        self._clock = context.clock()
         java_oms = BacktestDriverFactory.buildOms(java_config, security_master, registry, context)
 
         strategy_id = int(java_config.strategyId)
@@ -308,7 +311,7 @@ class Backtest:
             # Strategies declare and write metrics the same way whether or not the run records them.
             java_metrics = jpype.JClass("group.gnometrading.backtest.recorder.MetricRecorder").discarding()
         py_strategy._metric_recorder = PyMetricRecorder(java_metrics)
-        callback = _create_python_callback(py_strategy)
+        callback = _create_python_callback(py_strategy, self._clock)
         agent = PythonStrategyAgent.create(jpype.JInt(strategy_id), position_view, security_master, callback)
         # After create, which runs onInit, so self.positions is available inside register_metrics.
         py_strategy.register_metrics()

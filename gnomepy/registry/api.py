@@ -154,6 +154,26 @@ class RegistryClient:
     def bulk_create_listing_specs(self, items: list[dict]) -> list[dict]:
         return self._post_bulk("/listing-specs", items)
 
+    def bulk_create_fee_schedules(self, items: list[dict]) -> list[dict]:
+        return self._post_bulk("/fees", items)
+
+    def get_fee_timelines(
+        self,
+        listing_ids: list[int],
+        *,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        known_as_of: Optional[str] = None,
+    ) -> dict[int, list[dict]]:
+        """Each listing's fee schedules over time, as the registry resolves them; times are ISO-8601."""
+        params = {"listingIds": ",".join(str(i) for i in listing_ids), "from": start, "to": end, "knownAsOf": known_as_of}
+        res = requests.get(
+            self.base_url + "/fees", params={k: v for k, v in params.items() if v is not None},
+            headers={"x-api-key": self.api_key}, timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        res.raise_for_status()
+        return {item["listingId"]: item["timeline"] for item in res.json()}
+
     def bulk_create_events(self, items: list[dict]) -> list[dict]:
         return self._post_bulk("/events", items)
 

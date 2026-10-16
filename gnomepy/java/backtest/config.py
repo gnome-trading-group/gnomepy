@@ -8,6 +8,14 @@ import jpype
 
 
 @dataclass
+class RegistryFeeConfig:
+    """Each listing pays what its venue charged at the time, from the registry's fee schedules."""
+
+    def _to_java(self):
+        return jpype.JClass("group.gnometrading.simulation.config.FeeModelConfig$Registry")()
+
+
+@dataclass
 class StaticFeeConfig:
     taker_fee: float = 0.0
     maker_fee: float = 0.0
@@ -130,7 +138,9 @@ class ProbabilisticQueueConfig:
 class ExchangeProfileConfig:
     """Reusable simulation profile for a listing."""
 
-    fee_model: Union[StaticFeeConfig, ParametricFeeConfig] = field(default_factory=StaticFeeConfig)
+    fee_model: Union[RegistryFeeConfig, StaticFeeConfig, ParametricFeeConfig] = field(
+        default_factory=RegistryFeeConfig
+    )
     # When market data reaches the strategy: by default, the receive time recorded with it.
     market_data_latency: Union[RecordedLatencyConfig, StaticLatencyConfig, LogNormalLatencyConfig] = field(
         default_factory=RecordedLatencyConfig

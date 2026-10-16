@@ -8,6 +8,14 @@ import yaml
 
 
 @dataclass
+class RegistryFeeConfig:
+    """Each listing pays what its venue charges, from the registry's fee schedules."""
+
+    def to_properties(self, prefix: str) -> dict[str, str]:
+        return {f"{prefix}.model": "registry"}
+
+
+@dataclass
 class StaticFeeConfig:
     taker_fee: float = 0.0
     maker_fee: float = 0.0
@@ -101,14 +109,14 @@ class ProbabilisticQueueConfig:
         }
 
 
-FeeConfig = Union[StaticFeeConfig, ParametricFeeConfig]
+FeeConfig = Union[RegistryFeeConfig, StaticFeeConfig, ParametricFeeConfig]
 LatencyModelConfig = Union[StaticLatencyConfig, LogNormalLatencyConfig, MakerTakerLatencyConfig]
 QueueConfig = Union[OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig]
 
 
 @dataclass
 class SimulationProfile:
-    fee: FeeConfig = field(default_factory=StaticFeeConfig)
+    fee: FeeConfig = field(default_factory=RegistryFeeConfig)
     network_latency: LatencyModelConfig = field(default_factory=LogNormalLatencyConfig)
     order_latency: LatencyModelConfig = field(default_factory=StaticLatencyConfig)
     queue: QueueConfig = field(default_factory=RiskAverseQueueConfig)
@@ -227,12 +235,16 @@ def _parse_simulation_profile(sim: dict) -> SimulationProfile:
 
 
 def _parse_fee_config(cfg: dict) -> FeeConfig:
-    model_type = cfg.get("model", "static")
+    model_type = cfg.get("model", "registry")
+    if model_type == "registry":
+        return RegistryFeeConfig()
     if model_type == "parametric":
         return ParametricFeeConfig(
             taker_fee_rate=cfg.get("taker_fee_rate", 0.07),
             maker_fee_rate=cfg.get("maker_fee_rate", 0.0),
         )
+    if model_type != "static":
+        raise ValueError(f"unknown fee model: {model_type}")
     return StaticFeeConfig(taker_fee=cfg.get("taker_fee", 0.0), maker_fee=cfg.get("maker_fee", 0.0))
 
 

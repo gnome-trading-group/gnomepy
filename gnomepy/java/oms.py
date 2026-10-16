@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import jpype
 
+from gnomepy.fees import FeeSchedule
 from gnomepy.java.enums import Side, OrderType
 from gnomepy.java.statics import Scales
 
@@ -177,12 +179,36 @@ class PositionViewWrapper:
     """Thin read-only wrapper over Java's PositionView + SecurityMaster.
 
     Resolves (exchange_id, security_id) → listing_id via SecurityMaster,
-    then delegates position queries to Java's PositionView.
+    then delegates position queries to Java's PositionView. Given a clock (a backtest's simulated one),
+    listing specs are those in force at its time; otherwise those in force now.
     """
 
-    def __init__(self, position_view, security_master):
+    def __init__(self, position_view, security_master, clock=None):
         self._pv = position_view
         self._sm = security_master
+        self._clock = clock
+        self._fee_schedules: dict = {}
+
+    def _now_nanos(self) -> int:
+        return int(self._clock.nanoTime()) if self._clock is not None else time.time_ns()
+
+    def _listing_spec(self, listing_id: int):
+        if self._clock is None:
+            return self._sm.getListingSpec(int(listing_id))
+        return self._sm.getListingSpec(int(listing_id), int(self._clock.nanoTime()))
+
+    def fee_schedule(self, exchange_id: int, security_id: int) -> FeeSchedule | None:
+        """The listing's fee schedule in force now (the backtest's time in a backtest), from the registry; None when
+        no fees are known for that time. The simulator charges fills by the same schedule."""
+        listing_id = self._resolve_listing_id(exchange_id, security_id)
+        java = self._sm.getFeeTimeline(int(listing_id)).at(self._now_nanos())
+        if java is None:
+            return None
+        schedule = self._fee_schedules.get(java)
+        if schedule is None:
+            schedule = FeeSchedule.from_java(java)
+            self._fee_schedules[java] = schedule
+        return schedule
 
     def _resolve_listing_id(self, exchange_id: int, security_id: int) -> int:
         listing = self._sm.getListing(int(exchange_id), int(security_id))
@@ -209,7 +235,7 @@ class PositionViewWrapper:
         The OMS rejects an order priced off its listing's tick, so strategies round before sending.
         """
         listing_id = self._resolve_listing_id(exchange_id, security_id)
-        spec = self._sm.getListingSpec(int(listing_id))
+        spec = self._listing_spec(listing_id)
         tick = int(spec.tickSize()) if spec is not None else 0
         if tick <= 0:
             return price
@@ -221,7 +247,7 @@ class PositionViewWrapper:
         if desired_size <= 0:
             return desired_size
         listing_id = self._resolve_listing_id(exchange_id, security_id)
-        spec = self._sm.getListingSpec(int(listing_id))
+        spec = self._listing_spec(listing_id)
         if spec is None:
             return desired_size
         lot = int(spec.lotSize())

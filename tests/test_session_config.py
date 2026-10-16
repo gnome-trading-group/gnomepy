@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from gnomepy.java.strategy.config import (
     LogNormalLatencyConfig,
     ListingSessionConfig,
@@ -53,3 +55,28 @@ def test_self_trade_prevention_written_and_parsed(tmp_path):
         "profiles:\n  kalshi:\n    self_trade_prevention: CANCEL_RESTING\n"
     )
     assert SessionConfig.from_yaml(path).profiles["kalshi"].self_trade_prevention == "CANCEL_RESTING"
+
+
+def test_fees_default_to_the_registry(tmp_path):
+    assert _paper().to_properties()["simulation.profiles.default.fee.model"] == "registry"
+
+    path = tmp_path / "session.yaml"
+    path.write_text(
+        "mode: paper\n"
+        "listings:\n  - listing_id: 7\n    profile: default\n"
+        "profiles:\n  default:\n    fee:\n      model: static\n      taker_fee: 0.001\n"
+    )
+    props = SessionConfig.from_yaml(path).to_properties()
+    assert props["simulation.profiles.default.fee.model"] == "static"
+    assert props["simulation.profiles.default.fee.taker"] == "0.001"
+
+
+def test_an_unknown_fee_model_is_refused(tmp_path):
+    path = tmp_path / "session.yaml"
+    path.write_text(
+        "mode: paper\n"
+        "listings:\n  - listing_id: 7\n    profile: default\n"
+        "profiles:\n  default:\n    fee:\n      model: flat\n"
+    )
+    with pytest.raises(ValueError, match="unknown fee model"):
+        SessionConfig.from_yaml(path)

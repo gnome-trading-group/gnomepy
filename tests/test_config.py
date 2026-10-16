@@ -16,6 +16,7 @@ from gnomepy.java.backtest.config import (
     RiskAverseQueueConfig,
     PolicyConfig,
     RiskConfig,
+    RegistryFeeConfig,
     StaticFeeConfig,
     StaticLatencyConfig,
     StrategyConfig,
@@ -74,7 +75,7 @@ class TestQueueConfigs:
 class TestExchangeProfileConfig:
     def test_defaults(self):
         cfg = ExchangeProfileConfig()
-        assert isinstance(cfg.fee_model, StaticFeeConfig)
+        assert isinstance(cfg.fee_model, RegistryFeeConfig)
         assert isinstance(cfg.network_latency, LogNormalLatencyConfig)
         assert isinstance(cfg.order_processing_latency, StaticLatencyConfig)
         assert isinstance(cfg.queue_model, RiskAverseQueueConfig)
