@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -9,6 +11,20 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.fs as pafs
 import pyarrow.parquet as pq
+
+
+logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=None)
+def _bucket_region(bucket: str, fallback: str) -> str:
+    # A bucket answers only in its own region (anywhere else is a 301), and a strategy session runs in its venue's
+    # region, not necessarily the bucket's: eu-west-1 sessions read us-east-1's research artifacts.
+    try:
+        return pafs.resolve_s3_region(bucket)
+    except Exception:
+        logger.warning("Couldn't find bucket %s's region; using %s", bucket, fallback, exc_info=True)
+        return fallback
 
 
 def resolve_fs(uri: str) -> tuple[pafs.FileSystem, str]:
@@ -32,7 +48,7 @@ def resolve_fs(uri: str) -> tuple[pafs.FileSystem, str]:
             access_key=frozen.access_key,
             secret_key=frozen.secret_key,
             session_token=frozen.token,
-            region=session.region_name or "us-east-1",
+            region=_bucket_region(bucket, session.region_name or "us-east-1"),
         )
         return fs, path
     return pafs.LocalFileSystem(), str(Path(uri).resolve())
