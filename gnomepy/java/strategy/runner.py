@@ -77,8 +77,9 @@ def _create_strategy_callback(py_strategy: Strategy):
             return jpype.JLong(py_strategy.simulate_processing_time())
 
         @JOverride
-        def onInit(self, positionView, securityMaster):
+        def onInit(self, positionView, securityMaster, control):
             py_strategy._position_view = PositionViewWrapper(positionView, securityMaster)
+            py_strategy._control = control
 
     return _Proxy()
 

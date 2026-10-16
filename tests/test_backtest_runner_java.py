@@ -131,3 +131,31 @@ def test_register_metrics_runs_without_recording_and_after_init():
     assert strategy.saw_positions is True
     strategy.buf.setDouble(strategy.buf.appendRow(), strategy.col, 1.0)
     assert int(strategy.buf.getCount()) == 0
+
+
+class _CountingStrategy(Strategy):
+    def __init__(self):
+        self.market_data = 0
+
+    def on_market_data(self, data):
+        self.market_data += 1
+        return []
+
+    def on_execution_report(self, report):
+        return []
+
+
+def test_an_exit_reaches_the_agent_and_silences_the_strategy():
+    strategy = _CountingStrategy()
+    agent = _backtest()._wrap_python_strategy(strategy, None, None, 0)
+    Mbp10Schema = jpype.JClass("group.gnometrading.schemas.Mbp10Schema")
+
+    agent.submitMarketData(Mbp10Schema())
+    agent.doWork()
+    assert strategy.market_data == 1
+
+    assert strategy.request_exit("match went live")
+    assert strategy.is_exiting and bool(agent.isExiting())
+    agent.submitMarketData(Mbp10Schema())
+    agent.doWork()
+    assert strategy.market_data == 1
