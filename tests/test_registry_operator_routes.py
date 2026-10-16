@@ -62,3 +62,26 @@ def test_stop_strategy_session_as_service_uses_api_key_route_and_names_the_actor
         "json": {"sessionId": "s1", "actor": "launcher:cs2-prematch"},
         "headers": {"x-api-key": "service-key", "Content-Type": "application/json"},
     }]
+
+
+def test_stop_strategy_session_sends_the_reason(captured):
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    client.stop_strategy_session("s1", reason="rolling config")
+
+    assert captured[0]["json"] == {"sessionId": "s1", "reason": "rolling config"}
+
+
+def test_stop_strategy_session_as_service_sends_the_reason(monkeypatch):
+    calls = []
+
+    def fake_post(url, json, headers, timeout):
+        calls.append(json)
+        return _Response()
+
+    monkeypatch.setattr(registry_api.requests, "post", fake_post)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    client.stop_strategy_session_as_service("s1", actor="launcher:cs2", reason="match started")
+
+    assert calls == [{"sessionId": "s1", "actor": "launcher:cs2", "reason": "match started"}]

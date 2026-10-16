@@ -398,8 +398,11 @@ class RegistryClient:
         body.update({key: value for key, value in optional.items() if value is not None})
         return self._post("/strategy-sessions/launch", body)
 
-    def stop_strategy_session(self, session_id: str) -> dict:
-        return self._post_as_operator("/strategy-sessions/stop", {"sessionId": session_id})
+    def stop_strategy_session(self, session_id: str, reason: Optional[str] = None) -> dict:
+        body = {"sessionId": session_id}
+        if reason:
+            body["reason"] = reason
+        return self._post_as_operator("/strategy-sessions/stop", body)
 
     def send_alert(
         self,
@@ -445,9 +448,13 @@ class RegistryClient:
         res.raise_for_status()
         return res.json()
 
-    def stop_strategy_session_as_service(self, session_id: str, actor: str) -> dict:
+    def stop_strategy_session_as_service(self, session_id: str, actor: str, reason: Optional[str] = None) -> dict:
         """Stop a session from an automated caller (no `gnomepy login`), e.g. the launcher.
 
-        `actor` is recorded as who stopped it in the kill-switch audit log, e.g. "launcher:cs2-prematch".
+        `actor` is recorded as who stopped it, on the session and in the kill-switch audit log, e.g.
+        "launcher:cs2-prematch"; `reason`, if given, is shown on the session.
         """
-        return self._post("/strategy-sessions/stop", {"sessionId": session_id, "actor": actor})
+        body = {"sessionId": session_id, "actor": actor}
+        if reason:
+            body["reason"] = reason
+        return self._post("/strategy-sessions/stop", body)

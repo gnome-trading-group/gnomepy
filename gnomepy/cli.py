@@ -711,15 +711,19 @@ def strategy_status(session_id: str) -> None:
     click.echo(f"research_commit:    {s.research_commit or ''}")
     if s.failure_reason:
         click.echo(f"failure_reason:     {s.failure_reason}")
+    if s.stopped_by or s.stop_reason:
+        click.echo(f"stopped_by:         {s.stopped_by or ''}")
+        click.echo(f"stop_reason:        {s.stop_reason or ''}")
 
 
 @strategy.command(name="stop")
 @click.argument("session_id")
+@click.option("--reason", default=None, help="Why it's being stopped; shown on the session")
 @click.confirmation_option(prompt="Stop this session?")
-def strategy_stop(session_id: str) -> None:
+def strategy_stop(session_id: str, reason: str | None) -> None:
     """Stop a running strategy session."""
     registry = RegistryClient()
-    result = registry.stop_strategy_session(session_id)
+    result = registry.stop_strategy_session(session_id, reason=reason)
     click.echo(f"session_id: {result['session_id']}")
     click.echo(f"status:     {result['status']}")
 

@@ -181,5 +181,7 @@ class StrategySession:
     orchestrator_version: str | None = None
     gnomepy_version: str | None = None
     failure_reason: str | None = None
+    stop_reason: str | None = None
+    stopped_by: str | None = None
     started_at: str | None = None
     stopped_at: str | None = None
