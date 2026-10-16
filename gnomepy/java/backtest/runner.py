@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import json
 import logging
 import os
 import platform
@@ -154,8 +155,7 @@ class Backtest:
         config = BacktestConfig(
             start_date=date(2024, 1, 1),
             end_date=date(2024, 1, 2),
-            listings=[ListingSimConfig(listing_id=1, profile="default")],
-            profiles={"default": ExchangeProfileConfig()},
+            listings=[ListingSimConfig(listing_id=1)],
         )
         results = Backtest(config, strategy=MyStrategy()).run()
     """
@@ -203,6 +203,9 @@ class Backtest:
         # The backtest's simulated clock, once built: Python strategies see listing specs as of its time.
         self._clock = None
         self._driver = None
+        self._simulation_as_of = None
+        self._seed = None
+        self._simulation = None
         self._start_date = None
         self._end_date = None
         self._warnings: list[str] = []
@@ -272,6 +275,15 @@ class Backtest:
         self._driver = BacktestDriverFactory.create(
             java_config, security_master, java_oms, java_strategy, self._recorder, s3, context
         )
+        # What the run simulated with, resolved: rerunning with the same as-of time and seed reproduces it.
+        self._simulation_as_of = str(java_config.simulationAsOf)
+        self._seed = int(java_config.seed)
+        self._simulation = {
+            str(listing_id): json.loads(str(resolved))
+            for listing_id, resolved in dict(
+                BacktestDriverFactory.resolvedSimulation(java_config, security_master)
+            ).items()
+        }
 
     def _resolve_strategy(self, java_config, java_oms, security_master, strategy_id):
         position_view = java_oms.getPositionTracker().createPositionView(jpype.JInt(strategy_id))
@@ -464,6 +476,9 @@ class Backtest:
             java_version=env.get("java_version"),
             python_version=env.get("python_version"),
             os_info=env.get("os_info"),
+            simulation_as_of=self._simulation_as_of,
+            seed=self._seed,
+            simulation=self._simulation,
             warnings=self._warnings,
             oms_rejects=(
                 {str(k): int(v) for k, v in dict(self._recorder.getOmsRejectCounts()).items()}

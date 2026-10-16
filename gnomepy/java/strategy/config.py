@@ -1,141 +1,41 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 import yaml
 
-
-@dataclass
-class RegistryFeeConfig:
-    """Each listing pays what its venue charges, from the registry's fee schedules."""
-
-    def to_properties(self, prefix: str) -> dict[str, str]:
-        return {f"{prefix}.model": "registry"}
-
-
-@dataclass
-class StaticFeeConfig:
-    taker_fee: float = 0.0
-    maker_fee: float = 0.0
-
-    def to_properties(self, prefix: str) -> dict[str, str]:
-        return {
-            f"{prefix}.model": "static",
-            f"{prefix}.taker": str(self.taker_fee),
-            f"{prefix}.maker": str(self.maker_fee),
-        }
+# The blocks a run may set in place of its exchange's registry simulation parameters, in the shape backtest configs
+# take (each a model named by `type`, or a self-trade prevention mode).
+SIMULATION_BLOCKS = (
+    "fee_model",
+    "network_latency",
+    "order_processing_latency",
+    "market_data_latency",
+    "queue_model",
+    "self_trade_prevention",
+)
 
 
-@dataclass
-class ParametricFeeConfig:
-    taker_fee_rate: float = 0.07
-    maker_fee_rate: float = 0.0
-
-    def to_properties(self, prefix: str) -> dict[str, str]:
-        return {
-            f"{prefix}.model": "parametric",
-            f"{prefix}.taker.rate": str(self.taker_fee_rate),
-            f"{prefix}.maker.rate": str(self.maker_fee_rate),
-        }
-
-
-@dataclass
-class StaticLatencyConfig:
-    latency_nanos: int = 0
-
-    def to_properties(self, prefix: str) -> dict[str, str]:
-        return {
-            f"{prefix}.model": "static",
-            f"{prefix}.nanos": str(self.latency_nanos),
-        }
-
-
-@dataclass
-class LogNormalLatencyConfig:
-    floor_nanos: int = 5_000_000
-    median_nanos: int = 12_000_000
-    p99_nanos: int = 200_000_000
-    seed: int | None = None
-
-    def to_properties(self, prefix: str) -> dict[str, str]:
-        props = {
-            f"{prefix}.model": "lognormal",
-            f"{prefix}.floor.nanos": str(self.floor_nanos),
-            f"{prefix}.median.nanos": str(self.median_nanos),
-            f"{prefix}.p99.nanos": str(self.p99_nanos),
-        }
-        if self.seed is not None:
-            props[f"{prefix}.seed"] = str(self.seed)
-        return props
-
-
-@dataclass
-class MakerTakerLatencyConfig:
-    base_nanos: int = 0
-    taker_delay_nanos: int = 0
-    maker_delay_nanos: int = 0
-
-    def to_properties(self, prefix: str) -> dict[str, str]:
-        return {
-            f"{prefix}.model": "maker_taker",
-            f"{prefix}.base.nanos": str(self.base_nanos),
-            f"{prefix}.taker.delay.nanos": str(self.taker_delay_nanos),
-            f"{prefix}.maker.delay.nanos": str(self.maker_delay_nanos),
-        }
-
-
-@dataclass
-class OptimisticQueueConfig:
-    def to_properties(self, prefix: str) -> dict[str, str]:
-        return {f"{prefix}.model": "optimistic"}
-
-
-@dataclass
-class RiskAverseQueueConfig:
-    def to_properties(self, prefix: str) -> dict[str, str]:
-        return {f"{prefix}.model": "risk_averse"}
-
-
-@dataclass
-class ProbabilisticQueueConfig:
-    cancel_ahead_probability: float = 0.5
-
-    def to_properties(self, prefix: str) -> dict[str, str]:
-        return {
-            f"{prefix}.model": "probabilistic",
-            f"{prefix}.cancel.ahead.probability": str(self.cancel_ahead_probability),
-        }
-
-
-FeeConfig = Union[RegistryFeeConfig, StaticFeeConfig, ParametricFeeConfig]
-LatencyModelConfig = Union[StaticLatencyConfig, LogNormalLatencyConfig, MakerTakerLatencyConfig]
-QueueConfig = Union[OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig]
-
-
-@dataclass
-class SimulationProfile:
-    fee: FeeConfig = field(default_factory=RegistryFeeConfig)
-    network_latency: LatencyModelConfig = field(default_factory=LogNormalLatencyConfig)
-    order_latency: LatencyModelConfig = field(default_factory=StaticLatencyConfig)
-    queue: QueueConfig = field(default_factory=RiskAverseQueueConfig)
-    self_trade_prevention: str = "CANCEL_INCOMING"
-
-    def to_properties(self, prefix: str) -> dict[str, str]:
-        props: dict[str, str] = {}
-        props.update(self.fee.to_properties(f"{prefix}.fee"))
-        props.update(self.network_latency.to_properties(f"{prefix}.network.latency"))
-        props.update(self.order_latency.to_properties(f"{prefix}.order.latency"))
-        props.update(self.queue.to_properties(f"{prefix}.queue"))
-        props[f"{prefix}.self.trade.prevention"] = self.self_trade_prevention
-        return props
+def _overrides(where: str, value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{where} must be a mapping of simulation blocks")
+    unknown = sorted(set(value) - set(SIMULATION_BLOCKS))
+    if unknown:
+        raise ValueError(f"{where} has unknown blocks: {', '.join(unknown)}")
+    return value
 
 
 @dataclass
 class ListingSessionConfig:
     listing_id: int
-    profile: str
+    # Blocks this listing simulates with in place of its exchange's.
+    overrides: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -148,36 +48,61 @@ class StrategyConfig:
 class SessionConfig:
     mode: str
     listings: list[ListingSessionConfig]
-    profiles: dict[str, SimulationProfile]
+    # Blocks every listing on an exchange (by code, e.g. KALSHI) simulates with in place of the exchange's registry
+    # parameters. Listings simulate as their exchange is recorded otherwise.
+    exchanges: dict[str, dict[str, Any]] = field(default_factory=dict)
     session_id: str | None = None
     strategy_id: int | None = None
     strategy: StrategyConfig | None = None
     seed: int | None = None
+    # The time the session reads the registry's simulation parameters and fees as known at (ISO-8601). A deployed
+    # session is pinned by the registry when it launches; a local run pins when it starts.
+    simulation_as_of: str | None = None
 
-    def to_properties(self) -> dict[str, Any]:
-        props: dict[str, Any] = {
+    def simulation(self) -> dict[str, Any]:
+        """The session's ``simulation`` config value, as the orchestrator reads it."""
+        simulation: dict[str, Any] = {}
+        if self.simulation_as_of is not None:
+            simulation["as_of"] = self.simulation_as_of
+        if self.seed is not None:
+            simulation["seed"] = self.seed
+        if self.exchanges:
+            simulation["exchanges"] = self.exchanges
+        listings = {str(lsc.listing_id): lsc.overrides for lsc in self.listings if lsc.overrides}
+        if listings:
+            simulation["listings"] = listings
+        return simulation
+
+    def to_session_config(self) -> dict[str, Any]:
+        """The config the registry launches a session with."""
+        config: dict[str, Any] = {
             "mode": self.mode,
             "listings": [lsc.listing_id for lsc in self.listings],
         }
         if self.session_id is not None:
-            props["session.id"] = self.session_id
+            config["session.id"] = self.session_id
         if self.strategy_id is not None:
-            props["strategy.id"] = str(self.strategy_id)
+            config["strategy.id"] = str(self.strategy_id)
         if self.strategy:
             is_python = ":" in self.strategy.class_name
-            props["strategy.type"] = "python" if is_python else "java"
-            if not is_python:
-                props["strategy.class"] = self.strategy.class_name
-        if self.strategy and self.strategy.args:
+            config["strategy.type"] = "python" if is_python else "java"
+            config["strategy.class"] = self.strategy.class_name
             for k, v in self.strategy.args.items():
-                props[f"strategy.args.{k}"] = v
+                config[f"strategy.args.{k}"] = v
         if self.mode == "paper":
-            for name, profile in self.profiles.items():
-                props.update(profile.to_properties(f"simulation.profiles.{name}"))
-            for lsc in self.listings:
-                props[f"simulation.listing.{lsc.listing_id}.profile"] = lsc.profile
-            if self.seed is not None:
-                props["simulation.seed"] = str(self.seed)
+            config["simulation"] = self.simulation()
+        return config
+
+    def to_properties(self) -> dict[str, Any]:
+        """Properties for a local run: the session config, with the simulation as the JSON an instance receives."""
+        props = self.to_session_config()
+        # A local Python strategy is handed to the JVM directly (run_strategy_session), not loaded by class name.
+        if props.get("strategy.type") == "python":
+            del props["strategy.class"]
+        simulation = props.pop("simulation", None)
+        if simulation is not None:
+            simulation.setdefault("as_of", datetime.now(timezone.utc).isoformat())
+            props["simulation.json"] = json.dumps(simulation)
         return props
 
     @staticmethod
@@ -186,91 +111,25 @@ class SessionConfig:
         strategy = None
         if "strategy" in data:
             s = data["strategy"]
-            strategy = StrategyConfig(
-                class_name=s["class_name"],
-                args=s.get("args") or {},
-            )
+            strategy = StrategyConfig(class_name=s["class_name"], args=s.get("args") or {})
 
-        raw_listings = data.get("listings", [])
         listings = [
-            ListingSessionConfig(listing_id=entry["listing_id"], profile=entry["profile"])
-            for entry in raw_listings
+            ListingSessionConfig(
+                listing_id=entry["listing_id"],
+                overrides=_overrides(f"listing {entry['listing_id']} overrides", entry.get("overrides")),
+            )
+            for entry in data.get("listings", [])
         ]
-
-        raw_profiles = data.get("profiles", {})
-        profiles = {name: _parse_simulation_profile(cfg) for name, cfg in raw_profiles.items()}
-
-        if data.get("mode") == "paper":
-            for lsc in listings:
-                if lsc.profile not in profiles:
-                    raise ValueError(
-                        f"Listing {lsc.listing_id} references profile '{lsc.profile}' which is not defined"
-                    )
-
+        exchanges = {
+            code: _overrides(f"exchanges.{code}", overrides) for code, overrides in (data.get("exchanges") or {}).items()
+        }
         return SessionConfig(
-            seed=data.get("seed"),
-            session_id=data.get("session_id"),
-            strategy_id=data.get("strategy_id"),
             mode=data["mode"],
             listings=listings,
-            profiles=profiles,
+            exchanges=exchanges,
+            session_id=data.get("session_id"),
+            strategy_id=data.get("strategy_id"),
             strategy=strategy,
+            seed=data.get("seed"),
+            simulation_as_of=data.get("simulation_as_of"),
         )
-
-
-def _parse_simulation_profile(sim: dict) -> SimulationProfile:
-    fee = _parse_fee_config(sim.get("fee", {}))
-    network_latency = (
-        _parse_latency_config(sim["network_latency"]) if "network_latency" in sim else LogNormalLatencyConfig()
-    )
-    order_latency = _parse_latency_config(sim.get("order_latency", {}))
-    queue = _parse_queue_config(sim.get("queue", {}))
-    return SimulationProfile(
-        fee=fee,
-        network_latency=network_latency,
-        order_latency=order_latency,
-        queue=queue,
-        self_trade_prevention=sim.get("self_trade_prevention", "CANCEL_INCOMING"),
-    )
-
-
-def _parse_fee_config(cfg: dict) -> FeeConfig:
-    model_type = cfg.get("model", "registry")
-    if model_type == "registry":
-        return RegistryFeeConfig()
-    if model_type == "parametric":
-        return ParametricFeeConfig(
-            taker_fee_rate=cfg.get("taker_fee_rate", 0.07),
-            maker_fee_rate=cfg.get("maker_fee_rate", 0.0),
-        )
-    if model_type != "static":
-        raise ValueError(f"unknown fee model: {model_type}")
-    return StaticFeeConfig(taker_fee=cfg.get("taker_fee", 0.0), maker_fee=cfg.get("maker_fee", 0.0))
-
-
-def _parse_latency_config(cfg: dict) -> LatencyModelConfig:
-    model_type = cfg.get("model", "static")
-    if model_type == "lognormal":
-        defaults = LogNormalLatencyConfig()
-        return LogNormalLatencyConfig(
-            floor_nanos=cfg.get("floor_nanos", defaults.floor_nanos),
-            median_nanos=cfg.get("median_nanos", defaults.median_nanos),
-            p99_nanos=cfg.get("p99_nanos", defaults.p99_nanos),
-            seed=cfg.get("seed"),
-        )
-    if model_type == "maker_taker":
-        return MakerTakerLatencyConfig(
-            base_nanos=cfg.get("base_nanos", 0),
-            taker_delay_nanos=cfg.get("taker_delay_nanos", 0),
-            maker_delay_nanos=cfg.get("maker_delay_nanos", 0),
-        )
-    return StaticLatencyConfig(latency_nanos=cfg.get("latency_nanos", 0))
-
-
-def _parse_queue_config(cfg: dict) -> QueueConfig:
-    model_type = cfg.get("model", "risk_averse")
-    if model_type == "optimistic":
-        return OptimisticQueueConfig()
-    if model_type == "probabilistic":
-        return ProbabilisticQueueConfig(cancel_ahead_probability=cfg.get("cancel_ahead_probability", 0.5))
-    return RiskAverseQueueConfig()

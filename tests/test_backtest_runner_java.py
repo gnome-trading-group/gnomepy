@@ -10,7 +10,6 @@ from gnomepy.java._classpath import discover_classpath
 from gnomepy.java._jvm import ensure_jvm_started
 from gnomepy.java.backtest.config import (
     BacktestConfig,
-    ExchangeProfileConfig,
     ListingSimConfig,
     RiskConfig,
     PolicyConfig,
@@ -38,8 +37,7 @@ def _backtest() -> Backtest:
     config = BacktestConfig(
         start_date=date(2026, 1, 1),
         end_date=date(2026, 1, 2),
-        listings=[ListingSimConfig(listing_id=1, profile="default")],
-        profiles={"default": ExchangeProfileConfig()},
+        listings=[ListingSimConfig(listing_id=1)],
         record=False,
     )
     return Backtest(config)
@@ -77,8 +75,7 @@ def test_strategy_id_and_policies_reach_the_java_config():
     config = BacktestConfig(
         start_date=date(2026, 1, 1),
         end_date=date(2026, 1, 2),
-        listings=[ListingSimConfig(listing_id=1, profile="default")],
-        profiles={"default": ExchangeProfileConfig()},
+        listings=[ListingSimConfig(listing_id=1)],
         strategy_id=12,
         risk=RiskConfig(
             from_registry=True,

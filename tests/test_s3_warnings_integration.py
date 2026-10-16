@@ -42,7 +42,6 @@ def test_s3_missing_key_warning_captured():
     """
     from gnomepy.java.backtest.config import (
         BacktestConfig,
-        ExchangeProfileConfig,
         ListingSimConfig,
     )
     from gnomepy.java.backtest.runner import Backtest
@@ -51,8 +50,7 @@ def test_s3_missing_key_warning_captured():
     config = BacktestConfig(
         start_date=date(2026, 1, 4),
         end_date=date(2026, 1, 5),
-        listings=[ListingSimConfig(listing_id=1, profile="default")],
-        profiles={"default": ExchangeProfileConfig()},
+        listings=[ListingSimConfig(listing_id=1)],
     )
 
     bt = Backtest(config, strategy=_make_noop_strategy())

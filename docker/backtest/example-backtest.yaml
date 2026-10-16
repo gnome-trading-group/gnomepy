@@ -16,34 +16,28 @@ end_date: "2026-01-25T00:00:00"
 
 listings:
   - listing_id: 1
-    profile: default
+    # Optional: blocks this one listing simulates with in place of its exchange's (see exchanges below).
+    # overrides:
+    #   network_latency: { type: static, latency_nanos: 1 }
 
-profiles:
-  default:
-    fee_model:
-      type: static
-      taker_fee: 0.0005
-      maker_fee: 0.0002
-    # Market data reaches the strategy at the receive time recorded with each record (about 50ms after the venue
-    # event on Polymarket and Kalshi). Set a model here only to test fresher or staler data than was recorded.
-    # market_data_latency:
-    #   type: static
-    #   latency_nanos: 1000000
-    # Our order connection, each way: orders out and reports back. Omitted, it is a 5ms floor, 12ms median and
-    # 200ms p99 log-normal.
-    network_latency:
-      type: static
-      latency_nanos: 5000000
-    # network_latency:
-    #   type: lognormal
-    #   floor_nanos: 5000000
-    #   median_nanos: 12000000
-    #   p99_nanos: 200000000
-    order_processing_latency:
-      type: static
-      latency_nanos: 1000000
-    queue_model:
-      type: risk_averse
+# Each listing simulates with its exchange's simulation parameters, recorded in the registry (controller → Security
+# Master → Simulation), and pays its venue's fees from the registry's fee schedules, both as known at
+# simulation_as_of. Override a block only to test something else; a block is replaced whole, so it names its model.
+# exchanges:
+#   HYPERLIQUID:
+#     fee_model: { type: static, taker_fee: 0.0005, maker_fee: 0.0002 }
+#     # Our order connection, each way: orders out and reports back.
+#     network_latency: { type: static, latency_nanos: 5000000 }
+#     # network_latency: { type: lognormal, floor_nanos: 5000000, median_nanos: 12000000, p99_nanos: 200000000 }
+#     order_processing_latency: { type: static, latency_nanos: 1000000 }
+#     queue_model: { type: risk_averse }
+#     # Market data reaches the strategy at the receive time recorded with each record. Set a model here only to
+#     # test fresher or staler data than was recorded.
+#     # market_data_latency: { type: static, latency_nanos: 1000000 }
+
+# Optional: the time the run reads the registry's simulation parameters and fees as known at (default: when it
+# starts). The run's metadata records it; set it to rerun with exactly what an earlier run read.
+# simulation_as_of: "2026-10-16T00:00:00Z"
 
 # Optional: number of book depth levels to record (1 = BBO only, max 10).
 # record_depth: 3

@@ -174,6 +174,19 @@ class RegistryClient:
         res.raise_for_status()
         return {item["listingId"]: item["timeline"] for item in res.json()}
 
+    def get_simulation_parameters(
+        self, *, exchange_id: Optional[int] = None, known_as_of: Optional[str] = None, history: bool = False,
+    ) -> list[dict]:
+        """Each exchange's simulation parameters in force at ``known_as_of`` (default now), as stored rows; with
+        ``history``, every recorded version, newest first."""
+        params = {"exchangeId": exchange_id, "knownAsOf": known_as_of, "history": "true" if history else None}
+        res = requests.get(
+            self.base_url + "/simulation-parameters", params={k: v for k, v in params.items() if v is not None},
+            headers={"x-api-key": self.api_key}, timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        res.raise_for_status()
+        return res.json()
+
     def bulk_create_events(self, items: list[dict]) -> list[dict]:
         return self._post_bulk("/events", items)
 

@@ -21,8 +21,8 @@ strategy:
 sweep:
   strategy:
     threshold_bps: [1.0, 2.0, 3.0]
-  profiles:
-    default:
+  exchanges:
+    HYPERLIQUID:
       fee_model:
         taker_fee: [0.0002, 0.0005, 0.001]
 
@@ -31,19 +31,10 @@ end_date: "2026-01-03T00:00:00"
 
 listings:
   - listing_id: 1
-    profile: default
 
-profiles:
-  default:
+exchanges:
+  HYPERLIQUID:
     fee_model:
       type: static
       taker_fee: 0.0005
       maker_fee: 0.0002
-    network_latency:
-      type: static
-      latency_nanos: 5000000
-    order_processing_latency:
-      type: static
-      latency_nanos: 1000000
-    queue_model:
-      type: risk_averse

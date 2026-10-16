@@ -20,8 +20,8 @@ strategy:
     processing_time_ns: 500000
 
 sweep:
-  profiles:
-    default:
+  exchanges:
+    HYPERLIQUID:
       network_latency:
         latency_nanos: [0, 1000000, 5000000, 10000000, 50000000]
 
@@ -30,19 +30,12 @@ end_date: "2026-01-03T00:00:00"
 
 listings:
   - listing_id: 1
-    profile: default
 
-profiles:
-  default:
-    fee_model:
-      type: static
-      taker_fee: 0.0005
-      maker_fee: 0.0002
+exchanges:
+  HYPERLIQUID:
     network_latency:
       type: static
       latency_nanos: 5000000
     order_processing_latency:
       type: static
       latency_nanos: 1000000
-    queue_model:
-      type: risk_averse

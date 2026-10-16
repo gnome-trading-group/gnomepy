@@ -21,10 +21,12 @@ def _is_sweep_range(value: Any) -> bool:
 
 
 def _collect_sweeps_from_section(sweep_section: dict) -> tuple[dict[str, list], dict[str, list]]:
-    """Extract strategy arg sweeps and profile sweeps from the top-level sweep section.
+    """Extract strategy arg sweeps and simulation sweeps from the top-level sweep section.
 
     sweep.strategy keys map to strategy.args overrides.
-    sweep.profiles mirrors the profiles structure for profile-level sweeps.
+    sweep.exchanges mirrors the exchanges structure (``exchanges.KALSHI.queue_model.cancel_ahead_probability``);
+    sweep.listings is keyed by listing id and sets that listing's overrides
+    (``listings.48212.network_latency.latency_nanos``).
     """
     arg_sweeps: dict[str, list] = {}
     for key, value in sweep_section.get("strategy", {}).items():
@@ -33,10 +35,11 @@ def _collect_sweeps_from_section(sweep_section: dict) -> tuple[dict[str, list], 
         elif _is_sweep_range(value):
             arg_sweeps[key] = _linspace(value["min"], value["max"], value["step"])
 
-    profile_sweeps = _collect_sweeps_recursive(
-        sweep_section.get("profiles", {}), "profiles"
-    )
-    return arg_sweeps, profile_sweeps
+    simulation_sweeps = {
+        **_collect_sweeps_recursive(sweep_section.get("exchanges", {}), "exchanges"),
+        **_collect_sweeps_recursive(sweep_section.get("listings", {}), "listings"),
+    }
+    return arg_sweeps, simulation_sweeps
 
 
 def _collect_sweeps_recursive(d: dict, prefix: str) -> dict[str, list]:
@@ -52,27 +55,40 @@ def _collect_sweeps_recursive(d: dict, prefix: str) -> dict[str, list]:
     return sweeps
 
 
+def _listing_overrides(config: dict, listing_id: str) -> dict:
+    for entry in config.get("listings", []):
+        if str(entry.get("listing_id")) == listing_id:
+            return entry.setdefault("overrides", {})
+    raise KeyError(f"sweep names listing {listing_id}, which the config doesn't trade")
+
+
 def _set_nested(d: dict, dotted_key: str, value: Any) -> None:
     keys = dotted_key.split(".")
+    # A swept block may not be overridden yet: it is created, and must then name its model (`type`) like any other.
+    if keys[0] == "listings":
+        d, keys = _listing_overrides(d, keys[1]), keys[2:]
     for k in keys[:-1]:
-        d = d[k]
+        d = d.setdefault(k, {})
     d[keys[-1]] = value
 
 
 def get_param_value(config: dict, key: str) -> str:
     """Extract a sweep parameter value from an expanded config by key.
 
-    Strategy arg keys are flat (e.g., ``ewma_alpha``); profile keys use
-    dot-notation rooted at ``profiles`` (e.g., ``profiles.default.fee_model.taker_fee``).
+    Strategy arg keys are flat (e.g., ``ewma_alpha``); simulation keys use dot-notation rooted at ``exchanges``
+    (``exchanges.KALSHI.fee_model.taker_fee``) or ``listings`` (``listings.48212.network_latency.latency_nanos``).
     Dict values (e.g., a full sub-model config) are serialized as JSON.
     """
     if "." in key:
         try:
             keys = key.split(".")
             val: Any = config
+            if keys[0] == "listings":
+                val = next(e for e in config["listings"] if str(e.get("listing_id")) == keys[1])["overrides"]
+                keys = keys[2:]
             for k in keys:
                 val = val[k]
-        except (KeyError, TypeError):
+        except (KeyError, TypeError, StopIteration):
             val = ""
     else:
         val = config.get("strategy", {}).get("args", {}).get(key, "")
@@ -85,16 +101,15 @@ def expand_sweep(config: dict) -> list[dict]:
     """Expand the top-level ``sweep`` section into a list of individual configs.
 
     ``sweep.strategy`` keys override ``strategy.args`` values per job.
-    ``sweep.profiles`` keys (using the same nested structure as ``profiles``)
-    override profile leaf values per job. All values in ``strategy.args`` and
-    ``profiles`` are fixed and passed through as-is — only the ``sweep`` section
-    is expanded.
+    ``sweep.exchanges`` and ``sweep.listings`` keys override simulation leaf values per job (see
+    ``_collect_sweeps_from_section``). Everything else is fixed and passed through as-is — only the ``sweep``
+    section is expanded.
 
     Returns ``[config]`` (with ``sweep`` stripped) when no sweep parameters are found.
     """
     sweep_section = config.get("sweep", {})
-    arg_sweeps, profile_sweeps = _collect_sweeps_from_section(sweep_section)
-    all_sweeps = {**arg_sweeps, **profile_sweeps}
+    arg_sweeps, simulation_sweeps = _collect_sweeps_from_section(sweep_section)
+    all_sweeps = {**arg_sweeps, **simulation_sweeps}
 
     if not all_sweeps:
         c = copy.deepcopy(config)
@@ -133,8 +148,8 @@ def sweep_params(config: dict) -> dict[str, list]:
     else:
         sweep_section = config.get("sweep", {})
 
-    arg_sweeps, profile_sweeps = _collect_sweeps_from_section(sweep_section)
-    return {**arg_sweeps, **profile_sweeps}
+    arg_sweeps, simulation_sweeps = _collect_sweeps_from_section(sweep_section)
+    return {**arg_sweeps, **simulation_sweeps}
 
 
 def scenario_names(config: dict) -> list[str]:
@@ -146,8 +161,8 @@ def expand_scenarios(config: dict) -> list[tuple[str, dict]]:
     """Expand the scenarios section into (name, flat_config) pairs.
 
     Each flat config has top-level listings/start_date/end_date from the scenario,
-    with scenario strategy_args shallow-merged into strategy.args and scenario
-    profiles shallow-merged into the top-level profiles.
+    with scenario strategy_args shallow-merged into strategy.args and each scenario
+    exchange's blocks laid over the top-level ones for that exchange.
 
     Returns [("", config)] when no scenarios key is present, preserving backward
     compatibility with single-scenario configs.
@@ -170,8 +185,11 @@ def expand_scenarios(config: dict) -> list[tuple[str, dict]]:
                 c["strategy"]["args"] = {}
             c["strategy"]["args"] = {**c["strategy"]["args"], **copy.deepcopy(scenario["strategy_args"])}
 
-        if "profiles" in scenario:
-            c["profiles"] = {**c.get("profiles", {}), **copy.deepcopy(scenario["profiles"])}
+        if "exchanges" in scenario:
+            exchanges = c.get("exchanges", {})
+            for code, blocks in scenario["exchanges"].items():
+                exchanges[code] = {**exchanges.get(code, {}), **copy.deepcopy(blocks)}
+            c["exchanges"] = exchanges
 
         result.append((name, c))
 

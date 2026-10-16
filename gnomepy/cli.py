@@ -653,7 +653,7 @@ def strategy_deploy(
         session_id=sid,
         strategy_id=session_config.strategy_id,
         mode=session_config.mode,
-        config=session_config.to_properties(),
+        config=session_config.to_session_config(),
         research_commit=research_commit,
         region=region,
         instance_type=instance_type,

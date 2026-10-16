@@ -36,3 +36,21 @@ The entrypoint expects these env vars (set by the Batch job definition):
 - `gnomepy` is installed from the working tree at build time — rebuild the image to bump it.
 - `gnomepy-research` is installed with `--no-deps` so it cannot override the baked-in `gnomepy`.
 - `GH_TOKEN` is unset before the backtest runs.
+
+## Example configs
+
+`example-backtest.yaml` documents every top-level option; `examples/` holds runnable ones:
+
+| config                              | shows                                                        |
+| ----------------------------------- | ------------------------------------------------------------ |
+| `momentum_signal_sweep.yaml`        | sweeping strategy args                                       |
+| `momentum_fee_threshold_sweep.yaml` | sweeping an exchange's fees alongside strategy args          |
+| `momentum_latency_sweep.yaml`       | sweeping an exchange's network latency                       |
+| `momentum_queue_model_sweep.yaml`   | sweeping an exchange's queue model                           |
+| `multi_scenario_sweep.yaml`         | several events in one run, crossed with a sweep              |
+| `listing_overrides.yaml`            | overriding simulation for one exchange and for one listing   |
+
+Each listing simulates with its exchange's simulation parameters from the registry (controller → Security
+Master → Simulation) and pays its venue's fees from the registry's fee schedules. A config sets only what an
+experiment changes: `exchanges.<CODE>` for every listing on an exchange, then `listings[].overrides` for one listing,
+each replacing whole blocks of the layer below.

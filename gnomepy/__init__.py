@@ -4,7 +4,7 @@ Public API:
 
     from gnomepy import (
         Strategy, Backtest, run_backtest,
-        BacktestConfig, ListingSimConfig, ExchangeProfileConfig,
+        BacktestConfig, ListingSimConfig, SimulationOverrides,
         StrategyConfig, RiskConfig, PolicyConfig,
         RegistryFeeConfig, StaticFeeConfig, StaticLatencyConfig, LogNormalLatencyConfig, RecordedLatencyConfig,
         OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig,
@@ -17,7 +17,7 @@ import importlib
 
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "BacktestConfig": ("gnomepy.java.backtest.config", "BacktestConfig"),
-    "ExchangeProfileConfig": ("gnomepy.java.backtest.config", "ExchangeProfileConfig"),
+    "SimulationOverrides": ("gnomepy.java.backtest.config", "SimulationOverrides"),
     "LogNormalLatencyConfig": ("gnomepy.java.backtest.config", "LogNormalLatencyConfig"),
     "RecordedLatencyConfig": ("gnomepy.java.backtest.config", "RecordedLatencyConfig"),
     "RegistryFeeConfig": ("gnomepy.java.backtest.config", "RegistryFeeConfig"),
@@ -32,7 +32,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "StaticFeeConfig": ("gnomepy.java.backtest.config", "StaticFeeConfig"),
     "StaticLatencyConfig": ("gnomepy.java.backtest.config", "StaticLatencyConfig"),
     "StrategyConfig": ("gnomepy.java.backtest.config", "StrategyConfig"),
-    "SimulationProfile": ("gnomepy.java.strategy.config", "SimulationProfile"),
     "ListingSessionConfig": ("gnomepy.java.strategy.config", "ListingSessionConfig"),
     "SessionConfig": ("gnomepy.java.strategy.config", "SessionConfig"),
     "ExecutionReport": ("gnomepy.java.backtest.orders", "ExecutionReport"),

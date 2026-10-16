@@ -24,8 +24,8 @@ from gnomepy.sweep import (
 def _base_config(**strategy_args):
     return {
         "strategy": {"class_name": "test:Strategy", "args": strategy_args},
-        "profiles": {
-            "default": {
+        "exchanges": {
+            "KALSHI": {
                 "fee_model": {"type": "static", "taker_fee": 0.0005, "maker_fee": -0.0002},
                 "network_latency": {"type": "static", "latency_nanos": 5_000_000},
                 "order_processing_latency": {"type": "static", "latency_nanos": 1_000_000},
@@ -42,10 +42,10 @@ def _with_sweep(config: dict, **sweep_strategy_args) -> dict:
     return config
 
 
-def _with_profile_sweep(config: dict, profiles_sweep: dict) -> dict:
-    """Add a sweep.profiles section to a config."""
+def _with_exchange_sweep(config: dict, exchanges_sweep: dict) -> dict:
+    """Add a sweep.exchanges section to a config."""
     config = dict(config)
-    config.setdefault("sweep", {})["profiles"] = profiles_sweep
+    config.setdefault("sweep", {})["exchanges"] = exchanges_sweep
     return config
 
 
@@ -60,9 +60,9 @@ def test_set_nested_single_level():
 
 
 def test_set_nested_multi_level():
-    d = {"profiles": {"default": {"fee_model": {"taker_fee": 0.0005}}}}
-    _set_nested(d, "profiles.default.fee_model.taker_fee", 0.001)
-    assert d["profiles"]["default"]["fee_model"]["taker_fee"] == 0.001
+    d = {"exchanges": {"KALSHI": {"fee_model": {"taker_fee": 0.0005}}}}
+    _set_nested(d, "exchanges.KALSHI.fee_model.taker_fee", 0.001)
+    assert d["exchanges"]["KALSHI"]["fee_model"]["taker_fee"] == 0.001
 
 
 # ---------------------------------------------------------------------------
@@ -70,45 +70,45 @@ def test_set_nested_multi_level():
 # ---------------------------------------------------------------------------
 
 def test_collect_recursive_leaf_list():
-    profiles = {"default": {"network_latency": {"type": "static", "latency_nanos": [0, 5_000_000]}}}
-    result = _collect_sweeps_recursive(profiles, "profiles")
-    assert result == {"profiles.default.network_latency.latency_nanos": [0, 5_000_000]}
+    exchanges = {"KALSHI": {"network_latency": {"type": "static", "latency_nanos": [0, 5_000_000]}}}
+    result = _collect_sweeps_recursive(exchanges, "exchanges")
+    assert result == {"exchanges.KALSHI.network_latency.latency_nanos": [0, 5_000_000]}
 
 
 def test_collect_recursive_leaf_range():
-    profiles = {"default": {"network_latency": {"type": "static", "latency_nanos": {"min": 0, "max": 10_000_000, "step": 5_000_000}}}}
-    result = _collect_sweeps_recursive(profiles, "profiles")
-    assert result == {"profiles.default.network_latency.latency_nanos": [0.0, 5_000_000.0, 10_000_000.0]}
+    exchanges = {"KALSHI": {"network_latency": {"type": "static", "latency_nanos": {"min": 0, "max": 10_000_000, "step": 5_000_000}}}}
+    result = _collect_sweeps_recursive(exchanges, "exchanges")
+    assert result == {"exchanges.KALSHI.network_latency.latency_nanos": [0.0, 5_000_000.0, 10_000_000.0]}
 
 
 def test_collect_recursive_list_of_dicts():
-    profiles = {
-        "default": {
+    exchanges = {
+        "KALSHI": {
             "network_latency": [
                 {"type": "static", "latency_nanos": 5_000_000},
                 {"type": "lognormal", "median_nanos": 12_000_000},
             ]
         }
     }
-    result = _collect_sweeps_recursive(profiles, "profiles")
-    assert "profiles.default.network_latency" in result
-    assert len(result["profiles.default.network_latency"]) == 2
+    result = _collect_sweeps_recursive(exchanges, "exchanges")
+    assert "exchanges.KALSHI.network_latency" in result
+    assert len(result["exchanges.KALSHI.network_latency"]) == 2
 
 
 def test_collect_recursive_no_sweeps():
-    profiles = {"default": {"network_latency": {"type": "static", "latency_nanos": 5_000_000}}}
-    result = _collect_sweeps_recursive(profiles, "profiles")
+    exchanges = {"KALSHI": {"network_latency": {"type": "static", "latency_nanos": 5_000_000}}}
+    result = _collect_sweeps_recursive(exchanges, "exchanges")
     assert result == {}
 
 
-def test_collect_recursive_multiple_profiles():
-    profiles = {
+def test_collect_recursive_multiple_exchanges():
+    exchanges = {
         "a": {"network_latency": {"type": "static", "latency_nanos": [1, 2]}},
         "b": {"fee_model": {"type": "static", "taker_fee": [0.001, 0.002]}},
     }
-    result = _collect_sweeps_recursive(profiles, "profiles")
-    assert "profiles.a.network_latency.latency_nanos" in result
-    assert "profiles.b.fee_model.taker_fee" in result
+    result = _collect_sweeps_recursive(exchanges, "exchanges")
+    assert "exchanges.a.network_latency.latency_nanos" in result
+    assert "exchanges.b.fee_model.taker_fee" in result
 
 
 # ---------------------------------------------------------------------------
@@ -180,32 +180,32 @@ def test_no_sweep_section_produces_single_run():
 
 
 # ---------------------------------------------------------------------------
-# expand_sweep — profile sweeps via sweep section
+# expand_sweep — exchange sweeps via sweep section
 # ---------------------------------------------------------------------------
 
-def test_expand_profile_leaf_sweep():
+def test_expand_exchange_leaf_sweep():
     config = _base_config()
-    config["sweep"] = {"profiles": {"default": {"network_latency": {"latency_nanos": [0, 5_000_000]}}}}
+    config["sweep"] = {"exchanges": {"KALSHI": {"network_latency": {"latency_nanos": [0, 5_000_000]}}}}
     result = expand_sweep(config)
     assert len(result) == 2
-    latencies = [r["profiles"]["default"]["network_latency"]["latency_nanos"] for r in result]
+    latencies = [r["exchanges"]["KALSHI"]["network_latency"]["latency_nanos"] for r in result]
     assert latencies == [0, 5_000_000]
 
 
-def test_expand_profile_range_sweep():
+def test_expand_exchange_range_sweep():
     config = _base_config()
-    config["sweep"] = {"profiles": {"default": {"fee_model": {"taker_fee": {"min": 0.0003, "max": 0.0005, "step": 0.0001}}}}}
+    config["sweep"] = {"exchanges": {"KALSHI": {"fee_model": {"taker_fee": {"min": 0.0003, "max": 0.0005, "step": 0.0001}}}}}
     result = expand_sweep(config)
     assert len(result) == 3
-    fees = [r["profiles"]["default"]["fee_model"]["taker_fee"] for r in result]
+    fees = [r["exchanges"]["KALSHI"]["fee_model"]["taker_fee"] for r in result]
     assert fees == [0.0003, 0.0004, 0.0005]
 
 
-def test_expand_profile_list_of_dicts():
+def test_expand_exchange_list_of_dicts():
     config = _base_config()
     config["sweep"] = {
-        "profiles": {
-            "default": {
+        "exchanges": {
+            "KALSHI": {
                 "network_latency": [
                     {"type": "static", "latency_nanos": 5_000_000},
                     {"type": "lognormal", "median_nanos": 12_000_000},
@@ -215,15 +215,15 @@ def test_expand_profile_list_of_dicts():
     }
     result = expand_sweep(config)
     assert len(result) == 2
-    assert result[0]["profiles"]["default"]["network_latency"] == {"type": "static", "latency_nanos": 5_000_000}
-    assert result[1]["profiles"]["default"]["network_latency"]["type"] == "lognormal"
+    assert result[0]["exchanges"]["KALSHI"]["network_latency"] == {"type": "static", "latency_nanos": 5_000_000}
+    assert result[1]["exchanges"]["KALSHI"]["network_latency"]["type"] == "lognormal"
 
 
 def test_expand_list_of_dicts_does_not_share_references():
     config = _base_config()
     config["sweep"] = {
-        "profiles": {
-            "default": {
+        "exchanges": {
+            "KALSHI": {
                 "network_latency": [
                     {"type": "static", "latency_nanos": 5_000_000},
                     {"type": "static", "latency_nanos": 10_000_000},
@@ -232,20 +232,20 @@ def test_expand_list_of_dicts_does_not_share_references():
         }
     }
     result = expand_sweep(config)
-    result[0]["profiles"]["default"]["network_latency"]["latency_nanos"] = 999
-    assert result[1]["profiles"]["default"]["network_latency"]["latency_nanos"] == 10_000_000
+    result[0]["exchanges"]["KALSHI"]["network_latency"]["latency_nanos"] = 999
+    assert result[1]["exchanges"]["KALSHI"]["network_latency"]["latency_nanos"] == 10_000_000
 
 
-def test_expand_combined_strategy_and_profile():
+def test_expand_combined_strategy_and_exchange():
     config = _base_config(alpha=0.9)
     config["sweep"] = {
         "strategy": {"alpha": [0.9, 0.95]},
-        "profiles": {"default": {"network_latency": {"latency_nanos": [0, 5_000_000]}}},
+        "exchanges": {"KALSHI": {"network_latency": {"latency_nanos": [0, 5_000_000]}}},
     }
     result = expand_sweep(config)
     assert len(result) == 4
     combos = [
-        (r["strategy"]["args"]["alpha"], r["profiles"]["default"]["network_latency"]["latency_nanos"])
+        (r["strategy"]["args"]["alpha"], r["exchanges"]["KALSHI"]["network_latency"]["latency_nanos"])
         for r in result
     ]
     assert (0.9, 0) in combos
@@ -254,17 +254,17 @@ def test_expand_combined_strategy_and_profile():
     assert (0.95, 5_000_000) in combos
 
 
-def test_expand_multiple_profiles():
+def test_expand_multiple_exchanges():
     config = {
         "strategy": {"class_name": "test:Arb", "args": {}},
-        "profiles": {
-            "exchange_a": {"network_latency": {"type": "static", "latency_nanos": 1_000_000}},
-            "exchange_b": {"network_latency": {"type": "static", "latency_nanos": 2_000_000}},
+        "exchanges": {
+            "KALSHI": {"network_latency": {"type": "static", "latency_nanos": 1_000_000}},
+            "POLYMARKET_INTL": {"network_latency": {"type": "static", "latency_nanos": 2_000_000}},
         },
         "sweep": {
-            "profiles": {
-                "exchange_a": {"network_latency": {"latency_nanos": [1_000_000, 5_000_000]}},
-                "exchange_b": {"network_latency": {"latency_nanos": [2_000_000, 8_000_000]}},
+            "exchanges": {
+                "KALSHI": {"network_latency": {"latency_nanos": [1_000_000, 5_000_000]}},
+                "POLYMARKET_INTL": {"network_latency": {"latency_nanos": [2_000_000, 8_000_000]}},
             }
         },
     }
@@ -272,13 +272,13 @@ def test_expand_multiple_profiles():
     assert len(result) == 4
 
 
-def test_expand_preserves_non_sweep_profile_fields():
+def test_expand_preserves_non_sweep_exchange_fields():
     config = _base_config()
-    config["sweep"] = {"profiles": {"default": {"network_latency": {"latency_nanos": [0, 5_000_000]}}}}
+    config["sweep"] = {"exchanges": {"KALSHI": {"network_latency": {"latency_nanos": [0, 5_000_000]}}}}
     result = expand_sweep(config)
     for r in result:
-        assert r["profiles"]["default"]["fee_model"]["taker_fee"] == 0.0005
-        assert r["profiles"]["default"]["network_latency"]["type"] == "static"
+        assert r["exchanges"]["KALSHI"]["fee_model"]["taker_fee"] == 0.0005
+        assert r["exchanges"]["KALSHI"]["network_latency"]["type"] == "static"
 
 
 # ---------------------------------------------------------------------------
@@ -292,22 +292,22 @@ def test_sweep_params_strategy_only():
     assert params == {"alpha": [0.9, 0.95]}
 
 
-def test_sweep_params_profile_only():
+def test_sweep_params_exchange_only():
     config = _base_config()
-    config["sweep"] = {"profiles": {"default": {"network_latency": {"latency_nanos": [0, 5_000_000]}}}}
+    config["sweep"] = {"exchanges": {"KALSHI": {"network_latency": {"latency_nanos": [0, 5_000_000]}}}}
     params = sweep_params(config)
-    assert params == {"profiles.default.network_latency.latency_nanos": [0, 5_000_000]}
+    assert params == {"exchanges.KALSHI.network_latency.latency_nanos": [0, 5_000_000]}
 
 
 def test_sweep_params_combined():
     config = _base_config(alpha=0.9)
     config["sweep"] = {
         "strategy": {"alpha": [0.9, 0.95]},
-        "profiles": {"default": {"network_latency": {"latency_nanos": [0, 5_000_000]}}},
+        "exchanges": {"KALSHI": {"network_latency": {"latency_nanos": [0, 5_000_000]}}},
     }
     params = sweep_params(config)
     assert "alpha" in params
-    assert "profiles.default.network_latency.latency_nanos" in params
+    assert "exchanges.KALSHI.network_latency.latency_nanos" in params
 
 
 def test_sweep_params_empty():
@@ -326,12 +326,12 @@ def test_get_param_value_flat_key():
 
 def test_get_param_value_dotted_key():
     config = _base_config()
-    assert get_param_value(config, "profiles.default.network_latency.latency_nanos") == "5000000"
+    assert get_param_value(config, "exchanges.KALSHI.network_latency.latency_nanos") == "5000000"
 
 
 def test_get_param_value_dict_value():
     config = _base_config()
-    val = get_param_value(config, "profiles.default.network_latency")
+    val = get_param_value(config, "exchanges.KALSHI.network_latency")
     parsed = json.loads(val)
     assert parsed["type"] == "static"
     assert parsed["latency_nanos"] == 5_000_000
@@ -339,7 +339,7 @@ def test_get_param_value_dict_value():
 
 def test_get_param_value_missing_key():
     config = _base_config()
-    assert get_param_value(config, "profiles.default.nonexistent.field") == ""
+    assert get_param_value(config, "exchanges.KALSHI.nonexistent.field") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -350,8 +350,8 @@ def _scenario_config(**strategy_args):
     """Base config with two scenarios but no sweep params."""
     return {
         "strategy": {"class_name": "test:Arb", "args": {"max_position": 100, **strategy_args}},
-        "profiles": {
-            "exchange_a": {
+        "exchanges": {
+            "KALSHI": {
                 "fee_model": {"type": "static", "taker_fee": 0.07, "maker_fee": 0.0},
                 "network_latency": {"type": "static", "latency_nanos": 50_000_000},
                 "order_processing_latency": {"type": "static", "latency_nanos": 5_000_000},
@@ -363,8 +363,8 @@ def _scenario_config(**strategy_args):
                 "start_date": "2026-08-24T00:00:00",
                 "end_date": "2026-08-24T02:00:00",
                 "listings": [
-                    {"listing_id": 100, "profile": "exchange_a"},
-                    {"listing_id": 101, "profile": "exchange_a"},
+                    {"listing_id": 100},
+                    {"listing_id": 101},
                 ],
                 "strategy_args": {"event_ids": [1, 2]},
             },
@@ -372,8 +372,8 @@ def _scenario_config(**strategy_args):
                 "start_date": "2026-09-01T00:00:00",
                 "end_date": "2026-09-01T03:00:00",
                 "listings": [
-                    {"listing_id": 200, "profile": "exchange_a"},
-                    {"listing_id": 201, "profile": "exchange_a"},
+                    {"listing_id": 200},
+                    {"listing_id": 201},
                 ],
                 "strategy_args": {"event_ids": [3, 4]},
             },
@@ -417,12 +417,12 @@ def test_expand_scenarios_no_scenarios():
 def test_expand_scenarios_single():
     config = {
         "strategy": {"class_name": "test:Arb", "args": {"max_position": 100}},
-        "profiles": {"exchange_a": {}},
+        "exchanges": {"KALSHI": {}},
         "scenarios": {
             "baseball": {
                 "start_date": "2026-08-24T00:00:00",
                 "end_date": "2026-08-24T02:00:00",
-                "listings": [{"listing_id": 100, "profile": "exchange_a"}],
+                "listings": [{"listing_id": 100}],
             }
         },
     }
@@ -432,7 +432,7 @@ def test_expand_scenarios_single():
     assert name == "baseball"
     assert cfg["start_date"] == "2026-08-24T00:00:00"
     assert cfg["end_date"] == "2026-08-24T02:00:00"
-    assert cfg["listings"] == [{"listing_id": 100, "profile": "exchange_a"}]
+    assert cfg["listings"] == [{"listing_id": 100}]
     assert "scenarios" not in cfg
 
 
@@ -455,7 +455,7 @@ def test_expand_scenarios_strategy_args_merge():
 def test_expand_scenarios_strategy_args_override():
     config = {
         "strategy": {"class_name": "test:Arb", "args": {"max_position": 100, "threshold": 5}},
-        "profiles": {},
+        "exchanges": {},
         "scenarios": {
             "test": {
                 "start_date": "2026-01-01T00:00:00",
@@ -473,7 +473,7 @@ def test_expand_scenarios_strategy_args_override():
 def test_expand_scenarios_no_strategy_args():
     config = {
         "strategy": {"class_name": "test:Arb", "args": {"max_position": 100}},
-        "profiles": {},
+        "exchanges": {},
         "scenarios": {
             "test": {
                 "start_date": "2026-01-01T00:00:00",
@@ -486,22 +486,22 @@ def test_expand_scenarios_no_strategy_args():
     assert cfg["strategy"]["args"] == {"max_position": 100}
 
 
-def test_expand_scenarios_profiles_merge():
+def test_expand_scenarios_exchanges_merge():
     config = {
         "strategy": {"class_name": "test:Arb", "args": {}},
-        "profiles": {"exchange_a": {"fee_model": {"type": "static", "taker_fee": 0.07}}},
+        "exchanges": {"KALSHI": {"fee_model": {"type": "static", "taker_fee": 0.07}}},
         "scenarios": {
             "test": {
                 "start_date": "2026-01-01T00:00:00",
                 "end_date": "2026-01-02T00:00:00",
                 "listings": [],
-                "profiles": {"exchange_b": {"fee_model": {"type": "static", "taker_fee": 0.05}}},
+                "exchanges": {"POLYMARKET_INTL": {"fee_model": {"type": "static", "taker_fee": 0.05}}},
             }
         },
     }
     _, cfg = expand_scenarios(config)[0]
-    assert "exchange_a" in cfg["profiles"]
-    assert "exchange_b" in cfg["profiles"]
+    assert "KALSHI" in cfg["exchanges"]
+    assert "POLYMARKET_INTL" in cfg["exchanges"]
 
 
 def test_expand_scenarios_no_scenarios_key_in_output():
@@ -589,7 +589,7 @@ def test_sweep_params_with_scenarios():
 def test_sweep_params_with_scenarios_no_sweeps():
     config = {
         "strategy": {"class_name": "test:Arb", "args": {"max_position": 100}},
-        "profiles": {},
+        "exchanges": {},
         "scenarios": {
             "a": {"start_date": "2026-01-01T00:00:00", "end_date": "2026-01-02T00:00:00", "listings": []},
             "b": {"start_date": "2026-02-01T00:00:00", "end_date": "2026-02-02T00:00:00", "listings": []},
@@ -597,3 +597,42 @@ def test_sweep_params_with_scenarios_no_sweeps():
     }
     params = sweep_params(config)
     assert params == {}
+
+
+# ---------------------------------------------------------------------------
+# per-listing sweeps and scenario exchange overrides
+# ---------------------------------------------------------------------------
+
+def test_a_listing_sweep_sets_that_listings_overrides():
+    config = {
+        "strategy": {"args": {}},
+        "listings": [{"listing_id": 100}, {"listing_id": 101}],
+        "sweep": {"listings": {"101": {"network_latency": {"type": "static", "latency_nanos": [1, 2]}}}},
+    }
+    result = expand_sweep(config)
+    assert [r["listings"][1]["overrides"]["network_latency"]["latency_nanos"] for r in result] == [1, 2]
+    assert all("overrides" not in r["listings"][0] for r in result)
+    assert get_param_value(result[1], "listings.101.network_latency.latency_nanos") == "2"
+
+
+def test_a_sweep_of_a_listing_the_config_does_not_trade_is_refused():
+    config = {"listings": [{"listing_id": 100}], "sweep": {"listings": {"999": {"queue_model": {"type": ["optimistic"]}}}}}
+    with pytest.raises(KeyError, match="999"):
+        expand_sweep(config)
+
+
+def test_a_scenario_replaces_blocks_of_an_exchange_and_keeps_the_rest():
+    config = {
+        "exchanges": {"KALSHI": {"queue_model": {"type": "optimistic"}, "network_latency": {"type": "static", "latency_nanos": 1}}},
+        "scenarios": {
+            "slow": {
+                "start_date": "2026-01-01", "end_date": "2026-01-02", "listings": [{"listing_id": 1}],
+                "exchanges": {"KALSHI": {"network_latency": {"type": "static", "latency_nanos": 9}}},
+            },
+        },
+    }
+    [(_, cfg)] = expand_scenarios(config)
+    assert cfg["exchanges"]["KALSHI"] == {
+        "queue_model": {"type": "optimistic"}, "network_latency": {"type": "static", "latency_nanos": 9},
+    }
+    assert config["exchanges"]["KALSHI"]["network_latency"]["latency_nanos"] == 1

@@ -135,56 +135,56 @@ class ProbabilisticQueueConfig:
 
 
 @dataclass
-class ExchangeProfileConfig:
-    """Reusable simulation profile for a listing."""
+class SimulationOverrides:
+    """Blocks of how a venue behaves in simulation, in place of its exchange's registry parameters.
 
-    fee_model: Union[RegistryFeeConfig, StaticFeeConfig, ParametricFeeConfig] = field(
-        default_factory=RegistryFeeConfig
-    )
-    # When market data reaches the strategy: by default, the receive time recorded with it.
-    market_data_latency: Union[RecordedLatencyConfig, StaticLatencyConfig, LogNormalLatencyConfig] = field(
-        default_factory=RecordedLatencyConfig
-    )
+    Every field left ``None`` keeps the layer below: the exchange's parameters recorded in the registry, or for a
+    listing, its exchange's overrides. A block is replaced whole. Fees default to the registry's fee schedules.
+    """
+
+    fee_model: Union[RegistryFeeConfig, StaticFeeConfig, ParametricFeeConfig, None] = None
+    # When market data reaches the strategy.
+    market_data_latency: Union[RecordedLatencyConfig, StaticLatencyConfig, LogNormalLatencyConfig, None] = None
     # Our order connection: orders out and reports back.
-    network_latency: Union[StaticLatencyConfig, LogNormalLatencyConfig, MakerTakerLatencyConfig] = field(
-        default_factory=LogNormalLatencyConfig
-    )
-    order_processing_latency: Union[StaticLatencyConfig, LogNormalLatencyConfig, MakerTakerLatencyConfig] = field(
-        default_factory=StaticLatencyConfig
-    )
-    queue_model: Union[
-        OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig
-    ] = field(default_factory=RiskAverseQueueConfig)
+    network_latency: Union[StaticLatencyConfig, LogNormalLatencyConfig, MakerTakerLatencyConfig, None] = None
+    order_processing_latency: Union[StaticLatencyConfig, LogNormalLatencyConfig, MakerTakerLatencyConfig, None] = None
+    queue_model: Union[OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig, None] = None
     # What the venue does when our order would trade with our own resting order:
     # "CANCEL_INCOMING" (Kalshi taker_at_cross) or "CANCEL_RESTING" (Kalshi maker, which our Kalshi gateway sends).
-    self_trade_prevention: str = "CANCEL_INCOMING"
+    self_trade_prevention: str | None = None
 
     def _to_java(self):
-        cls = jpype.JClass("group.gnometrading.simulation.config.ExchangeProfileConfig")
-        obj = cls()
-        obj.feeModel = self.fee_model._to_java()
-        obj.marketDataLatency = self.market_data_latency._to_java()
-        obj.networkLatency = self.network_latency._to_java()
-        obj.orderProcessingLatency = self.order_processing_latency._to_java()
-        obj.queueModel = self.queue_model._to_java()
-        obj.selfTradePrevention = jpype.JClass(
-            "group.gnometrading.simulation.book.SelfTradePrevention"
-        ).valueOf(self.self_trade_prevention)
+        obj = jpype.JClass("group.gnometrading.simulation.config.SimulationOverrides")()
+        for name, attr in (
+            ("fee_model", "feeModel"),
+            ("market_data_latency", "marketDataLatency"),
+            ("network_latency", "networkLatency"),
+            ("order_processing_latency", "orderProcessingLatency"),
+            ("queue_model", "queueModel"),
+        ):
+            block = getattr(self, name)
+            if block is not None:
+                setattr(obj, attr, block._to_java())
+        if self.self_trade_prevention is not None:
+            obj.selfTradePrevention = jpype.JClass(
+                "group.gnometrading.simulation.book.SelfTradePrevention"
+            ).valueOf(self.self_trade_prevention)
         return obj
 
 
 @dataclass
 class ListingSimConfig:
-    """Per-listing simulation config: a listing ID and the profile name to use."""
+    """A listing the backtest trades, with any blocks it simulates with in place of its exchange's."""
 
     listing_id: int
-    profile: str
+    overrides: SimulationOverrides | None = None
 
     def _to_java(self):
         cls = jpype.JClass("group.gnometrading.backtest.config.ListingSimConfig")
         obj = cls()
         obj.listingId = jpype.JInt(self.listing_id)
-        obj.profile = str(self.profile)
+        if self.overrides is not None:
+            obj.overrides = self.overrides._to_java()
         return obj
 
 
@@ -277,8 +277,8 @@ class BacktestConfig:
         config = BacktestConfig(
             start_date=date(2024, 1, 1),
             end_date=date(2024, 1, 2),
-            listings=[ListingSimConfig(listing_id=1, profile="default")],
-            profiles={"default": ExchangeProfileConfig()},
+            listings=[ListingSimConfig(listing_id=1)],
+            exchanges={"KALSHI": SimulationOverrides(queue_model=OptimisticQueueConfig())},
         )
         results = run_backtest(config, strategy=MyStrategy())
     """
@@ -286,7 +286,12 @@ class BacktestConfig:
     start_date: date | datetime
     end_date: date | datetime
     listings: list[ListingSimConfig]
-    profiles: dict[str, ExchangeProfileConfig]
+    # Overrides for every listing on an exchange, by its code (e.g. KALSHI); listings simulate with their exchange's
+    # registry parameters otherwise.
+    exchanges: dict[str, SimulationOverrides] = field(default_factory=dict)
+    # The time the run reads the registry's simulation parameters and fees as known at (ISO-8601); None means when
+    # the run starts. Rerunning with the time a run recorded simulates it identically.
+    simulation_as_of: str | None = None
     strategy: StrategyConfig | None = None
     strategy_id: int = 0
     risk: RiskConfig = field(default_factory=RiskConfig)
@@ -321,10 +326,12 @@ class BacktestConfig:
             listings_list.add(listing._to_java())
         obj.listings = listings_list
 
-        profiles_map = LinkedHashMap()
-        for name, profile in self.profiles.items():
-            profiles_map.put(str(name), profile._to_java())
-        obj.profiles = profiles_map
+        exchanges_map = LinkedHashMap()
+        for code, overrides in self.exchanges.items():
+            exchanges_map.put(str(code), overrides._to_java())
+        obj.exchanges = exchanges_map
+        if self.simulation_as_of is not None:
+            obj.simulationAsOf = str(self.simulation_as_of)
 
         if self.strategy is not None:
             obj.strategy = self.strategy._to_java()

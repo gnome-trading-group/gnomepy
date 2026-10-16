@@ -7,7 +7,7 @@ import pytest
 
 from gnomepy.java.backtest.config import (
     BacktestConfig,
-    ExchangeProfileConfig,
+    SimulationOverrides,
     LogNormalLatencyConfig,
     RecordedLatencyConfig,
     ListingSimConfig,
@@ -49,11 +49,8 @@ class TestLatencyConfigs:
         assert (cfg.floor_nanos, cfg.median_nanos, cfg.p99_nanos) == (5_000_000, 12_000_000, 200_000_000)
         assert cfg.seed is None
 
-    def test_profile_defaults_replay_market_data_and_model_orders(self):
-        cfg = ExchangeProfileConfig()
-        assert isinstance(cfg.market_data_latency, RecordedLatencyConfig)
-        assert cfg.market_data_latency.fallback.latency_nanos == 50_000_000
-        assert isinstance(cfg.network_latency, LogNormalLatencyConfig)
+    def test_recorded_latency_falls_back_to_a_static_model(self):
+        assert RecordedLatencyConfig().fallback.latency_nanos == 50_000_000
 
 
 class TestQueueConfigs:
@@ -72,16 +69,18 @@ class TestQueueConfigs:
         assert cfg.cancel_ahead_probability == 0.3
 
 
-class TestExchangeProfileConfig:
-    def test_defaults(self):
-        cfg = ExchangeProfileConfig()
-        assert isinstance(cfg.fee_model, RegistryFeeConfig)
-        assert isinstance(cfg.network_latency, LogNormalLatencyConfig)
-        assert isinstance(cfg.order_processing_latency, StaticLatencyConfig)
-        assert isinstance(cfg.queue_model, RiskAverseQueueConfig)
+class TestSimulationOverrides:
+    def test_every_block_is_left_to_the_registry_by_default(self):
+        cfg = SimulationOverrides()
+        assert cfg.fee_model is None
+        assert cfg.network_latency is None
+        assert cfg.order_processing_latency is None
+        assert cfg.market_data_latency is None
+        assert cfg.queue_model is None
+        assert cfg.self_trade_prevention is None
 
-    def test_custom_profile(self):
-        cfg = ExchangeProfileConfig(
+    def test_custom_overrides(self):
+        cfg = SimulationOverrides(
             fee_model=StaticFeeConfig(taker_fee=0.001, maker_fee=-0.0002),
             network_latency=LogNormalLatencyConfig(floor_nanos=1_000_000),
             queue_model=OptimisticQueueConfig(),
@@ -93,9 +92,9 @@ class TestExchangeProfileConfig:
 
 class TestListingSimConfig:
     def test_fields(self):
-        cfg = ListingSimConfig(listing_id=42, profile="default")
+        cfg = ListingSimConfig(listing_id=42)
         assert cfg.listing_id == 42
-        assert cfg.profile == "default"
+        assert cfg.overrides is None
 
 
 class TestStrategyConfig:
@@ -126,15 +125,15 @@ class TestBacktestConfig:
         return BacktestConfig(
             start_date=date(2024, 1, 1),
             end_date=date(2024, 1, 2),
-            listings=[ListingSimConfig(listing_id=1, profile="default")],
-            profiles={"default": ExchangeProfileConfig()},
+            listings=[ListingSimConfig(listing_id=1)],
         )
 
     def test_minimal_construction(self):
         cfg = self._minimal()
         assert cfg.start_date == date(2024, 1, 1)
         assert len(cfg.listings) == 1
-        assert "default" in cfg.profiles
+        assert cfg.exchanges == {}
+        assert cfg.simulation_as_of is None
 
     def test_defaults(self):
         cfg = self._minimal()
@@ -147,8 +146,7 @@ class TestBacktestConfig:
         cfg = BacktestConfig(
             start_date=datetime(2024, 6, 1, 10, 30),
             end_date=datetime(2024, 6, 1, 11, 0),
-            listings=[ListingSimConfig(listing_id=1, profile="p")],
-            profiles={"p": ExchangeProfileConfig()},
+            listings=[ListingSimConfig(listing_id=1)],
         )
         assert isinstance(cfg.start_date, datetime)
         assert cfg.start_date.hour == 10
@@ -157,8 +155,7 @@ class TestBacktestConfig:
         cfg = BacktestConfig(
             start_date=date(2024, 1, 1),
             end_date=date(2024, 1, 2),
-            listings=[ListingSimConfig(listing_id=1, profile="default")],
-            profiles={"default": ExchangeProfileConfig()},
+            listings=[ListingSimConfig(listing_id=1)],
             strategy=StrategyConfig(class_name="gnomepy_research.strategies.momentum:MomentumTaker"),
         )
         assert cfg.strategy is not None
@@ -170,7 +167,7 @@ class TestBacktestConfig:
             start_date=cfg.start_date,
             end_date=cfg.end_date,
             listings=cfg.listings,
-            profiles=cfg.profiles,
+            exchanges=cfg.exchanges,
             record=False,
         )
         assert cfg.record is False

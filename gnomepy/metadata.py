@@ -38,6 +38,12 @@ class BacktestMetadata:
     config: dict[str, Any] | None = None
     preset_name: str | None = None
 
+    # Simulation: the registry's parameters and fees as known at simulation_as_of, the base latency seed, and what
+    # each listing (by id) simulated with once the config's overrides were laid over them.
+    simulation_as_of: str | None = None
+    seed: int | None = None
+    simulation: dict[str, Any] | None = None
+
     # Provenance
     gnomepy_version: str | None = None
     gnomepy_research_version: str | None = None

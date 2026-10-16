@@ -14,7 +14,8 @@ from gnomepy.java._classpath import discover_classpath
 from gnomepy.java._jvm import ensure_jvm_started
 from gnomepy.java.backtest.config import (
     BacktestConfig,
-    ExchangeProfileConfig,
+    OptimisticQueueConfig,
+    SimulationOverrides,
     LogNormalLatencyConfig,
     RecordedLatencyConfig,
     ListingSimConfig,
@@ -37,13 +38,8 @@ def _jvm():
 
 
 def _config(**kwargs) -> BacktestConfig:
-    return BacktestConfig(
-        start_date=date(2026, 1, 1),
-        end_date=date(2026, 1, 2),
-        listings=[ListingSimConfig(listing_id=1, profile="default")],
-        profiles={"default": ExchangeProfileConfig()},
-        **kwargs,
-    )
+    kwargs.setdefault("listings", [ListingSimConfig(listing_id=1)])
+    return BacktestConfig(start_date=date(2026, 1, 1), end_date=date(2026, 1, 2), **kwargs)
 
 
 def test_defaults_leave_java_defaults_in_place():
@@ -65,7 +61,7 @@ def test_lognormal_seed_is_optional():
 
 
 def test_latency_configs_reach_java():
-    java = ExchangeProfileConfig(
+    java = SimulationOverrides(
         market_data_latency=RecordedLatencyConfig(fallback=LogNormalLatencyConfig(floor_nanos=1)),
         network_latency=LogNormalLatencyConfig(floor_nanos=2, median_nanos=3, p99_nanos=4),
     )._to_java()
@@ -75,6 +71,24 @@ def test_latency_configs_reach_java():
 
 
 def test_self_trade_prevention_reaches_java():
-    profile = ExchangeProfileConfig(self_trade_prevention="CANCEL_RESTING")._to_java()
-    assert str(profile.selfTradePrevention.name()) == "CANCEL_RESTING"
-    assert str(ExchangeProfileConfig()._to_java().selfTradePrevention.name()) == "CANCEL_INCOMING"
+    overrides = SimulationOverrides(self_trade_prevention="CANCEL_RESTING")._to_java()
+    assert str(overrides.selfTradePrevention.name()) == "CANCEL_RESTING"
+    assert SimulationOverrides()._to_java().selfTradePrevention is None
+
+
+def test_unset_blocks_stay_unset_in_java_so_the_registry_fills_them():
+    java = SimulationOverrides(queue_model=OptimisticQueueConfig())._to_java()
+    assert java.networkLatency is None
+    assert java.feeModel is None
+    assert java.queueModel is not None
+
+
+def test_exchange_and_listing_overrides_and_the_pinned_time_reach_java():
+    java = _config(
+        exchanges={"KALSHI": SimulationOverrides(queue_model=OptimisticQueueConfig())},
+        simulation_as_of="2026-10-01T00:00:00Z",
+        listings=[ListingSimConfig(listing_id=1, overrides=SimulationOverrides(self_trade_prevention="CANCEL_RESTING"))],
+    )._to_java()
+    assert java.exchanges.get("KALSHI").queueModel is not None
+    assert str(java.simulationAsOf) == "2026-10-01T00:00:00Z"
+    assert str(java.listings.get(0).overrides.selfTradePrevention.name()) == "CANCEL_RESTING"
