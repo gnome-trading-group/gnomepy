@@ -67,6 +67,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "TradesSchema": ("gnomepy.java.schemas", "TradesSchema"),
     "wrap_schema": ("gnomepy.java.schemas", "wrap_schema"),
     "Scales": ("gnomepy.java.statics", "Scales"),
+    "load_session_metrics": ("gnomepy.journal", "load_session_metrics"),
     "BacktestMetadata": ("gnomepy.metadata", "BacktestMetadata"),
     "BacktestReport": ("gnomepy.reporting", "BacktestReport"),
     "Curves": ("gnomepy.reporting.metrics", "Curves"),

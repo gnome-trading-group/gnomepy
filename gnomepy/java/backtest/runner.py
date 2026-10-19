@@ -69,6 +69,11 @@ def _create_python_callback(py_strategy: Strategy, clock=None):
             py_strategy._position_view = PositionViewWrapper(positionView, securityMaster, clock)
             py_strategy._control = control
 
+        @JOverride
+        def registerMetrics(self, recorder):
+            py_strategy._metric_recorder = PyMetricRecorder(recorder)
+            py_strategy.register_metrics()
+
     return _Proxy()
 
 
@@ -318,17 +323,9 @@ class Backtest:
 
     def _wrap_python_strategy(self, py_strategy, security_master, position_view, strategy_id):
         PythonStrategyAgent = jpype.JClass("group.gnometrading.strategies.PythonStrategyAgent")
-        if self._recorder is not None:
-            java_metrics = self._recorder.createMetricRecorder()
-        else:
-            # Strategies declare and write metrics the same way whether or not the run records them.
-            java_metrics = jpype.JClass("group.gnometrading.backtest.recorder.MetricRecorder").discarding()
-        py_strategy._metric_recorder = PyMetricRecorder(java_metrics)
         callback = _create_python_callback(py_strategy, self._clock)
-        agent = PythonStrategyAgent.create(jpype.JInt(strategy_id), position_view, security_master, callback)
-        # After create, which runs onInit, so self.positions is available inside register_metrics.
-        py_strategy.register_metrics()
-        return agent
+        # The driver gives the agent its metric recorder, which calls register_metrics after onInit.
+        return PythonStrategyAgent.create(jpype.JInt(strategy_id), position_view, security_master, callback)
 
     def add_warning(self, message: str) -> None:
         """Add an arbitrary warning to be included in backtest results and metadata."""

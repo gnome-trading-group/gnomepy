@@ -111,10 +111,10 @@ class _MetricsStrategy(Strategy):
 
     def register_metrics(self):
         self.saw_positions = self.positions is not None
-        buf = self.metrics.create_buffer("signals")
-        self.col = buf.addDoubleColumn("value")
-        buf.freeze()
-        self.buf = buf
+        stream = self.metrics.create_stream("signals")
+        self.col = stream.add_double_column("value")
+        stream.freeze()
+        self.signals = stream
 
     def on_market_data(self, data):
         return []
@@ -123,14 +123,17 @@ class _MetricsStrategy(Strategy):
         return []
 
 
-def test_register_metrics_runs_without_recording_and_after_init():
+def test_register_metrics_runs_once_the_agent_is_given_a_recorder_and_after_init():
     strategy = _MetricsStrategy()
+    agent = _backtest()._wrap_python_strategy(strategy, None, None, 0)
+    assert strategy.metrics is None
 
-    _backtest()._wrap_python_strategy(strategy, None, None, 0)
+    agent.configureMetrics(jpype.JClass("group.gnometrading.sequencer.metrics.MetricRecorder").discarding())
 
     assert strategy.saw_positions is True
-    strategy.buf.setDouble(strategy.buf.appendRow(), strategy.col, 1.0)
-    assert int(strategy.buf.getCount()) == 0
+    strategy.signals.begin()
+    strategy.signals.set_double(strategy.col, 1.0)
+    strategy.signals.commit()
 
 
 class _CountingStrategy(Strategy):

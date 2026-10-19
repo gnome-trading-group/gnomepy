@@ -23,24 +23,27 @@ class Strategy(ABC):
         report.timestamp_recv — for execution reports
 
     Custom metrics:
-        Override ``register_metrics`` to create named RecordBuffers. Each
-        buffer is a columnar stream: add typed columns, call ``freeze()``,
-        then write via ``buf.append_row()`` / ``buf.set_double(row, col, val)``.
+        Override ``register_metrics`` to declare named metric streams: add
+        typed columns, call ``freeze()``, then record each row with
+        ``stream.begin()``, ``stream.set_double(col, val)`` per column and
+        ``stream.commit()``. A backtest keeps them in its results; a live or
+        paper session journals them (``gnomepy.journal.load_session_metrics``).
 
     Example:
         class MyMMStrategy(Strategy):
             def register_metrics(self):
-                buf = self.metrics.create_buffer("signals")
-                self.ts_col = buf.add_long_column("timestamp")
-                self.fv_col = buf.add_double_column("fair_value")
-                buf.freeze()
-                self.buf = buf
+                stream = self.metrics.create_stream("signals")
+                self.ts_col = stream.add_long_column("timestamp")
+                self.fv_col = stream.add_double_column("fair_value")
+                stream.freeze()
+                self.signals = stream
 
             def on_market_data(self, data):
                 mid = (data.bid_price(0) + data.ask_price(0)) // 2
-                row = self.buf.append_row()
-                self.buf.set_long(row, self.ts_col, data.event_timestamp)
-                self.buf.set_double(row, self.fv_col, mid / 1e9)
+                self.signals.begin()
+                self.signals.set_long(self.ts_col, data.event_timestamp)
+                self.signals.set_double(self.fv_col, mid / 1e9)
+                self.signals.commit()
                 return [Intent(
                     exchange_id=1, security_id=100,
                     bid_price=mid - 50, bid_size=10,
@@ -73,9 +76,9 @@ class Strategy(ABC):
 
     @property
     def metrics(self):
-        """Access the MetricRecorder to create custom record streams.
+        """Access the MetricRecorder to create custom metric streams.
 
-        Available inside ``register_metrics()`` and throughout the backtest.
+        Available inside ``register_metrics()`` and throughout the run.
         """
         return self._metric_recorder
 
@@ -104,10 +107,11 @@ class Strategy(ABC):
         return self._control is not None and bool(self._control.isExiting())
 
     def register_metrics(self) -> None:
-        """Override to declare custom metric streams before replay starts.
+        """Override to declare custom metric streams before any data arrives.
 
-        Called by the framework after ``self.metrics`` is set but before data
-        replay begins. Create buffers, add columns, and freeze them here.
+        Called once ``self.metrics`` and ``self.positions`` are set, in a
+        backtest and in a live or paper session alike. Create streams, add
+        columns, and freeze them here.
         """
 
     def simulate_processing_time(self) -> int:

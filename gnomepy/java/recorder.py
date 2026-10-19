@@ -105,47 +105,68 @@ def _buffer_to_df(buffer) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
+class MetricStream:
+    """One named stream of metric rows, with its columns declared at runtime.
+
+    Declare the columns, then ``freeze()``; each ``add_*_column`` returns the column's index. Record a row with
+    ``begin()``, a ``set_*`` per column, then ``commit()``. A column left unset in a row is 0. Rows go wherever the
+    session sends them: the backtest's results, or the session journal in a live or paper session.
+    """
+
+    def __init__(self, java_stream):
+        self._java = java_stream
+        # Bound straight to the Java methods: rows are recorded on the hot path, so no Python wrapper in between.
+        self.begin = java_stream.begin
+        self.set_long = java_stream.setLong
+        self.set_double = java_stream.setDouble
+        self.set_int = java_stream.setInt
+        self.commit = java_stream.commit
+
+    @property
+    def name(self) -> str:
+        return str(self._java.name())
+
+    def add_long_column(self, name: str) -> int:
+        return int(self._java.addLongColumn(name))
+
+    def add_double_column(self, name: str) -> int:
+        return int(self._java.addDoubleColumn(name))
+
+    def add_int_column(self, name: str) -> int:
+        return int(self._java.addIntColumn(name))
+
+    def freeze(self) -> None:
+        self._java.freeze()
+
+
 class MetricRecorder:
-    """Python wrapper around Java MetricRecorder.
+    """Python wrapper around the Java MetricRecorder a strategy is given.
 
     Passed to strategies via ``self.metrics`` inside ``register_metrics()``.
-    Strategies create named RecordBuffers, add typed columns, freeze the buffer,
-    then write rows during ``on_market_data`` / ``on_execution_report``.
 
     Usage::
 
         def register_metrics(self):
-            buf = self.metrics.create_buffer("signals")
-            self.ts_col  = buf.add_long_column("timestamp")
-            self.fv_col  = buf.add_double_column("fair_value")
-            buf.freeze()
-            self.buf = buf
+            stream = self.metrics.create_stream("signals")
+            self.ts_col = stream.add_long_column("timestamp")
+            self.fv_col = stream.add_double_column("fair_value")
+            stream.freeze()
+            self.signals = stream
 
         def on_market_data(self, data):
-            row = self.buf.append_row()
-            self.buf.set_long(row, self.ts_col, data.event_timestamp)
-            self.buf.set_double(row, self.fv_col, self.compute_fair_value())
+            self.signals.begin()
+            self.signals.set_long(self.ts_col, data.event_timestamp)
+            self.signals.set_double(self.fv_col, self.compute_fair_value())
+            self.signals.commit()
             return []
     """
 
     def __init__(self, java_metric_recorder):
         self._java = java_metric_recorder
 
-    def create_buffer(self, name: str, initial_capacity: int = 1_000_000):
-        """Create a new named RecordBuffer for custom metrics.
-
-        After adding columns and calling ``freeze()``, write rows via the
-        buffer directly (no Python wrapper — call Java methods on the
-        returned object).
-
-        Args:
-            name: Unique name for this stream; used as the parquet file name.
-            initial_capacity: Initial row capacity; grows automatically.
-
-        Returns:
-            Java RecordBuffer instance (call Java methods directly via JPype).
-        """
-        return self._java.createBuffer(name, initial_capacity)
+    def create_stream(self, name: str) -> MetricStream:
+        """Declare a new named stream; its name is the parquet file name and DataFrame key it ends up under."""
+        return MetricStream(self._java.createStream(name))
 
 
 class BacktestResults:

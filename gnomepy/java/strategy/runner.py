@@ -17,6 +17,7 @@ from gnomepy.java._classpath import discover_classpath
 from gnomepy.java._jvm import STRATEGY_JVM_OPTIONS, ensure_jvm_started
 from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.oms import PositionViewWrapper
+from gnomepy.java.recorder import MetricRecorder
 from gnomepy.java.schemas import wrap_schema
 from gnomepy.java.strategy.config import SessionConfig, StrategyConfig
 
@@ -80,6 +81,11 @@ def _create_strategy_callback(py_strategy: Strategy):
         def onInit(self, positionView, securityMaster, control):
             py_strategy._position_view = PositionViewWrapper(positionView, securityMaster)
             py_strategy._control = control
+
+        @JOverride
+        def registerMetrics(self, recorder):
+            py_strategy._metric_recorder = MetricRecorder(recorder)
+            py_strategy.register_metrics()
 
     return _Proxy()
 
