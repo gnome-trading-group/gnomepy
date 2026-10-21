@@ -1,0 +1,78 @@
+name: Build & Push Research Job Docker Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'gnomepy/**'
+      - 'docker/research-job/**'
+      - 'pyproject.toml'
+      - 'poetry.lock'
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # required for OIDC
+      contents: read
+
+    steps:
+      # The build context holds both checkouts side by side, matching the Dockerfile's COPY paths.
+      - name: Checkout gnomepy
+        uses: actions/checkout@v4
+        with:
+          path: gnomepy
+
+      - name: Checkout gnomepy-research
+        uses: actions/checkout@v4
+        with:
+          repository: gnome-trading-group/gnomepy-research
+          token: ${{ secrets.GH_PAT }}
+          path: gnomepy-research
+
+      - name: Build image
+        run: |
+          SHA=$(cd gnomepy && git rev-parse --short HEAD)
+          docker build \
+            -f gnomepy/docker/research-job/Dockerfile \
+            -t gnomepy-research-job:latest \
+            -t gnomepy-research-job:$SHA \
+            .
+          echo "SHA=$SHA" >> $GITHUB_ENV
+
+      - name: Configure AWS credentials (dev)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN_DEV }}
+          aws-region: us-east-1
+
+      - name: Login to ECR (dev)
+        id: login-ecr-dev
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push to dev ECR
+        run: |
+          REGISTRY=${{ steps.login-ecr-dev.outputs.registry }}
+          docker tag gnomepy-research-job:latest $REGISTRY/gnomepy-research-job:latest
+          docker tag gnomepy-research-job:$SHA $REGISTRY/gnomepy-research-job:$SHA
+          docker push $REGISTRY/gnomepy-research-job:latest
+          docker push $REGISTRY/gnomepy-research-job:$SHA
+
+      - name: Configure AWS credentials (prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ECR_ROLE_ARN_PROD }}
+          aws-region: us-east-1
+
+      - name: Login to ECR (prod)
+        id: login-ecr-prod
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push to prod ECR
+        run: |
+          REGISTRY=${{ steps.login-ecr-prod.outputs.registry }}
+          docker tag gnomepy-research-job:latest $REGISTRY/gnomepy-research-job:latest
+          docker tag gnomepy-research-job:$SHA $REGISTRY/gnomepy-research-job:$SHA
+          docker push $REGISTRY/gnomepy-research-job:latest
+          docker push $REGISTRY/gnomepy-research-job:$SHA

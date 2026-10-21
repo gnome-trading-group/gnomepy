@@ -1,0 +1,9 @@
+# The build context is the parent of every checkout; send only what the image copies.
+*
+!gnomepy
+!gnomepy-research/pyproject.toml
+!gnomepy-research/constraints.txt
+!gnomepy-research/README.md
+gnomepy/.git
+gnomepy/**/__pycache__
+gnomepy/**/.pytest_cache
