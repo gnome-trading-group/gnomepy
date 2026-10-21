@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 from typing import Union
@@ -150,8 +151,30 @@ def run_from_env() -> None:
     _run_until_signalled(jpype.JArray(jpype.JString)([]))
 
 
+@JImplements("java.lang.Runnable", deferred=True)
+class _FinalizeS3:
+    """Finalizes pyarrow's S3 client in a JVM shutdown hook.
+
+    Every way a session ends is a System.exit, which leaves through C exit() without finalizing Python, so pyarrow's
+    own atexit finalizer never runs and Arrow warns (and can segfault) while tearing down an initialized S3 client.
+    """
+
+    @JOverride
+    def run(self):
+        # pyarrow is an optional extra; if this process never loaded pyarrow.fs, S3 was never initialized
+        pafs = sys.modules.get("pyarrow.fs")
+        if pafs is not None:
+            pafs.ensure_s3_finalized()
+
+
+def _register_s3_finalizer() -> None:
+    Thread = jpype.JClass("java.lang.Thread")
+    jpype.JClass("java.lang.Runtime").getRuntime().addShutdownHook(Thread(_FinalizeS3(), "finalize-s3"))
+
+
 def _run_until_signalled(java_args) -> None:
     """Starts the trading orchestrator and blocks until SIGINT/SIGTERM, then closes it and exits the JVM."""
+    _register_s3_finalizer()
     # Must load TradingOrchestrator before Orchestrator.start() — its static initializer
     # sets instanceClass, which Orchestrator.start() uses to instantiate the orchestrator.
     jpype.JClass("group.gnometrading.trading.TradingOrchestrator")
