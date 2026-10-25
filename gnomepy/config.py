@@ -1,3 +1,4 @@
+import functools
 import os
 
 import boto3
@@ -8,8 +9,15 @@ def resolve_registry_api_key() -> str:
         return key
     key_id = os.environ.get("REGISTRY_API_KEY_ID", "")
     if key_id:
-        return boto3.client("apigateway", region_name="us-east-1").get_api_key(apiKey=key_id, includeValue=True)["value"]
+        return _fetch_api_key(key_id)
     return ""
+
+
+# GetApiKey is an account-wide, tightly throttled control-plane call, and a warm Lambda builds a RegistryClient on
+# every invocation.
+@functools.cache
+def _fetch_api_key(key_id: str) -> str:
+    return boto3.client("apigateway", region_name="us-east-1").get_api_key(apiKey=key_id, includeValue=True)["value"]
 
 
 ALERTS_API_URL_PARAMETER = "/gnome/alerting/api-url"
