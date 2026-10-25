@@ -85,3 +85,36 @@ def test_stop_strategy_session_as_service_sends_the_reason(monkeypatch):
     client.stop_strategy_session_as_service("s1", actor="launcher:cs2", reason="match started")
 
     assert calls == [{"sessionId": "s1", "actor": "launcher:cs2", "reason": "match started"}]
+
+
+def test_create_vendor_source_uses_cognito_route_and_id_token(captured):
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    client.create_vendor_source("PANDASCORE", "eu-west-1", "PANDASCORE", ["esports"])
+
+    assert captured == [{
+        "url": "https://registry.example.com/api/cognito/sources",
+        "json": {"code": "PANDASCORE", "homeRegion": "eu-west-1", "adapter": "PANDASCORE", "families": ["esports"]},
+        "headers": {"Authorization": "id-token-123", "Content-Type": "application/json"},
+    }]
+
+
+def test_update_source_sends_only_the_given_fields_to_the_cognito_route(monkeypatch):
+    calls = []
+
+    def fake_patch(url, params, json, headers, timeout):
+        calls.append({"url": url, "params": params, "json": json, "headers": headers})
+        return _Response()
+
+    monkeypatch.setattr(registry_api.requests, "patch", fake_patch)
+    monkeypatch.setattr(registry_api, "get_id_token", lambda: "id-token-123")
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    client.update_source(9, home_region="us-east-1", active=False)
+
+    assert calls == [{
+        "url": "https://registry.example.com/api/cognito/sources",
+        "params": {"sourceId": "9"},
+        "json": {"homeRegion": "us-east-1", "active": False},
+        "headers": {"Authorization": "id-token-123", "Content-Type": "application/json"},
+    }]

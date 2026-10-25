@@ -12,6 +12,8 @@ from gnomepy.registry.types import (
     ListingSpec,
     Security,
     SecurityType,
+    Source,
+    Stream,
 )
 
 __all__ = [
@@ -28,4 +30,6 @@ __all__ = [
     "ListingSpec",
     "Security",
     "SecurityType",
+    "Source",
+    "Stream",
 ]

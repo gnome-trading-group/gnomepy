@@ -18,6 +18,8 @@ from gnomepy.registry.types import (
     Listing,
     ListingSpec,
     Security,
+    Source,
+    Stream,
     Strategy,
     StrategySession,
 )
@@ -120,6 +122,57 @@ class RegistryClient:
         relationship_type: Optional[str] = None,
     ) -> list[ContractRelationship]:
         return self._get("/contract-relationships", _parse_kwarg_params(locals()), ContractRelationship)
+
+    def get_sources(
+        self,
+        *,
+        source_id: Optional[int] = None,
+        code: Optional[str] = None,
+        kind: Optional[str] = None,
+        exchange_id: Optional[int] = None,
+        active: Optional[bool] = None,
+    ) -> list[Source]:
+        return self._get("/sources", _parse_kwarg_params(locals()), Source)
+
+    def get_streams(
+        self,
+        *,
+        stream_id: Optional[int] = None,
+        stream_ids: Optional[list[int]] = None,
+        listing_id: Optional[int] = None,
+        listing_ids: Optional[list[int]] = None,
+        source_id: Optional[int] = None,
+        family: Optional[str] = None,
+        event_id: Optional[int] = None,
+        active: Optional[bool] = None,
+    ) -> list[Stream]:
+        params = _parse_kwarg_params(locals())
+        for key in ("streamIds", "listingIds"):
+            if key in params:
+                params[key] = ",".join(str(i) for i in params[key])
+        return self._get("/streams", params, Stream)
+
+    def create_vendor_source(self, code: str, home_region: str, adapter: str, families: list[str]) -> dict:
+        """Registers a data vendor. Venue sources are created with their exchange. Needs `gnomepy login`."""
+        body = {"code": code, "homeRegion": home_region, "adapter": adapter, "families": families}
+        return self._post_as_operator("/sources", body)
+
+    def update_source(
+        self,
+        source_id: int,
+        *,
+        home_region: Optional[str] = None,
+        adapter: Optional[str] = None,
+        families: Optional[list[str]] = None,
+        active: Optional[bool] = None,
+    ) -> dict:
+        """Edits a source; a venue's region is its exchange's and can't be set here. Needs `gnomepy login`."""
+        body = {
+            _to_camel_case(k): v
+            for k, v in {"home_region": home_region, "adapter": adapter, "families": families, "active": active}.items()
+            if v is not None
+        }
+        return self._patch_as_operator("/sources", {"sourceId": str(source_id)}, body)
 
     def create_currency(self, **kwargs) -> dict:
         return self._post("/currencies", {_to_camel_case(k): v for k, v in kwargs.items()})
@@ -309,6 +362,17 @@ class RegistryClient:
             json=body,
             headers={"Authorization": get_id_token(), "Content-Type": "application/json"},
 
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        res.raise_for_status()
+        return res.json()
+
+    def _patch_as_operator(self, path: str, params: dict, body: dict) -> dict:
+        res = requests.patch(
+            self.base_url + "/cognito" + path,
+            params=params,
+            json=body,
+            headers={"Authorization": get_id_token(), "Content-Type": "application/json"},
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
         res.raise_for_status()

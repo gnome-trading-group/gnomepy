@@ -43,6 +43,46 @@ class Exchange:
 
 
 @dataclass
+class Source:
+    """Where market data comes from: a trading venue (kind VENUE, one per exchange) or a data vendor (VENDOR)."""
+
+    source_id: int
+    code: str
+    kind: str
+    exchange_id: int | None
+    home_region: str | None
+    adapter: str
+    families: list[str]
+    active: bool
+    date_modified: str
+    date_created: str
+
+
+@dataclass
+class Stream:
+    """One thing collected from a source: a listing's book (subject_kind LISTING) or a vendor subject such as a match.
+
+    resolved_region is where the stream is collected.
+    """
+
+    stream_id: int
+    source_id: int
+    source_code: str
+    source_kind: str
+    subject_kind: str
+    listing_id: int | None
+    native_subject_id: str
+    family: str
+    region: str | None
+    resolved_region: str
+    event_id: int | None
+    starts_at: str | None
+    ends_at: str | None
+    active: bool
+    date_created: str
+
+
+@dataclass
 class Currency:
     currency_id: int
     symbol: str

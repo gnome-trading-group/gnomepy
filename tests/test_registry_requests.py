@@ -50,3 +50,51 @@ def test_get_fee_timelines_sends_only_the_given_bounds_and_keys_by_listing(monke
     assert calls == [{"url": "https://registry.example.com/api/fees",
                       "params": {"listingIds": "7,9", "from": "2026-01-01T00:00:00Z"}}]
     assert timelines == {7: [{"effectiveFrom": "2026-01-01T00:00:00.000Z"}], 9: []}
+
+
+def test_get_streams_joins_id_lists_and_keeps_known_fields(monkeypatch):
+    calls = []
+    row = {
+        "stream_id": 31, "source_id": 2, "source_code": "KALSHI", "source_kind": "VENUE", "subject_kind": "LISTING",
+        "listing_id": 789, "native_subject_id": "MKT:yes", "family": "book", "region": None,
+        "resolved_region": "us-east-1", "event_id": None, "starts_at": None, "ends_at": None, "active": True,
+        "date_created": "2026-10-25T17:00:00.000Z", "unexpected": "dropped",
+    }
+
+    def fake_get(url, params, headers, timeout):
+        calls.append({"url": url, "params": params})
+        return _Response([row])
+
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    streams = client.get_streams(listing_ids=[789, 790], family="book", active=True)
+
+    assert calls == [{
+        "url": "https://registry.example.com/api/streams",
+        "params": {"listingIds": "789,790", "family": "book", "active": "true", "limit": 1000, "offset": 0},
+    }]
+    assert streams[0].stream_id == 31
+    assert streams[0].listing_id == 789
+    assert streams[0].resolved_region == "us-east-1"
+
+
+def test_get_sources_filters_by_code(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, headers, timeout):
+        calls.append({"url": url, "params": params})
+        return _Response([{
+            "source_id": 9, "code": "PANDASCORE", "kind": "VENDOR", "exchange_id": None, "home_region": "eu-west-1",
+            "adapter": "PANDASCORE", "families": ["esports"], "active": True,
+            "date_modified": "2026-10-25T17:00:00.000Z", "date_created": "2026-10-25T17:00:00.000Z",
+        }])
+
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    [source] = client.get_sources(code="PANDASCORE")
+
+    assert calls[0]["params"] == {"code": "PANDASCORE", "limit": 1000, "offset": 0}
+    assert source.families == ["esports"]
+    assert source.home_region == "eu-west-1"
