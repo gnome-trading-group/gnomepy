@@ -17,7 +17,7 @@ from gnomepy.importer.scaling import (
 )
 from gnomepy.importer.uploader import build_s3_key, default_merged_bucket
 from gnomepy.importer.validators import validate
-from gnomepy.java.enums import SchemaType
+from gnomepy.java.enums import RecordType
 
 
 # ---------------------------------------------------------------------------
@@ -157,9 +157,8 @@ class TestChunkByMinute:
 class TestValidate:
     def _base_config(self) -> ImportConfig:
         return ImportConfig(
-            schema_type=SchemaType.TRADES,
-            security_id=1,
-            exchange_id=5,
+            record_type=RecordType.TRADES,
+            stream_id=5,
             timestamp_field="timestamp_event",
             field_mappings=[
                 FieldMapping("ts", "timestamp_event", transform="timestamp", timestamp_format="epoch_ms"),
@@ -217,15 +216,15 @@ class TestValidate:
 # ---------------------------------------------------------------------------
 
 class TestBuildS3Key:
-    def test_format_matches_market_data_entry(self):
+    def test_format_matches_stream_entry(self):
         dt = datetime(2024, 4, 15, 14, 30)
-        key = build_s3_key(532, 151, SchemaType.MBP_10, dt)
-        assert key == "532/151/2024/4/15/14/30/mbp-10.zst"
+        key = build_s3_key(532, RecordType.MBP_10, dt)
+        assert key == "532/book/mbp-10/2024/04/15/14/30.zst"
 
-    def test_no_zero_padding(self):
+    def test_zero_padded_so_keys_sort_by_time(self):
         dt = datetime(2025, 1, 5, 9, 3)
-        key = build_s3_key(1, 2, SchemaType.TRADES, dt)
-        assert key == "1/2/2025/1/5/9/3/trades.zst"
+        key = build_s3_key(1, RecordType.TRADES, dt)
+        assert key == "1/book/trades/2025/01/05/09/03.zst"
 
 
 class TestDefaultMergedBucket:

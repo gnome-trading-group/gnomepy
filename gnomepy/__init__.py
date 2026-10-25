@@ -9,7 +9,7 @@ Public API:
         RegistryFeeConfig, StaticFeeConfig, StaticLatencyConfig, LogNormalLatencyConfig, RecordedLatencyConfig,
         OptimisticQueueConfig, RiskAverseQueueConfig, ProbabilisticQueueConfig,
         Intent, ExecutionReport, PositionViewWrapper,
-        SchemaType, Side, Action,
+        RecordType, Side, Action,
         Mbp10Schema, ...
     )
 """
@@ -22,6 +22,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "RecordedLatencyConfig": ("gnomepy.java.backtest.config", "RecordedLatencyConfig"),
     "RegistryFeeConfig": ("gnomepy.java.backtest.config", "RegistryFeeConfig"),
     "ListingSimConfig": ("gnomepy.java.backtest.config", "ListingSimConfig"),
+    "StreamConfig": ("gnomepy.java.backtest.config", "StreamConfig"),
     "MakerTakerLatencyConfig": ("gnomepy.java.backtest.config", "MakerTakerLatencyConfig"),
     "OptimisticQueueConfig": ("gnomepy.java.backtest.config", "OptimisticQueueConfig"),
     "ParametricFeeConfig": ("gnomepy.java.backtest.config", "ParametricFeeConfig"),
@@ -45,7 +46,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "OrderStatus": ("gnomepy.java.enums", "OrderStatus"),
     "OrderType": ("gnomepy.java.enums", "OrderType"),
     "RejectReason": ("gnomepy.java.enums", "RejectReason"),
-    "SchemaType": ("gnomepy.java.enums", "SchemaType"),
+    "RecordType": ("gnomepy.java.enums", "RecordType"),
     "Side": ("gnomepy.java.enums", "Side"),
     "TimeInForce": ("gnomepy.java.enums", "TimeInForce"),
     "Intent": ("gnomepy.java.oms", "Intent"),
@@ -63,9 +64,10 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "Ohlcv1mSchema": ("gnomepy.java.schemas", "Ohlcv1mSchema"),
     "Ohlcv1sSchema": ("gnomepy.java.schemas", "Ohlcv1sSchema"),
     "OhlcvSchema": ("gnomepy.java.schemas", "OhlcvSchema"),
-    "Schema": ("gnomepy.java.schemas", "Schema"),
+    "StreamRecord": ("gnomepy.java.schemas", "StreamRecord"),
+    "StreamDirectory": ("gnomepy.java.streams", "StreamDirectory"),
     "TradesSchema": ("gnomepy.java.schemas", "TradesSchema"),
-    "wrap_schema": ("gnomepy.java.schemas", "wrap_schema"),
+    "wrap_record": ("gnomepy.java.schemas", "wrap_record"),
     "Scales": ("gnomepy.java.statics", "Scales"),
     "load_session_metrics": ("gnomepy.journal", "load_session_metrics"),
     "BacktestMetadata": ("gnomepy.metadata", "BacktestMetadata"),

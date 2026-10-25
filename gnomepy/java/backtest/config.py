@@ -6,6 +6,8 @@ from typing import Union
 
 import jpype
 
+from gnomepy.java.enums import RecordType
+
 
 @dataclass
 class RegistryFeeConfig:
@@ -189,6 +191,21 @@ class ListingSimConfig:
 
 
 @dataclass
+class StreamConfig:
+    """A stream the strategy reads besides its listings' books (a vendor feed, say), and which of its records to replay."""
+
+    stream_id: int
+    record_type: RecordType
+
+    def _to_java(self):
+        cls = jpype.JClass("group.gnometrading.backtest.config.StreamConfig")
+        obj = cls()
+        obj.streamId = jpype.JInt(self.stream_id)
+        obj.recordType = self.record_type.value
+        return obj
+
+
+@dataclass
 class StrategyConfig:
     """Strategy class name and constructor args for YAML-based strategy resolution."""
 
@@ -286,6 +303,10 @@ class BacktestConfig:
     start_date: date | datetime
     end_date: date | datetime
     listings: list[ListingSimConfig]
+    # Streams the strategy reads besides its listings' books (a vendor feed, say). Their records reach the strategy at
+    # their recorded receive time; no exchange simulates them. The listings' books replay as MBP-10, the record the
+    # simulated exchanges match against.
+    streams: list[StreamConfig] = field(default_factory=list)
     # Overrides for every listing on an exchange, by its code (e.g. KALSHI); listings simulate with their exchange's
     # registry parameters otherwise.
     exchanges: dict[str, SimulationOverrides] = field(default_factory=dict)
@@ -325,6 +346,10 @@ class BacktestConfig:
         for listing in self.listings:
             listings_list.add(listing._to_java())
         obj.listings = listings_list
+        streams_list = ArrayList()
+        for stream in self.streams:
+            streams_list.add(stream._to_java())
+        obj.streams = streams_list
 
         exchanges_map = LinkedHashMap()
         for code, overrides in self.exchanges.items():

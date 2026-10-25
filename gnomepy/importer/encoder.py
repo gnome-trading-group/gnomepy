@@ -32,22 +32,19 @@ def encode_chunk(chunk: pd.DataFrame, config: ImportConfig) -> bytes:
 
     Requires the JVM to be started before calling.
     """
-    from gnomepy.java.schemas import get_schema_class
+    from gnomepy.java.schemas import get_record_class
 
-    schema_cls = get_schema_class(config.schema_type)
+    record_cls = get_record_class(config.record_type)
     parts: list[bytes] = []
 
     for _, row in chunk.iterrows():
-        # Build kwargs: config-level IDs, then defaults, then per-row field mappings
-        kwargs: dict[str, Any] = {
-            "exchange_id": config.exchange_id,
-            "security_id": config.security_id,
-        }
+        # Build kwargs: the stream, then defaults, then per-row field mappings
+        kwargs: dict[str, Any] = {"stream_id": config.stream_id}
         kwargs.update(config.defaults)
         for mapping in config.field_mappings:
             kwargs[mapping.target_field] = _apply_mapping(row[mapping.source_column], mapping)
 
-        schema = schema_cls(**kwargs)
-        parts.append(schema.encode())
+        record = record_cls(**kwargs)
+        parts.append(record.encode())
 
     return b"".join(parts)

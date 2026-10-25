@@ -104,6 +104,12 @@ def _normalize_custom_dfs(custom_dfs: dict[str, pd.DataFrame]) -> dict[str, pd.D
     return out
 
 
+def _for_listing(df: pd.DataFrame, listing_id: int) -> pd.DataFrame:
+    if df.empty or "listing_id" not in df.columns:
+        return df
+    return df[df["listing_id"] == listing_id]
+
+
 def _slice(df: pd.DataFrame, t_start: pd.Timestamp, t_end: pd.Timestamp) -> pd.DataFrame:
     if df.empty:
         return df
@@ -191,23 +197,21 @@ class ExplorerDataStore:
             return np.array([], dtype=np.int64)
         return np.sort(np.concatenate(arrays))
 
-    def listings(self) -> list[tuple[int, int]]:
-        """Return sorted unique (exchange_id, security_id) pairs."""
-        if self.market_df.empty:
+    def listings(self) -> list[int]:
+        """Return the sorted listing ids in the market data."""
+        if self.market_df.empty or "listing_id" not in self.market_df.columns:
             return []
-        return sorted(
-            self.market_df.groupby(["exchange_id", "security_id"], sort=False).groups.keys()
-        )
+        return sorted(int(lid) for lid in self.market_df["listing_id"].dropna().unique())
 
-    def listing_label(self, eid: int, sid: int) -> str:
-        """Human-readable label for a listing, falling back to eid/sid."""
-        label = self._listing_labels.get((eid, sid))
-        return label if label else f"{eid}/{sid}"
+    def listing_label(self, listing_id: int) -> str:
+        """Human-readable label for a listing, falling back to its id."""
+        label = self._listing_labels.get(listing_id)
+        return label if label else str(listing_id)
 
-    def _resolve_listing_labels(self) -> dict[tuple[int, int], str]:
+    def _resolve_listing_labels(self) -> dict[int, str]:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        labels: dict[tuple[int, int], str] = {}
+        labels: dict[int, str] = {}
         config = getattr(self.metadata, "config", None) if self.metadata else None
         if not config:
             return labels
@@ -225,7 +229,7 @@ class ExplorerDataStore:
         if not listing_ids:
             return labels
 
-        def _fetch(lid: int) -> tuple[tuple[int, int], str] | None:
+        def _fetch(lid: int) -> tuple[int, str] | None:
             try:
                 from gnomepy.registry.api import RegistryClient
                 client = RegistryClient()
@@ -237,7 +241,7 @@ class ExplorerDataStore:
                 exch_results = client.get_exchange(exchange_id=listing.exchange_id)
                 sym = sec_results[0].symbol if sec_results else f"sid={listing.security_id}"
                 exch_name = exch_results[0].exchange_name if exch_results else f"eid={listing.exchange_id}"
-                return (listing.exchange_id, listing.security_id), f"{sym} @ {exch_name}"
+                return lid, f"{sym} @ {exch_name}"
             except Exception:
                 return None
 
@@ -255,7 +259,7 @@ class ExplorerDataStore:
         self,
         t_start: pd.Timestamp,
         t_end: pd.Timestamp,
-        listing: tuple[int, int] | None = None,
+        listing: int | None = None,
         max_points: int = MAX_CHART_POINTS,
     ) -> WindowedData:
         window_seconds = (t_end - t_start).total_seconds()
@@ -267,15 +271,10 @@ class ExplorerDataStore:
         orders = _slice_orders(self.orders_df, t_start, t_end)
 
         if listing is not None:
-            eid, sid = listing
-            if not mkt.empty:
-                mkt = mkt[(mkt["exchange_id"] == eid) & (mkt["security_id"] == sid)]
-            if not fills.empty and "exchange_id" in fills.columns:
-                fills = fills[(fills["exchange_id"] == eid) & (fills["security_id"] == sid)]
-            if not orders.empty and "exchange_id" in orders.columns:
-                orders = orders[(orders["exchange_id"] == eid) & (orders["security_id"] == sid)]
-            if not intents.empty and "exchange_id" in intents.columns:
-                intents = intents[(intents["exchange_id"] == eid) & (intents["security_id"] == sid)]
+            mkt = _for_listing(mkt, listing)
+            fills = _for_listing(fills, listing)
+            orders = _for_listing(orders, listing)
+            intents = _for_listing(intents, listing)
 
         if len(mkt) > max_points:
             mkt = _lttb_df(mkt, max_points)
@@ -314,16 +313,16 @@ class ExplorerDataStore:
     def book_snapshot(
         self,
         timestamp: pd.Timestamp,
-        listing: tuple[int, int] | None = None,
-    ) -> dict[tuple[int, int], dict]:
-        result: dict[tuple[int, int], dict] = {}
+        listing: int | None = None,
+    ) -> dict[int, dict]:
+        result: dict[int, dict] = {}
         mkt = self.market_df
         if mkt.empty:
             return result
         ts_ns = timestamp.value
         listings_to_check = [listing] if listing else self.listings()
-        for eid, sid in listings_to_check:
-            df = mkt[(mkt["exchange_id"] == eid) & (mkt["security_id"] == sid)]
+        for lid in listings_to_check:
+            df = _for_listing(mkt, lid)
             if df.empty:
                 continue
             idx = int(np.searchsorted(df.index.values.astype(np.int64), ts_ns, side="right")) - 1
@@ -341,30 +340,28 @@ class ExplorerDataStore:
                     bids.append((bp, bs))
                 if ap > 0:
                     asks.append((ap, as_))
-            result[(eid, sid)] = {"bids": bids, "asks": asks, "timestamp": df.index[idx]}
+            result[lid] = {"bids": bids, "asks": asks, "timestamp": df.index[idx]}
         return result
 
     def intent_at(
         self,
         timestamp: pd.Timestamp,
-        listing: tuple[int, int] | None = None,
-    ) -> dict[tuple[int, int], dict]:
-        result: dict[tuple[int, int], dict] = {}
+        listing: int | None = None,
+    ) -> dict[int, dict]:
+        result: dict[int, dict] = {}
         if self.intents_df.empty:
             return result
         ts_ns = timestamp.value
         listings_to_check = [listing] if listing else self.listings()
-        for eid, sid in listings_to_check:
-            df = self.intents_df
-            if "exchange_id" in df.columns:
-                df = df[(df["exchange_id"] == eid) & (df["security_id"] == sid)]
+        for lid in listings_to_check:
+            df = _for_listing(self.intents_df, lid)
             if df.empty:
                 continue
             idx = int(np.searchsorted(df.index.values.astype(np.int64), ts_ns, side="right")) - 1
             if idx < 0:
                 continue
             row = df.iloc[idx]
-            result[(eid, sid)] = {
+            result[lid] = {
                 "bid_price": _safe_float(row.get("bid_price", 0)),
                 "bid_size": _safe_float(row.get("bid_size", 0)),
                 "ask_price": _safe_float(row.get("ask_price", 0)),
@@ -379,7 +376,7 @@ class ExplorerDataStore:
         self,
         timestamp: pd.Timestamp,
         window_ns: int = 500_000_000,
-        listing: tuple[int, int] | None = None,
+        listing: int | None = None,
     ) -> pd.DataFrame:
         if self.fills_df.empty:
             return self.fills_df
@@ -387,9 +384,8 @@ class ExplorerDataStore:
         t_lo = timestamp - delta
         t_hi = timestamp + delta
         fills = _slice(self.fills_df, t_lo, t_hi)
-        if listing is not None and not fills.empty and "exchange_id" in fills.columns:
-            eid, sid = listing
-            fills = fills[(fills["exchange_id"] == eid) & (fills["security_id"] == sid)]
+        if listing is not None:
+            fills = _for_listing(fills, listing)
         return fills
 
 

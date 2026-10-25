@@ -315,7 +315,8 @@ class BacktestResults:
     def market_records_df(self, scale_prices: bool = True) -> pd.DataFrame:
         """One row per market data tick.
 
-        Columns always present: timestamp (index), exchange_id, security_id,
+        Columns always present: timestamp (index), stream_id, listing_id (the listing the stream carries; NaN for a
+        stream of anything else),
         bid_price_0 … bid_price_{D-1}, bid_size_0 … ask_size_{D-1},
         last_trade_price, last_trade_size.
 
@@ -328,6 +329,8 @@ class BacktestResults:
             return pd.DataFrame()
 
         df = _buffer_to_df(self._java.getMarketRecords())
+        # The recorder writes 0 for a stream that carries no listing (a vendor feed).
+        df["listing_id"] = df["listing_id"].astype("Int64").replace(0, pd.NA)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df = df.set_index("timestamp")
         prices, sizes = _unit_columns("market", df)

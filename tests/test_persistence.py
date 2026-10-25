@@ -16,8 +16,7 @@ def _make_market_df() -> pd.DataFrame:
     ts = pd.to_datetime(["2026-01-23 10:30:00", "2026-01-23 10:30:01"], utc=True)
     return pd.DataFrame(
         {
-            "exchange_id": [1, 1],
-            "security_id": [101, 101],
+            "listing_id": [11, 11],
             "bid_price_0": [50000.0, 50001.0],
             "ask_price_0": [50001.0, 50002.0],
             "bid_size_0": [1.0, 0.5],
@@ -33,8 +32,7 @@ def _make_fills_df() -> pd.DataFrame:
     ts = pd.to_datetime(["2026-01-23 10:30:00"], utc=True)
     return pd.DataFrame(
         {
-            "exchange_id": [1],
-            "security_id": [101],
+            "listing_id": [11],
             "strategy_id": [0],
             "client_oid": [1001],
             "side": ["Bid"],

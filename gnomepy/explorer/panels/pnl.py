@@ -219,8 +219,7 @@ def _add_multi_pnl_traces(
             continue
         if len(s) > MAX_CHART_POINTS:
             s = _lttb_df(s.to_frame("v"), MAX_CHART_POINTS)["v"]
-        eid, sid = col if isinstance(col, tuple) else (col, col)
-        label = store.listing_label(eid, sid) if isinstance(col, tuple) else str(col)
+        label = store.listing_label(col)
         color = _MULTI_PALETTE[i % len(_MULTI_PALETTE)]
         fig.add_trace(go.Scattergl(
             x=s.index, y=s,
@@ -255,8 +254,7 @@ def _add_multi_position_traces(
             continue
         if len(s) > MAX_CHART_POINTS:
             s = _lttb_df(s.to_frame("v"), MAX_CHART_POINTS)["v"]
-        eid, sid = col if isinstance(col, tuple) else (col, col)
-        label = store.listing_label(eid, sid) if isinstance(col, tuple) else str(col)
+        label = store.listing_label(col)
         color = _MULTI_PALETTE[i % len(_MULTI_PALETTE)]
         fig.add_trace(go.Scattergl(
             x=s.index, y=s,

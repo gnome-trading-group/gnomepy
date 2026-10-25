@@ -6,7 +6,7 @@ import pandas as pd
 
 from gnomepy.importer.mapping import FieldMapping, ImportConfig
 from gnomepy.importer.tardis.book import L2Book
-from gnomepy.java.enums import SchemaType
+from gnomepy.java.enums import RecordType
 
 _NUM_LEVELS = 10
 _DEPTH_NULL = 255  # Mbp10Encoder.depthNullValue()
@@ -86,7 +86,7 @@ def build_mbp10_df(l2_df: pd.DataFrame, trades_df: pd.DataFrame) -> pd.DataFrame
     return pd.DataFrame(rows)
 
 
-def mbp10_import_config(security_id: int, exchange_id: int, bucket: str | None = None) -> ImportConfig:
+def mbp10_import_config(stream_id: int, bucket: str | None = None) -> ImportConfig:
     """Return the ImportConfig for encoding an MBP_10 DataFrame produced by build_mbp10_df."""
     field_mappings = [
         FieldMapping("timestamp", "timestamp_event", transform="timestamp", timestamp_format="epoch_us"),
@@ -112,9 +112,8 @@ def mbp10_import_config(security_id: int, exchange_id: int, bucket: str | None =
         ]
 
     return ImportConfig(
-        schema_type=SchemaType.MBP_10,
-        security_id=security_id,
-        exchange_id=exchange_id,
+        record_type=RecordType.MBP_10,
+        stream_id=stream_id,
         field_mappings=field_mappings,
         timestamp_field="timestamp_event",
         bucket=bucket,

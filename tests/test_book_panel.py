@@ -22,8 +22,7 @@ def _market_df() -> pd.DataFrame:
     ], utc=True)
     return pd.DataFrame(
         {
-            "exchange_id": [1, 2, 1, 2],
-            "security_id": [101, 201, 101, 201],
+            "listing_id": [11, 22, 11, 22],
             "mid_price": [0.60, 0.59, 0.61, 0.60],
             "bid_price_0": [0.59, 0.58, 0.60, 0.59],
             "bid_size_0": [100.0, 80.0, 110.0, 90.0],
@@ -42,8 +41,7 @@ def _fills_df() -> pd.DataFrame:
     ts = pd.to_datetime(["2026-01-23 10:30:00.200"], utc=True)
     return pd.DataFrame(
         {
-            "exchange_id": [1],
-            "security_id": [101],
+            "listing_id": [11],
             "side": ["Bid"],
             "fill_price": [0.59],
             "fill_qty": [50.0],
@@ -59,8 +57,7 @@ def _intents_df() -> pd.DataFrame:
     ts = pd.to_datetime(["2026-01-23 10:30:00.100", "2026-01-23 10:30:02.100"], utc=True)
     return pd.DataFrame(
         {
-            "exchange_id": [1, 1],
-            "security_id": [101, 101],
+            "listing_id": [11, 11],
             "bid_price": [0.595, 0.605],
             "bid_size": [30.0, 35.0],
             "ask_price": [0.615, 0.625],
@@ -95,37 +92,37 @@ class TestBookSnapshot:
     def test_returns_correct_listing(self):
         store = _make_store(_market_df(), _fills_df(), _intents_df())
         ts = pd.Timestamp("2026-01-23 10:30:01", tz="UTC")
-        result = store.book_snapshot(ts, listing=(1, 101))
-        assert (1, 101) in result
-        data = result[(1, 101)]
+        result = store.book_snapshot(ts, listing=11)
+        assert 11 in result
+        data = result[11]
         assert data["bids"][0][0] == pytest.approx(0.59)
         assert data["asks"][0][0] == pytest.approx(0.61)
 
     def test_finds_latest_row_before_timestamp(self):
         store = _make_store(_market_df(), _fills_df(), _intents_df())
         ts = pd.Timestamp("2026-01-23 10:30:01.500", tz="UTC")
-        result = store.book_snapshot(ts, listing=(1, 101))
-        data = result[(1, 101)]
+        result = store.book_snapshot(ts, listing=11)
+        data = result[11]
         assert data["bids"][0][0] == pytest.approx(0.59)
 
     def test_returns_all_listings_when_no_filter(self):
         store = _make_store(_market_df(), _fills_df(), _intents_df())
         ts = pd.Timestamp("2026-01-23 10:30:02", tz="UTC")
         result = store.book_snapshot(ts)
-        assert (1, 101) in result
-        assert (2, 201) in result
+        assert 11 in result
+        assert 22 in result
 
     def test_before_first_row_returns_empty(self):
         store = _make_store(_market_df(), _fills_df(), _intents_df())
         ts = pd.Timestamp("2026-01-23 09:00:00", tz="UTC")
-        result = store.book_snapshot(ts, listing=(1, 101))
-        assert (1, 101) not in result
+        result = store.book_snapshot(ts, listing=11)
+        assert 11 not in result
 
     def test_depth_levels_populated(self):
         store = _make_store(_market_df(), _fills_df(), _intents_df())
         ts = pd.Timestamp("2026-01-23 10:30:03", tz="UTC")
-        result = store.book_snapshot(ts, listing=(1, 101))
-        data = result[(1, 101)]
+        result = store.book_snapshot(ts, listing=11)
+        data = result[11]
         assert len(data["bids"]) == 2
         assert len(data["asks"]) == 2
 
@@ -134,21 +131,21 @@ class TestIntentAt:
     def test_returns_most_recent_intent(self):
         store = _make_store(_market_df(), _fills_df(), _intents_df())
         ts = pd.Timestamp("2026-01-23 10:30:01", tz="UTC")
-        result = store.intent_at(ts, listing=(1, 101))
-        assert (1, 101) in result
-        assert result[(1, 101)]["bid_price"] == pytest.approx(0.595)
+        result = store.intent_at(ts, listing=11)
+        assert 11 in result
+        assert result[11]["bid_price"] == pytest.approx(0.595)
 
     def test_second_intent_at_later_time(self):
         store = _make_store(_market_df(), _fills_df(), _intents_df())
         ts = pd.Timestamp("2026-01-23 10:30:03", tz="UTC")
-        result = store.intent_at(ts, listing=(1, 101))
-        assert result[(1, 101)]["bid_price"] == pytest.approx(0.605)
+        result = store.intent_at(ts, listing=11)
+        assert result[11]["bid_price"] == pytest.approx(0.605)
 
     def test_returns_empty_before_first_intent(self):
         store = _make_store(_market_df(), _fills_df(), _intents_df())
         ts = pd.Timestamp("2026-01-23 10:30:00.050", tz="UTC")
-        result = store.intent_at(ts, listing=(1, 101))
-        assert (1, 101) not in result
+        result = store.intent_at(ts, listing=11)
+        assert 11 not in result
 
     def test_empty_when_no_intents(self):
         store = _make_store(_market_df(), _fills_df(), pd.DataFrame())
@@ -174,7 +171,7 @@ class TestFillsNear:
     def test_listing_filter(self):
         store = _make_store(_market_df(), _fills_df(), _intents_df())
         ts = pd.Timestamp("2026-01-23 10:30:00", tz="UTC")
-        result = store.fills_near(ts, listing=(2, 201))
+        result = store.fills_near(ts, listing=22)
         assert len(result) == 0
 
     def test_empty_fills_returns_empty(self):

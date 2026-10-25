@@ -10,7 +10,7 @@ import pytest
 
 from gnomepy.importer.tardis.book import L2Book
 from gnomepy.importer.tardis.mappings import build_mbp10_df, mbp10_import_config
-from gnomepy.java.enums import SchemaType
+from gnomepy.java.enums import RecordType
 
 
 # ---------------------------------------------------------------------------
@@ -244,58 +244,57 @@ class TestBuildMbp10Df:
 # ---------------------------------------------------------------------------
 
 class TestMbp10ImportConfig:
-    def test_schema_type(self):
-        config = mbp10_import_config(1, 2)
-        assert config.schema_type == SchemaType.MBP_10
+    def test_record_type(self):
+        config = mbp10_import_config(1)
+        assert config.record_type == RecordType.MBP_10
 
-    def test_security_and_exchange_ids(self):
-        config = mbp10_import_config(42, 7)
-        assert config.security_id == 42
-        assert config.exchange_id == 7
+    def test_stream_id(self):
+        config = mbp10_import_config(42)
+        assert config.stream_id == 42
 
     def test_timestamp_field(self):
-        config = mbp10_import_config(1, 1)
+        config = mbp10_import_config(1)
         assert config.timestamp_field == "timestamp_event"
 
     def test_field_count(self):
-        config = mbp10_import_config(1, 1)
+        config = mbp10_import_config(1)
         # 2 timestamps + price + size + action + side + depth + 10 levels × 4 fields = 47
         assert len(config.field_mappings) == 47
 
     def test_timestamp_transforms_use_epoch_us(self):
-        config = mbp10_import_config(1, 1)
+        config = mbp10_import_config(1)
         ts_mappings = [m for m in config.field_mappings if m.transform == "timestamp"]
         assert all(m.timestamp_format == "epoch_us" for m in ts_mappings)
 
     def test_level_price_transforms_are_price(self):
-        config = mbp10_import_config(1, 1)
+        config = mbp10_import_config(1)
         price_fields = [m for m in config.field_mappings if "price" in m.target_field and m.target_field != "trade_price"]
         assert all(m.transform == "price" for m in price_fields)
 
     def test_depth_uses_none_transform(self):
-        config = mbp10_import_config(1, 1)
+        config = mbp10_import_config(1)
         depth_mapping = next(m for m in config.field_mappings if m.target_field == "depth")
         assert depth_mapping.transform == "none"
 
     def test_action_enum_map_covers_all_values(self):
-        config = mbp10_import_config(1, 1)
+        config = mbp10_import_config(1)
         action_mapping = next(m for m in config.field_mappings if m.target_field == "action")
         assert "Trade" in action_mapping.enum_map
         assert "None_" in action_mapping.enum_map
 
     def test_side_enum_map_covers_all_values(self):
-        config = mbp10_import_config(1, 1)
+        config = mbp10_import_config(1)
         side_mapping = next(m for m in config.field_mappings if m.target_field == "side")
         assert "Bid" in side_mapping.enum_map
         assert "Ask" in side_mapping.enum_map
         assert "None_" in side_mapping.enum_map
 
     def test_bucket_override(self):
-        config = mbp10_import_config(1, 1, bucket="my-bucket")
+        config = mbp10_import_config(1, bucket="my-bucket")
         assert config.bucket == "my-bucket"
 
     def test_defaults_contain_timestamp_sent(self):
-        config = mbp10_import_config(1, 1)
+        config = mbp10_import_config(1)
         assert config.defaults.get("timestamp_sent") == 0
 
 
@@ -345,7 +344,11 @@ class TestTardisImporter:
         listing = MagicMock()
         listing.exchange_id = exchange_id
         listing.security_id = security_id
+        listing.listing_id = 77
         registry.get_listing.return_value = [listing]
+        stream = MagicMock()
+        stream.stream_id = 700
+        registry.get_streams.return_value = [stream]
         return registry
 
     def _sample_l2_df(self):

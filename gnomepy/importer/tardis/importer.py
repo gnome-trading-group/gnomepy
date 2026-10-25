@@ -36,8 +36,8 @@ class TardisImportRequest:
 class TardisImportResult:
     exchange: str
     symbol: str
-    security_id: int
-    exchange_id: int
+    listing_id: int
+    stream_id: int
     days_processed: int
     days_skipped: int
     total_records: int
@@ -64,16 +64,16 @@ class TardisImporter:
         return results
 
     def _run_symbol(self, request: TardisImportRequest, symbol: str) -> TardisImportResult:
-        security_id, exchange_id = self._resolve(request.exchange, symbol)
-        config = mbp10_import_config(security_id, exchange_id, bucket=request.bucket)
+        listing_id, stream_id = self._resolve(request.exchange, symbol)
+        config = mbp10_import_config(stream_id, bucket=request.bucket)
         job = ImportJob(config, s3_client=self._s3)
         client = self._client or TardisClient(api_key=request.api_key)
 
         result = TardisImportResult(
             exchange=request.exchange,
             symbol=symbol,
-            security_id=security_id,
-            exchange_id=exchange_id,
+            listing_id=listing_id,
+            stream_id=stream_id,
             days_processed=0,
             days_skipped=0,
             total_records=0,
@@ -122,6 +122,7 @@ class TardisImporter:
         return result
 
     def _resolve(self, tardis_exchange: str, tardis_symbol: str) -> tuple[int, int]:
+        """The listing for a Tardis symbol, and its book stream."""
         gnome_name = TARDIS_EXCHANGE_NAMES.get(tardis_exchange)
         if gnome_name is None:
             raise ValueError(
@@ -146,7 +147,11 @@ class TardisImporter:
                 f"Symbol {tardis_symbol!r} not found in gnome registry for exchange {gnome_name!r}. "
                 "Register the listing first."
             )
-        return listings[0].security_id, exchange_id
+        listing_id = listings[0].listing_id
+        streams = registry.get_streams(listing_id=listing_id)
+        if not streams:
+            raise ValueError(f"Listing {listing_id} for {tardis_symbol!r} has no book stream in the gnome registry")
+        return listing_id, streams[0].stream_id
 
 
 def _load_day(

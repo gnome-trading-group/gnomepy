@@ -30,7 +30,7 @@ _U16 = struct.Struct("<H")
 _STREAM_BLOCK = struct.Struct("<HH")
 _COLUMN_BLOCK = struct.Struct("<HHB")
 
-# Template ids of the metric messages in gnome-schemas' schema.xml.
+# Template ids of the metric messages in gnome-schemas' core.xml.
 METRIC_ROW_TEMPLATE = 15
 METRIC_STREAM_TEMPLATE = 16
 METRIC_COLUMN_TEMPLATE = 17

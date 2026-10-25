@@ -32,7 +32,7 @@ def build_event_records(
     windowed_b: WindowedData | None = None,
     label_fn=None,
 ) -> list[dict]:
-    _label = label_fn or (lambda eid, sid: f"{eid}/{sid}")
+    _label = label_fn or str
     rows: list[dict] = []
     rows.extend(_fill_records(windowed_a.fills, source="A", label_fn=_label))
     rows.extend(_intent_records(windowed_a.intents, source="A", label_fn=_label))
@@ -54,10 +54,10 @@ def _ts_str(ts: pd.Timestamp) -> str:
 def _fill_records(fills: pd.DataFrame, source: str, label_fn=None) -> list[dict]:
     if fills.empty:
         return []
-    has_listing = "exchange_id" in fills.columns and "security_id" in fills.columns
+    has_listing = "listing_id" in fills.columns
     rows = []
     for ts, row in fills.iterrows():
-        listing = label_fn(int(row["exchange_id"]), int(row["security_id"])) if has_listing and label_fn else None
+        listing = label_fn(int(row["listing_id"])) if has_listing and label_fn and pd.notna(row["listing_id"]) else None
         rows.append({
             "_ts": ts.value,
             "timestamp_iso": ts.isoformat(),
@@ -81,7 +81,7 @@ def _fill_records(fills: pd.DataFrame, source: str, label_fn=None) -> list[dict]
 def _intent_records(intents: pd.DataFrame, source: str, label_fn=None) -> list[dict]:
     if intents.empty:
         return []
-    has_listing = "exchange_id" in intents.columns and "security_id" in intents.columns
+    has_listing = "listing_id" in intents.columns
     rows = []
     for ts, row in intents.iterrows():
         bid_p = row.get("bid_price", 0)
@@ -97,7 +97,7 @@ def _intent_records(intents: pd.DataFrame, source: str, label_fn=None) -> list[d
             side = "Take"
         else:
             continue
-        listing = label_fn(int(row["exchange_id"]), int(row["security_id"])) if has_listing and label_fn else None
+        listing = label_fn(int(row["listing_id"])) if has_listing and label_fn and pd.notna(row["listing_id"]) else None
         rows.append({
             "_ts": ts.value,
             "timestamp_iso": ts.isoformat(),
@@ -121,10 +121,10 @@ def _intent_records(intents: pd.DataFrame, source: str, label_fn=None) -> list[d
 def _order_records(orders: pd.DataFrame, source: str, label_fn=None) -> list[dict]:
     if orders.empty:
         return []
-    has_listing = "exchange_id" in orders.columns and "security_id" in orders.columns
+    has_listing = "listing_id" in orders.columns
     rows = []
     for ts, row in orders.iterrows():
-        listing = label_fn(int(row["exchange_id"]), int(row["security_id"])) if has_listing and label_fn else None
+        listing = label_fn(int(row["listing_id"])) if has_listing and label_fn and pd.notna(row["listing_id"]) else None
         avg_fill = float(row.get("avg_fill_price", 0))
         rows.append({
             "_ts": ts.value,

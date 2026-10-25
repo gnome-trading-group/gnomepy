@@ -26,11 +26,10 @@ def _ts(*seconds: int) -> pd.DatetimeIndex:
     return pd.DatetimeIndex([base + pd.Timedelta(seconds=s) for s in seconds], name="timestamp")
 
 
-def _market(mids: list[float], seconds: list[int], security_id: int = 1) -> pd.DataFrame:
+def _market(mids: list[float], seconds: list[int], listing_id: int = 1) -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "exchange_id": [1] * len(mids),
-            "security_id": [security_id] * len(mids),
+            "listing_id": [listing_id] * len(mids),
             "bid_price_0": [m - 0.5 for m in mids],
             "ask_price_0": [m + 0.5 for m in mids],
         },
@@ -40,7 +39,7 @@ def _market(mids: list[float], seconds: list[int], security_id: int = 1) -> pd.D
 
 def _fill(second: int, side: str, qty: float, price: float, fee: float = 0.0) -> pd.DataFrame:
     return pd.DataFrame(
-        {"exchange_id": [1], "security_id": [1], "side": [side], "fill_qty": [qty], "fill_price": [price], "fee": [fee]},
+        {"listing_id": [1], "side": [side], "fill_qty": [qty], "fill_price": [price], "fee": [fee]},
         index=_ts(second),
     )
 
@@ -77,8 +76,8 @@ class TestMidPrice:
         assert list(mid_price(df)) == [100.0, 100.0]
 
     def test_mid_does_not_leak_across_listings(self):
-        a = _market([100.0], [0], security_id=1)
-        b = _market([50.0], [1], security_id=2)
+        a = _market([100.0], [0], listing_id=1)
+        b = _market([50.0], [1], listing_id=2)
         b.loc[b.index[0], ["bid_price_0", "ask_price_0"]] = np.nan
         mids = mid_price(pd.concat([a, b]))
         assert mids.iloc[0] == 100.0
@@ -132,7 +131,7 @@ class TestResultScaling:
 
     def test_null_book_sides_read_as_nan(self):
         market = pd.DataFrame(
-            {"exchange_id": [1], "security_id": [1], "bid_price_0": [np.nan], "ask_price_0": [0.5]}, index=_ts(0)
+            {"listing_id": [1], "bid_price_0": [np.nan], "ask_price_0": [0.5]}, index=_ts(0)
         )
         raw = BacktestResults.from_dataframes(market_df=market).market_records_df(scale_prices=False)
         assert np.isnan(raw["bid_price_0"].iloc[0])
@@ -180,8 +179,8 @@ def test_sbe_nulls_from_the_java_recorder_become_nan():
     null = np.iinfo(np.int64).min
     recorder = _FakeMarketRecorder({
         "timestamp": [1, 2],
-        "exchange_id": [1, 1],
-        "security_id": [1, 1],
+        "stream_id": [7, 7],
+        "listing_id": [1, 0],
         "bid_price_0": [null, 400_000_000],
         "ask_price_0": [500_000_000, 600_000_000],
         "bid_size_0": [null, 3_000_000],
@@ -194,6 +193,8 @@ def test_sbe_nulls_from_the_java_recorder_become_nan():
     assert np.isnan(df["bid_size_0"].iloc[0])
     assert df["bid_price_0"].iloc[1] == pytest.approx(0.4)
     assert df["last_trade_price"].isna().all()
+    assert df["listing_id"].iloc[0] == 1
+    assert pd.isna(df["listing_id"].iloc[1])
 
 
 class _FakeOrderRecorder:
@@ -256,12 +257,12 @@ def test_market_order_price_is_nan_not_the_sbe_null():
 
 
 def test_final_position_is_nan_across_several_listings():
-    a = _market([100.0, 101.0], [0, 10], security_id=1)
-    b = _market([50.0, 51.0], [0, 10], security_id=2)
+    a = _market([100.0, 101.0], [0, 10], listing_id=1)
+    b = _market([50.0, 51.0], [0, 10], listing_id=2)
     fills = pd.concat([
         _fill(0, "Bid", 1.0, 100.0),
         pd.DataFrame(
-            {"exchange_id": [1], "security_id": [2], "side": ["Ask"], "fill_qty": [3.0], "fill_price": [50.0],
+            {"listing_id": [2], "side": ["Ask"], "fill_qty": [3.0], "fill_price": [50.0],
              "fee": [0.0]},
             index=_ts(0),
         ),

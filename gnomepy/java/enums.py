@@ -128,7 +128,9 @@ class RejectReason(Enum):
         return cls(name)
 
 
-class SchemaType(Enum):
+class RecordType(Enum):
+    """A kind of stream record, by the name it is stored under (see group.gnometrading.schemas.RecordType)."""
+
     MBO = "mbo"
     MBP_10 = "mbp-10"
     MBP_1 = "mbp-1"
@@ -140,11 +142,11 @@ class SchemaType(Enum):
     OHLCV_1H = "ohlcv-1h"
 
     def to_java(self):
-        """Convert to Java SchemaType enum."""
+        """Convert to the Java RecordType enum."""
         import jpype
-        JavaSchemaType = jpype.JClass("group.gnometrading.schemas.SchemaType")
-        return JavaSchemaType.findById(self.value)
+        JavaRecordType = jpype.JClass("group.gnometrading.schemas.RecordType")
+        return JavaRecordType.forIdentifier(self.value)
 
     @classmethod
-    def from_java(cls, java_enum) -> SchemaType:
-        return cls(str(java_enum.getIdentifier()))
+    def from_java(cls, java_enum) -> RecordType:
+        return cls(str(java_enum.identifier()))

@@ -19,7 +19,8 @@ from gnomepy.java._jvm import STRATEGY_JVM_OPTIONS, ensure_jvm_started
 from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.oms import PositionViewWrapper
 from gnomepy.java.recorder import MetricRecorder
-from gnomepy.java.schemas import wrap_schema
+from gnomepy.java.schemas import wrap_record
+from gnomepy.java.streams import StreamDirectory
 from gnomepy.java.strategy.config import SessionConfig, StrategyConfig
 
 
@@ -56,12 +57,25 @@ def _create_strategy_callback(py_strategy: Strategy):
         @JOverride
         def onMarketData(self, data):
             try:
-                wrapped = wrap_schema(data)
+                wrapped = wrap_record(data)
                 intents = py_strategy.on_market_data(wrapped)
                 return _to_java_list(intents)
             except Exception:
                 traceback.print_exc()
                 raise
+
+        @JOverride
+        def onStreamEvent(self, streamId, record):
+            try:
+                intents = py_strategy.on_stream_event(int(streamId), wrap_record(record))
+                return _to_java_list(intents)
+            except Exception:
+                traceback.print_exc()
+                raise
+
+        @JOverride
+        def onStreams(self, streams):
+            py_strategy._streams = StreamDirectory(streams)
 
         @JOverride
         def onExecutionReport(self, report):

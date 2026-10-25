@@ -76,7 +76,7 @@ class ImportJob:
         chunks = chunk_by_minute(df, ts_ns)
         config = self.config
         sample_keys = [
-            build_s3_key(config.security_id, config.exchange_id, config.schema_type, dt)
+            build_s3_key(config.stream_id, config.record_type, dt)
             for dt in sorted(chunks)[:5]
         ]
         return DryRunResult(
@@ -112,12 +112,7 @@ class ImportJob:
         for minute_dt, chunk_df in sorted(chunks.items()):
             raw = encode_chunk(chunk_df, self.config)
             compressed = compress(raw)
-            key = build_s3_key(
-                self.config.security_id,
-                self.config.exchange_id,
-                self.config.schema_type,
-                minute_dt,
-            )
+            key = build_s3_key(self.config.stream_id, self.config.record_type, minute_dt)
             upload(s3, bucket, key, compressed)
             files_uploaded += 1
             total_records += len(chunk_df)

@@ -10,9 +10,9 @@ import pandas as pd
 import zstandard
 
 from gnomepy.java._jvm import ensure_jvm_started
-from gnomepy.java.enums import SchemaType
+from gnomepy.java.enums import RecordType
 from gnomepy.java.sbe import get_message
-from gnomepy.java.schemas import Schema, get_schema_class, wrap_schema
+from gnomepy.java.schemas import StreamRecord, wrap_record
 from gnomepy.java.statics import Scales
 
 
@@ -20,80 +20,52 @@ _ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 
 
 class DataStore:
-    def __init__(self, data: bytes, schema_type: SchemaType):
+    """Records of one stream, from stored bytes or already decoded.
+
+    ``record_type`` names the columns ``to_df`` scales; the bytes themselves are walked message by message, so a file
+    written either side of a schema change reads the same.
+    """
+
+    def __init__(self, data: bytes, record_type: RecordType):
         if data[:4] == _ZSTD_MAGIC:
             data = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(data)).read()
         self._data: bytes | None = data
-        self._schemas: list[Schema] | None = None
-        self._schema_type = schema_type
+        self._records: list[StreamRecord] | None = None
+        self._record_type = record_type
 
     @classmethod
     def from_bytes(
         cls,
         data: bytes | io.BytesIO | io.RawIOBase | io.BufferedIOBase,
-        schema_type: SchemaType,
+        record_type: RecordType,
     ) -> DataStore:
         if isinstance(data, (bytes, bytearray)):
             raw = bytes(data)
         else:
             raw = data.read()
-        return cls(raw, schema_type)
+        return cls(raw, record_type)
 
     @classmethod
-    def from_schemas(cls, schemas: list[Schema], schema_type: SchemaType) -> DataStore:
+    def from_records(cls, records: list[StreamRecord], record_type: RecordType) -> DataStore:
         instance = object.__new__(cls)
         instance._data = None
-        instance._schemas = schemas
-        instance._schema_type = schema_type
+        instance._records = records
+        instance._record_type = record_type
         return instance
 
-    def _migrate_if_needed(self) -> None:
-        if not self._data or len(self._data) < 8:
-            return
-        schema_cls = get_schema_class(self._schema_type)
-        JavaClass = jpype.JClass(schema_cls._java_class)
-        proto = JavaClass()
-        java_bytes = jpype.JArray(jpype.JByte)(self._data)
-        migrated = proto.migrateIfNeeded(java_bytes)
-        self._data = bytes(migrated)
+    def _decoded(self) -> list[StreamRecord]:
+        if self._records is None:
+            ensure_jvm_started()
+            stream_entry = jpype.JClass("group.gnometrading.data.StreamEntry")
+            java_records = stream_entry.decode(jpype.JArray(jpype.JByte)(self._data or b""))
+            self._records = [wrap_record(record) for record in java_records]
+        return self._records
 
-    def __iter__(self) -> Iterator[Schema]:
-        if self._schemas is not None:
-            yield from self._schemas
-            return
-
-        ensure_jvm_started()
-
-        schema_cls = get_schema_class(self._schema_type)
-        JavaClass = jpype.JClass(schema_cls._java_class)
-        UnsafeBuffer = jpype.JClass("org.agrona.concurrent.UnsafeBuffer")
-
-        proto = JavaClass()
-        msg_size = int(proto.totalMessageSize())
-
-        self._migrate_if_needed()
-
-        java_bytes = jpype.JArray(jpype.JByte)(self._data)
-        src_buf = UnsafeBuffer(java_bytes)
-
-        offset = 0
-        data_len = len(self._data)
-        while offset + msg_size <= data_len:
-            schema = JavaClass()
-            schema.buffer.putBytes(0, src_buf, offset, msg_size)
-            yield wrap_schema(schema)
-            offset += msg_size
+    def __iter__(self) -> Iterator[StreamRecord]:
+        yield from self._decoded()
 
     def __len__(self) -> int:
-        if self._schemas is not None:
-            return len(self._schemas)
-        ensure_jvm_started()
-        # Older-version records have a different size, so count only after migrating.
-        self._migrate_if_needed()
-        schema_cls = get_schema_class(self._schema_type)
-        proto = jpype.JClass(schema_cls._java_class)()
-        msg_size = int(proto.totalMessageSize())
-        return len(self._data) // msg_size
+        return len(self._decoded())
 
     def to_df(
         self,
@@ -108,7 +80,7 @@ class DataStore:
             return pd.DataFrame()
 
         df = pd.DataFrame(rows)
-        msg = get_message(self._schema_type)
+        msg = get_message(self._record_type)
 
         if replace_nulls:
             for col, null_val in msg.null_fields.items():
@@ -126,9 +98,9 @@ class DataStore:
 
         return df
 
-    def replay(self, callback: Callable[[Schema], None]) -> None:
-        for schema in self:
-            callback(schema)
+    def replay(self, callback: Callable[[StreamRecord], None]) -> None:
+        for record in self:
+            callback(record)
 
 
 def _apply_scaling(

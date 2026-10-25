@@ -25,14 +25,14 @@ def mid_price(market_df: pd.DataFrame) -> pd.Series:
 
     Defined only while both sides are quoted: a one-sided book has no mid, so
     the last two-sided mid stands until the book is two-sided again. Carrying
-    forward within each ``(exchange_id, security_id)`` keeps one listing's mid
-    from leaking into another's rows.
+    forward within each ``listing_id`` keeps one listing's mid from leaking into
+    another's rows.
     """
     bid = market_df["bid_price_0"].astype(float)
     ask = market_df["ask_price_0"].astype(float)
     mid = ((bid + ask) / 2.0).where((bid > 0) & (ask > 0))
-    if "exchange_id" in market_df.columns and "security_id" in market_df.columns:
-        return mid.groupby([market_df["exchange_id"], market_df["security_id"]], sort=False).ffill()
+    if "listing_id" in market_df.columns:
+        return mid.groupby(market_df["listing_id"], sort=False).ffill()
     return mid.ffill()
 
 
@@ -51,7 +51,7 @@ def _signed_fills(executions_df: pd.DataFrame) -> pd.DataFrame:
     if executions_df is None or executions_df.empty:
         return pd.DataFrame(
             columns=[
-                "exchange_id", "security_id", "side",
+                "listing_id", "side",
                 "fill_qty", "fill_price", "fee",
                 "signed_qty", "cash_flow",
             ],
@@ -71,7 +71,7 @@ def _signed_fills(executions_df: pd.DataFrame) -> pd.DataFrame:
 
 def _per_symbol_cumsums(fills: pd.DataFrame) -> pd.DataFrame:
     """Compute running ``position``, ``cash``, ``cum_fees``, ``cum_volume``
-    per ``(exchange_id, security_id)`` via grouped cumsums.
+    per ``listing_id`` via grouped cumsums.
 
     Returns a DataFrame indexed like *fills* with the four cumulative columns
     appended.
@@ -85,16 +85,14 @@ def _per_symbol_cumsums(fills: pd.DataFrame) -> pd.DataFrame:
             cum_notional=pd.Series(dtype=float),
         )
 
-    grp = fills.groupby(["exchange_id", "security_id"], sort=False)
+    grp = fills.groupby("listing_id", sort=False)
     fills = fills.copy()
     fills["position"] = grp["signed_qty"].cumsum()
     fills["cash"] = grp["cash_flow"].cumsum()
-    fills["cum_fees"] = fills["fee"].fillna(0.0).groupby(
-        [fills["exchange_id"], fills["security_id"]], sort=False,
-    ).cumsum()
+    fills["cum_fees"] = fills["fee"].fillna(0.0).groupby(fills["listing_id"], sort=False).cumsum()
     fills["cum_volume"] = grp["fill_qty"].cumsum()
     fills["cum_notional"] = (fills["fill_qty"].astype(float) * fills["fill_price"].astype(float)).groupby(
-        [fills["exchange_id"], fills["security_id"]], sort=False,
+        fills["listing_id"], sort=False,
     ).cumsum()
     return fills
 
@@ -108,38 +106,38 @@ class Curves:
     """Tick-level time series produced by :func:`build_curves`.
 
     Every metric is available as both a total (``pd.Series``) and a
-    per-symbol breakdown (``pd.DataFrame`` with ``(eid, sid)`` columns).
+    per-listing breakdown (``pd.DataFrame`` with one column per ``listing_id``).
     """
 
     pnl: pd.Series
     """Net PnL (cash + position * mid) summed across all symbols."""
 
     pnl_by_symbol: pd.DataFrame
-    """Net PnL per ``(exchange_id, security_id)``."""
+    """Net PnL per ``listing_id``."""
 
     position: pd.Series
     """Total position summed across all symbols."""
 
     position_by_symbol: pd.DataFrame
-    """Position per ``(exchange_id, security_id)``."""
+    """Position per ``listing_id``."""
 
     fees: pd.Series
     """Cumulative fees summed across all symbols."""
 
     fees_by_symbol: pd.DataFrame
-    """Cumulative fees per ``(exchange_id, security_id)``."""
+    """Cumulative fees per ``listing_id``."""
 
     volume: pd.Series
     """Cumulative traded quantity (unsigned) summed across all symbols."""
 
     volume_by_symbol: pd.DataFrame
-    """Cumulative traded quantity per ``(exchange_id, security_id)``."""
+    """Cumulative traded quantity per ``listing_id``."""
 
     notional: pd.Series
     """Cumulative notional volume (qty * price) summed across all symbols."""
 
     notional_by_symbol: pd.DataFrame
-    """Cumulative notional volume per ``(exchange_id, security_id)``."""
+    """Cumulative notional volume per ``listing_id``."""
 
     fills: pd.DataFrame
     """The filtered, signed fills frame (for downstream use)."""
@@ -197,35 +195,33 @@ def build_curves(
     n = len(mkt)
 
     full_seq = range(n)
-    sym_pnl_cols: dict[tuple, pd.Series] = {}
-    sym_fees_cols: dict[tuple, pd.Series] = {}
-    sym_vol_cols: dict[tuple, pd.Series] = {}
-    sym_notional_cols: dict[tuple, pd.Series] = {}
-    position_cols: dict[tuple, pd.Series] = {}
+    sym_pnl_cols: dict[int, pd.Series] = {}
+    sym_fees_cols: dict[int, pd.Series] = {}
+    sym_vol_cols: dict[int, pd.Series] = {}
+    sym_notional_cols: dict[int, pd.Series] = {}
+    position_cols: dict[int, pd.Series] = {}
 
-    for (eid, sid), mkt_grp in mkt.groupby(["exchange_id", "security_id"], sort=False):
+    for lid, mkt_grp in mkt.groupby("listing_id", sort=False):
         mkt_rows = mkt_grp.reset_index()
         seq_vals = mkt_rows["_seq"].values
 
         zeros = pd.Series(0.0, index=seq_vals)
         if fills.empty:
-            sym_pnl_cols[(eid, sid)] = zeros.copy()
-            sym_fees_cols[(eid, sid)] = zeros.copy()
-            sym_vol_cols[(eid, sid)] = zeros.copy()
-            sym_notional_cols[(eid, sid)] = zeros.copy()
-            position_cols[(eid, sid)] = zeros.copy()
+            sym_pnl_cols[lid] = zeros.copy()
+            sym_fees_cols[lid] = zeros.copy()
+            sym_vol_cols[lid] = zeros.copy()
+            sym_notional_cols[lid] = zeros.copy()
+            position_cols[lid] = zeros.copy()
             continue
 
-        sym_fills = fills[
-            (fills["exchange_id"] == eid) & (fills["security_id"] == sid)
-        ]
+        sym_fills = fills[fills["listing_id"] == lid]
 
         if sym_fills.empty:
-            sym_pnl_cols[(eid, sid)] = zeros.copy()
-            sym_fees_cols[(eid, sid)] = zeros.copy()
-            sym_vol_cols[(eid, sid)] = zeros.copy()
-            sym_notional_cols[(eid, sid)] = zeros.copy()
-            position_cols[(eid, sid)] = zeros.copy()
+            sym_pnl_cols[lid] = zeros.copy()
+            sym_fees_cols[lid] = zeros.copy()
+            sym_vol_cols[lid] = zeros.copy()
+            sym_notional_cols[lid] = zeros.copy()
+            position_cols[lid] = zeros.copy()
             continue
 
         state = sym_fills[["position", "cash", "cum_fees", "cum_volume", "cum_notional"]].reset_index()
@@ -240,18 +236,18 @@ def build_curves(
         ).fillna(0.0)
 
         mid = merged["mid_price"].astype(float)
-        sym_pnl_cols[(eid, sid)] = pd.Series(
+        sym_pnl_cols[lid] = pd.Series(
             merged["cash"].values + merged["position"].values * mid.values,
             index=seq_vals,
         )
-        sym_fees_cols[(eid, sid)] = pd.Series(merged["cum_fees"].values, index=seq_vals)
-        sym_vol_cols[(eid, sid)] = pd.Series(merged["cum_volume"].values, index=seq_vals)
-        sym_notional_cols[(eid, sid)] = pd.Series(merged["cum_notional"].values, index=seq_vals)
-        position_cols[(eid, sid)] = pd.Series(merged["position"].values, index=seq_vals)
+        sym_fees_cols[lid] = pd.Series(merged["cum_fees"].values, index=seq_vals)
+        sym_vol_cols[lid] = pd.Series(merged["cum_volume"].values, index=seq_vals)
+        sym_notional_cols[lid] = pd.Series(merged["cum_notional"].values, index=seq_vals)
+        position_cols[lid] = pd.Series(merged["position"].values, index=seq_vals)
 
     ts_index = mkt.index
 
-    def _combine(cols: dict[tuple, pd.Series]) -> tuple[pd.Series, pd.DataFrame]:
+    def _combine(cols: dict[int, pd.Series]) -> tuple[pd.Series, pd.DataFrame]:
         if not cols:
             zeros = pd.Series(0.0, index=full_seq, dtype=float)
             return zeros, pd.DataFrame(index=ts_index, dtype=float)

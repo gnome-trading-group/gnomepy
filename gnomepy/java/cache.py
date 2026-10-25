@@ -14,9 +14,10 @@ _DEFAULT_CACHE_DIR = Path.home() / ".gnomepy" / "cache" / "market_data"
 class MarketDataCache:
     """Local disk cache for raw S3 market data objects.
 
-    Keys are S3 object keys (e.g. ``mbo/1/2/2024/01/15/09/30.sbe.zst``),
-    stored as-is under the cache root directory. Market data is immutable
-    historical data so no TTL is needed; use :meth:`clear` to evict manually.
+    Objects are stored under ``{bucket}/{key}`` (e.g.
+    ``gnome-market-data-prod/31/book/mbp-10/2026/01/15/09/30.zst``), so the same key in the dev and prod buckets
+    never shares a file. Market data is immutable historical data so no TTL is needed; use :meth:`clear` to evict
+    manually.
     """
 
     def __init__(self, cache_dir: Path | str | None = None):
@@ -25,15 +26,15 @@ class MarketDataCache:
             cache_dir = env_dir if env_dir else _DEFAULT_CACHE_DIR
         self._root = Path(cache_dir)
 
-    def _key_to_path(self, s3_key: str) -> Path:
-        clean = s3_key.lstrip("/")
+    def _key_to_path(self, bucket: str, s3_key: str) -> Path:
+        clean = f"{bucket.strip('/')}/{s3_key.lstrip('/')}"
         path = (self._root / clean).resolve()
         if not str(path).startswith(str(self._root.resolve())):
-            raise ValueError(f"S3 key escapes cache root: {s3_key!r}")
+            raise ValueError(f"S3 key escapes cache root: {bucket!r}/{s3_key!r}")
         return self._root / clean
 
-    def get(self, s3_key: str) -> bytes | None:
-        path = self._key_to_path(s3_key)
+    def get(self, bucket: str, s3_key: str) -> bytes | None:
+        path = self._key_to_path(bucket, s3_key)
         if not path.is_file():
             return None
         data = path.read_bytes()
@@ -42,8 +43,8 @@ class MarketDataCache:
             return None
         return data
 
-    def put(self, s3_key: str, data: bytes) -> Path:
-        path = self._key_to_path(s3_key)
+    def put(self, bucket: str, s3_key: str, data: bytes) -> Path:
+        path = self._key_to_path(bucket, s3_key)
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
         try:
@@ -58,8 +59,8 @@ class MarketDataCache:
             raise
         return path
 
-    def has(self, s3_key: str) -> bool:
-        path = self._key_to_path(s3_key)
+    def has(self, bucket: str, s3_key: str) -> bool:
+        path = self._key_to_path(bucket, s3_key)
         return path.is_file() and path.stat().st_size > 0
 
     def clear(self, prefix: str | None = None) -> int:
@@ -101,6 +102,7 @@ def create_caching_s3_proxy(real_s3_client, cache: MarketDataCache, bucket: str)
 
     Proxy = jpype.JClass("java.lang.reflect.Proxy")
     S3Client = jpype.JClass("software.amazon.awssdk.services.s3.S3Client")
+    GetObjectRequest = jpype.JClass("software.amazon.awssdk.services.s3.model.GetObjectRequest")
     InvocationTargetException = jpype.JClass("java.lang.reflect.InvocationTargetException")
 
     @JImplements("java.lang.reflect.InvocationHandler")
@@ -109,18 +111,18 @@ def create_caching_s3_proxy(real_s3_client, cache: MarketDataCache, bucket: str)
         def invoke(self, proxy, method, args):
             name = str(method.getName())
 
-            if name in ("getObjectAsBytes", "getObject") and args is not None and len(args) >= 1:
+            if name in ("getObjectAsBytes", "getObject") and args is not None and len(args) == 1:
                 request = args[0]
-                try:
-                    key = str(request.key())
-                    req_bucket = str(request.bucket())
-                except Exception:
-                    if name == "getObjectAsBytes":
-                        return real_s3_client.getObjectAsBytes(request)
-                    return real_s3_client.getObject(request)
+                # StreamEntry passes a Consumer<GetObjectRequest.Builder>; the key is only known once it is built.
+                if not isinstance(request, GetObjectRequest):
+                    builder = GetObjectRequest.builder()
+                    request.accept(builder)
+                    request = builder.build()
+                key = str(request.key())
+                req_bucket = str(request.bucket())
 
                 if req_bucket == bucket:
-                    cached = cache.get(key)
+                    cached = cache.get(bucket, key)
                     if cached is not None:
                         logger.debug("market data cache hit: %s", key)
                         if name == "getObjectAsBytes":
@@ -133,14 +135,14 @@ def create_caching_s3_proxy(real_s3_client, cache: MarketDataCache, bucket: str)
                     if name == "getObjectAsBytes":
                         result = real_s3_client.getObjectAsBytes(request)
                         raw = bytes(result.asByteArray())
-                        cache.put(key, raw)
+                        cache.put(bucket, key, raw)
                         return result
                     else:
                         # ResponseInputStream can only be read once
                         result = real_s3_client.getObject(request)
                         raw = bytes(result.readAllBytes())
                         result.close()
-                        cache.put(key, raw)
+                        cache.put(bucket, key, raw)
                         return _response_stream_from_cache(raw)
 
             # Passthrough for all other S3Client methods. method.invoke() wraps exceptions

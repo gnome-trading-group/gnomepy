@@ -210,7 +210,7 @@ def import_tardis(
     )
     results = TardisImporter().run(request)
     for r in results:
-        click.echo(f"{r.exchange} / {r.symbol}  (security_id={r.security_id}, exchange_id={r.exchange_id})")
+        click.echo(f"{r.exchange} / {r.symbol}  (listing_id={r.listing_id}, stream_id={r.stream_id})")
         click.echo(f"  processed: {r.days_processed}  skipped: {r.days_skipped}  records: {r.total_records}")
         for err in r.errors:
             click.echo(f"  error: {err}", err=True)

@@ -5,7 +5,7 @@ from datetime import datetime
 
 import zstandard
 
-from gnomepy.java.enums import SchemaType
+from gnomepy.java.enums import RecordType
 
 
 def default_merged_bucket() -> str:
@@ -13,12 +13,14 @@ def default_merged_bucket() -> str:
     return f"gnome-market-data-merged-{stage}"
 
 
-def build_s3_key(security_id: int, exchange_id: int, schema_type: SchemaType, dt: datetime) -> str:
-    """Build S3 key matching MarketDataEntry.getKey() AGGREGATED format (no zero-padding)."""
+_RECORD_FAMILY = "book"
+
+
+def build_s3_key(stream_id: int, record_type: RecordType, dt: datetime) -> str:
+    """Build the S3 key StreamEntry.getKey() gives an AGGREGATED minute (zero-padded, so keys sort by time)."""
     return (
-        f"{security_id}/{exchange_id}"
-        f"/{dt.year}/{dt.month}/{dt.day}/{dt.hour}/{dt.minute}"
-        f"/{schema_type.value}.zst"
+        f"{stream_id}/{_RECORD_FAMILY}/{record_type.value}"
+        f"/{dt.year:04d}/{dt.month:02d}/{dt.day:02d}/{dt.hour:02d}/{dt.minute:02d}.zst"
     )
 
 

@@ -21,7 +21,7 @@ def chunk_by_minute(df: pd.DataFrame, ts_ns: pd.Series) -> dict[datetime, pd.Dat
     result: dict[datetime, pd.DataFrame] = {}
     for bucket_ns, group in df.groupby("__minute_ns", sort=True):
         group = group.sort_values("__ts_ns").drop(columns=["__ts_ns", "__minute_ns"])
-        # Naive UTC datetime matching Java LocalDateTime used in MarketDataEntry
+        # Naive UTC datetime matching Java LocalDateTime used in StreamEntry
         dt = datetime.fromtimestamp(int(bucket_ns) / 1e9, tz=timezone.utc).replace(tzinfo=None)
         result[dt] = group
 

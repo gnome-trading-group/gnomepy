@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from gnomepy.java.enums import SchemaType
+from gnomepy.java.enums import RecordType
 
 
 @dataclass
@@ -30,11 +30,13 @@ class FieldMapping:
 
 @dataclass
 class ImportConfig:
-    """Complete configuration for one import job (one security, exchange, schema type)."""
+    """Complete configuration for one import job: one stream's records of one type.
 
-    schema_type: SchemaType
-    security_id: int
-    exchange_id: int
+    The stream is the listing's book stream (``RegistryClient().get_streams(listing_id=...)``).
+    """
+
+    record_type: RecordType
+    stream_id: int
     field_mappings: list[FieldMapping]
     # Which target_field holds the event timestamp used for minute-chunking
     timestamp_field: str = "timestamp_event"

@@ -86,10 +86,10 @@ def create_app(
 
     listings = store_a.listings()
     listing_options = [{"label": "All", "value": "all"}] + [
-        {"label": store_a.listing_label(eid, sid), "value": f"{eid}_{sid}"}
-        for eid, sid in listings
+        {"label": store_a.listing_label(lid), "value": str(lid)}
+        for lid in listings
     ]
-    default_listing = "all" if len(listings) > 1 else (f"{listings[0][0]}_{listings[0][1]}" if listings else "all")
+    default_listing = "all" if len(listings) > 1 else (str(listings[0]) if listings else "all")
 
     slider_marks = _build_slider_marks(t_min, t_max)
 
@@ -463,7 +463,7 @@ def _center_window(
 class _FilteredStore:
     """Thin wrapper around ExplorerDataStore that exposes single-listing curves."""
 
-    def __init__(self, store: ExplorerDataStore, listing: tuple[int, int]):
+    def __init__(self, store: ExplorerDataStore, listing: int):
         self.label = store.label
         self.metadata = store.metadata
         self._store = store
@@ -488,22 +488,21 @@ class _FilteredStore:
         proxy.position_by_symbol = type(c.position_by_symbol)()
         return proxy
 
-    def listing_label(self, eid: int, sid: int) -> str:
-        return self._store.listing_label(eid, sid)
+    def listing_label(self, listing_id: int) -> str:
+        return self._store.listing_label(listing_id)
 
 
-def _filtered_store(store: ExplorerDataStore, listing: tuple[int, int]) -> "_FilteredStore":
+def _filtered_store(store: ExplorerDataStore, listing: int) -> "_FilteredStore":
     return _FilteredStore(store, listing)
 
 
-def _parse_listing(value: str | None) -> tuple[int, int] | None:
-    """Parse 'eid_sid' dropdown value to (eid, sid) tuple, or None for 'all'."""
+def _parse_listing(value: str | None) -> int | None:
+    """Parse a listing dropdown value to its listing id, or None for 'all'."""
     if not value or value == "all":
         return None
     try:
-        eid, sid = value.split("_", 1)
-        return int(eid), int(sid)
-    except (ValueError, AttributeError):
+        return int(value)
+    except (ValueError, TypeError):
         return None
 
 
@@ -514,7 +513,7 @@ def _register_callbacks(
     has_signals: bool,
     default_signals: list[str],
     price_decimals: int = 2,
-    listings: list[tuple[int, int]] | None = None,
+    listings: list[int] | None = None,
 ) -> None:
 
     @app.callback(
@@ -797,13 +796,12 @@ def _register_callbacks(
         col_width = max(3, 12 // n) if n > 0 else 12
 
         ladder_cols: list[dbc.Col] = []
-        for eid, sid in active_listings:
-            key = (eid, sid)
-            venue_label = _STORE_A.listing_label(eid, sid)
-            b_data = book_snaps.get(key)
-            i_data = intents.get(key)
-            if not all_fills.empty and "exchange_id" in all_fills.columns:
-                listing_fills = all_fills[(all_fills["exchange_id"] == eid) & (all_fills["security_id"] == sid)]
+        for lid in active_listings:
+            venue_label = _STORE_A.listing_label(lid)
+            b_data = book_snaps.get(lid)
+            i_data = intents.get(lid)
+            if not all_fills.empty and "listing_id" in all_fills.columns:
+                listing_fills = all_fills[all_fills["listing_id"] == lid]
             else:
                 listing_fills = all_fills
             ladder = build_ladder(b_data, i_data, listing_fills, venue_label, pd_, _STORE_A.record_depth)

@@ -9,11 +9,11 @@ import jpype
 from gnomepy.java._jvm import ensure_jvm_started
 from gnomepy.java.cache import MarketDataCache
 from gnomepy.java.datastore import DataStore
-from gnomepy.java.enums import SchemaType
+from gnomepy.java.enums import RecordType
 
 logger = logging.getLogger(__name__)
 
-_MarketDataEntry = None
+_StreamEntry = None
 _EntryType = None
 _LocalDateTime = None
 _S3Client = None
@@ -23,13 +23,13 @@ _UNSET = object()
 
 
 def _resolve_classes():
-    global _MarketDataEntry, _EntryType, _LocalDateTime, _S3Client, _GetObjectRequest
+    global _StreamEntry, _EntryType, _LocalDateTime, _S3Client, _GetObjectRequest
 
-    if _MarketDataEntry is not None:
+    if _StreamEntry is not None:
         return
 
-    _MarketDataEntry = jpype.JClass("group.gnometrading.data.MarketDataEntry")
-    _EntryType = jpype.JClass("group.gnometrading.data.MarketDataEntry$EntryType")
+    _StreamEntry = jpype.JClass("group.gnometrading.data.StreamEntry")
+    _EntryType = jpype.JClass("group.gnometrading.data.StreamEntry$EntryType")
     _LocalDateTime = jpype.JClass("java.time.LocalDateTime")
     _S3Client = jpype.JClass("software.amazon.awssdk.services.s3.S3Client")
     _GetObjectRequest = jpype.JClass("software.amazon.awssdk.services.s3.model.GetObjectRequest")
@@ -46,7 +46,10 @@ def _create_default_s3_client():
 
 
 class MarketDataClient:
-    """Load market data from S3 using the Java MarketDataEntry infrastructure.
+    """Load a stream's stored records from S3 using the Java StreamEntry infrastructure.
+
+    Streams are named by id; a listing's book stream comes from the registry
+    (``RegistryClient().get_streams(listing_id=...)``).
 
     Requires the JVM to be started with the appropriate JARs on the classpath.
     AWS credentials are resolved via the standard Java SDK credential chain
@@ -59,14 +62,13 @@ class MarketDataClient:
     Usage:
         from gnomepy.java._jvm import ensure_jvm_started
         from gnomepy.java.market_data import MarketDataClient
-        from gnomepy.java.enums import SchemaType
+        from gnomepy.java.enums import RecordType
 
         ensure_jvm_started()
         client = MarketDataClient()
-        schemas = client.load(
-            security_id=1,
-            exchange_id=2,
-            schema_type=SchemaType.MBP_10,
+        records = client.load(
+            stream_id=7,
+            record_type=RecordType.MBP_10,
             start=datetime(2024, 1, 15, 9, 30),
             end=datetime(2024, 1, 15, 16, 0),
         )
@@ -93,26 +95,24 @@ class MarketDataClient:
 
     def get_java_entries(
         self,
-        security_id: int,
-        exchange_id: int,
-        schema_type: SchemaType,
+        stream_id: int,
+        record_type: RecordType,
         start: datetime,
         end: datetime,
     ) -> list:
-        """Get raw Java MarketDataEntry objects for use with BacktestDriver.
+        """Get raw Java StreamEntry objects, one per minute, for use with BacktestDriver.
 
-        Returns a list of Java MarketDataEntry objects (not loaded).
+        Returns a list of Java StreamEntry objects (not loaded).
         """
-        java_schema_type = schema_type.to_java()
+        java_record_type = record_type.to_java()
         entries = []
         current = start.replace(second=0, microsecond=0)
 
         while current < end:
             java_dt = _to_java_datetime(current)
-            entries.append(_MarketDataEntry(
-                int(security_id),
-                int(exchange_id),
-                java_schema_type,
+            entries.append(_StreamEntry(
+                int(stream_id),
+                java_record_type,
                 java_dt,
                 _EntryType.AGGREGATED,
             ))
@@ -122,25 +122,23 @@ class MarketDataClient:
 
     def load(
         self,
-        security_id: int,
-        exchange_id: int,
-        schema_type: SchemaType,
+        stream_id: int,
+        record_type: RecordType,
         start: datetime,
         end: datetime,
     ) -> DataStore:
-        """Load market data from S3 (or local cache) for a time range.
+        """Load a stream's records from S3 (or local cache) for a time range.
 
         Args:
-            security_id: Security identifier.
-            exchange_id: Exchange identifier.
-            schema_type: Type of market data schema.
+            stream_id: The stream to load.
+            record_type: Which of the stream's stored record types.
             start: Start datetime (inclusive).
             end: End datetime (exclusive).
 
         Returns:
-            DataStore wrapping the loaded schemas.
+            DataStore wrapping the loaded records.
         """
-        entries = self.get_java_entries(security_id, exchange_id, schema_type, start, end)
+        entries = self.get_java_entries(stream_id, record_type, start, end)
         all_data = bytearray()
         hits = 0
         misses = 0
@@ -149,7 +147,7 @@ class MarketDataClient:
             key = str(entry.getKey())
 
             if self._cache is not None:
-                cached = self._cache.get(key)
+                cached = self._cache.get(self._bucket, key)
                 if cached is not None:
                     all_data.extend(cached)
                     hits += 1
@@ -158,7 +156,7 @@ class MarketDataClient:
             try:
                 raw = self._download_raw(key)
                 if self._cache is not None:
-                    self._cache.put(key, raw)
+                    self._cache.put(self._bucket, key, raw)
                 all_data.extend(raw)
                 misses += 1
             except Exception as e:
@@ -171,7 +169,7 @@ class MarketDataClient:
         if hits or misses:
             logger.debug("market data cache: %d hits, %d misses", hits, misses)
 
-        return DataStore(bytes(all_data), schema_type)
+        return DataStore(bytes(all_data), record_type)
 
     def _download_raw(self, key: str) -> bytes:
         request = _GetObjectRequest.builder().bucket(self._bucket).key(key).build()

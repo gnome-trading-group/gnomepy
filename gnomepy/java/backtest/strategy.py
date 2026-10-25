@@ -6,7 +6,8 @@ from datetime import timedelta
 
 from gnomepy.java.backtest.orders import ExecutionReport
 from gnomepy.java.oms import Intent
-from gnomepy.java.schemas import Schema
+from gnomepy.java.schemas import StreamRecord
+from gnomepy.java.streams import StreamDirectory
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,13 @@ class Strategy(ABC):
     Timestamps are available on the data objects themselves:
         data.event_timestamp  — for market data
         report.timestamp_recv — for execution reports
+
+    Identity:
+        Market data names only its stream (``data.stream_id``); orders, intents and
+        execution reports name a listing by exchange and security. ``self.streams``
+        resolves both to a listing id, so key state by listing:
+        ``self.streams.listing_id(data.stream_id)`` and
+        ``self.streams.listing_id_for(report.exchange_id, report.security_id)``.
 
     Custom metrics:
         Override ``register_metrics`` to declare named metric streams: add
@@ -39,13 +47,15 @@ class Strategy(ABC):
                 self.signals = stream
 
             def on_market_data(self, data):
+                listing = self.streams.listing(self.streams.listing_id(data.stream_id))
                 mid = (data.bid_price(0) + data.ask_price(0)) // 2
                 self.signals.begin()
                 self.signals.set_long(self.ts_col, data.event_timestamp)
                 self.signals.set_double(self.fv_col, mid / 1e9)
                 self.signals.commit()
                 return [Intent(
-                    exchange_id=1, security_id=100,
+                    exchange_id=listing.exchange().exchangeId(),
+                    security_id=listing.security().securityId(),
                     bid_price=mid - 50, bid_size=10,
                     ask_price=mid + 50, ask_size=10,
                 )]
@@ -56,9 +66,13 @@ class Strategy(ABC):
     """
 
     @abstractmethod
-    def on_market_data(self, data: Schema) -> list[Intent]:
-        """Called on each market data update. Return desired state as Intents."""
+    def on_market_data(self, data: StreamRecord) -> list[Intent]:
+        """Called on each book record (a venue listing's market data). Return desired state as Intents."""
         ...
+
+    def on_stream_event(self, stream_id: int, record: StreamRecord) -> list[Intent]:
+        """Called on each record of any other stream the strategy reads (a vendor feed, say). None by default."""
+        return []
 
     @abstractmethod
     def on_execution_report(self, report: ExecutionReport) -> list[Intent]:
@@ -68,6 +82,12 @@ class Strategy(ABC):
     _position_view = None
     _metric_recorder = None
     _control = None
+    _streams = None
+
+    @property
+    def streams(self) -> StreamDirectory:
+        """The streams this strategy reads and the listings they carry. Available before any data arrives."""
+        return self._streams
 
     @property
     def positions(self):

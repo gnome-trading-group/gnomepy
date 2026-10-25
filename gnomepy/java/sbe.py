@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from gnomepy.java._classpath import discover_classpath
-from gnomepy.java.enums import SchemaType
+from gnomepy.java.enums import RecordType
 
 
 _SBE_NS = "http://fixprotocol.io/2016/sbe"
@@ -83,8 +83,14 @@ class SbeSchema:
         return cls(types=types, messages=messages)
 
 
+_FAMILY_SCHEMAS = ("core.xml", "book.xml")
+
+
 def load_schema() -> SbeSchema:
-    """Extract schema.xml from the uber JAR and parse it. Result is cached."""
+    """Extract every family's schema XML from the uber JAR and parse them into one. Result is cached.
+
+    Template ids are unique across families, so their messages share one namespace.
+    """
     global _cached_schema
     if _cached_schema is not None:
         return _cached_schema
@@ -92,15 +98,21 @@ def load_schema() -> SbeSchema:
     jars = discover_classpath("gnome-backtest")
     for jar_path in jars:
         with zipfile.ZipFile(jar_path) as zf:
-            if "schema.xml" in zf.namelist():
-                xml_text = zf.read("schema.xml").decode("utf-8")
-                _cached_schema = SbeSchema.parse(xml_text)
+            names = zf.namelist()
+            if all(name in names for name in _FAMILY_SCHEMAS):
+                types: dict[str, SbeType] = {}
+                messages: dict[str, SbeMessage] = {}
+                for name in _FAMILY_SCHEMAS:
+                    family = SbeSchema.parse(zf.read(name).decode("utf-8"))
+                    types.update(family.types)
+                    messages.update(family.messages)
+                _cached_schema = SbeSchema(types=types, messages=messages)
                 return _cached_schema
 
-    raise FileNotFoundError("schema.xml not found in any JAR on the classpath")
+    raise FileNotFoundError(f"{_FAMILY_SCHEMAS} not found in any JAR on the classpath")
 
 
-def get_message(schema_type: SchemaType) -> SbeMessage:
-    """Return the SbeMessage metadata for a given SchemaType."""
-    msg_name = schema_type.name.replace("_", "").capitalize()
+def get_message(record_type: RecordType) -> SbeMessage:
+    """Return the SbeMessage metadata for a given RecordType."""
+    msg_name = record_type.name.replace("_", "").capitalize()
     return load_schema().messages[msg_name]

@@ -28,7 +28,8 @@ from gnomepy.java.backtest.orders import ExecutionReport
 from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.oms import PositionViewWrapper
 from gnomepy.java.recorder import BacktestResults, MetricRecorder as PyMetricRecorder
-from gnomepy.java.schemas import wrap_schema
+from gnomepy.java.schemas import wrap_record
+from gnomepy.java.streams import StreamDirectory
 from gnomepy.metadata import BacktestMetadata
 from gnomepy.utils import generate_backtest_id
 
@@ -50,9 +51,18 @@ def _create_python_callback(py_strategy: Strategy, clock=None):
     class _Proxy:
         @JOverride
         def onMarketData(self, data):
-            wrapped = wrap_schema(data)
+            wrapped = wrap_record(data)
             intents = py_strategy.on_market_data(wrapped)
             return _to_java_list(intents)
+
+        @JOverride
+        def onStreamEvent(self, streamId, record):
+            intents = py_strategy.on_stream_event(int(streamId), wrap_record(record))
+            return _to_java_list(intents)
+
+        @JOverride
+        def onStreams(self, streams):
+            py_strategy._streams = StreamDirectory(streams)
 
         @JOverride
         def onExecutionReport(self, report):

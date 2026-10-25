@@ -3,7 +3,7 @@ from __future__ import annotations
 import jpype
 
 from gnomepy.java._jvm import ensure_jvm_started
-from gnomepy.java.enums import SchemaType, Side, JPYPE_KEYWORD_MAP
+from gnomepy.java.enums import RecordType, Side, JPYPE_KEYWORD_MAP
 
 
 _LEVEL_FIELDS = [
@@ -16,12 +16,12 @@ _LEVEL_FIELDS = [
 ]
 
 _FLAG_SETTERS = {
-    "lastMessage": "lastMessage",
-    "topOfBook": "topOfBook",
+    "badData": "badData",
     "snapshot": "snapshot",
-    "marketByPrice": "marketByPrice",
+    "lastMessage": "lastMessage",
     "badTimestampRecv": "badTimestampRecv",
-    "maybeBadBook": "maybeBadBook",
+    "marketByPrice": "marketByPrice",
+    "topOfBook": "topOfBook",
 }
 
 
@@ -49,20 +49,22 @@ def _enc_optional(enc, method: str, value, cast=jpype.JLong) -> None:
 
 
 def _java_action(name: str):
-    Action = jpype.JClass("group.gnometrading.schemas.Action")
+    Action = jpype.JClass("group.gnometrading.schemas.book.Action")
     return getattr(Action, JPYPE_KEYWORD_MAP.get(name, name))
 
 
 def _java_side(name: str):
-    Side = jpype.JClass("group.gnometrading.schemas.Side")
+    Side = jpype.JClass("group.gnometrading.schemas.book.Side")
     return getattr(Side, JPYPE_KEYWORD_MAP.get(name, name))
 
 
-class Schema:
-    """Python-friendly wrapper around a live Java Schema object.
+class StreamRecord:
+    """Python-friendly wrapper around a live Java StreamRecord: one record of a market-data stream.
+
+    A record names only its stream; which listing (or vendor subject) that is, the session's stream directory says.
 
     Supports two construction modes:
-    - Wrap mode: Schema(java_schema) — wraps an existing Java schema object
+    - Wrap mode: StreamRecord(java_record) — wraps an existing Java record
     - Subclasses add create mode via keyword arguments
     """
 
@@ -70,8 +72,17 @@ class Schema:
         self._java = java_schema
 
     @property
-    def schema_type(self) -> SchemaType:
-        return SchemaType.from_java(self._java.schemaType)
+    def record_type(self) -> RecordType:
+        return RecordType.from_java(self._java.recordType)
+
+    @property
+    def stream_id(self) -> int:
+        return int(self._java.streamId())
+
+    @property
+    def is_bad_data(self) -> bool:
+        """The record may not reflect its source (a gap, a resync, a lost stream) until a snapshot clears it."""
+        return bool(self._java.isBadData())
 
     @property
     def event_timestamp(self) -> int:
@@ -83,25 +94,24 @@ class Schema:
 
     @property
     def raw(self):
-        """Access the underlying Java Schema object directly."""
+        """Access the underlying Java record directly."""
         return self._java
 
     def encode(self) -> bytes:
-        """Encode the schema to SBE bytes."""
+        """Encode the record to SBE bytes."""
         size = int(self._java.totalMessageSize())
         byte_array = jpype.JArray(jpype.JByte)(size)
         self._java.buffer.getBytes(0, byte_array, 0, size)
         return bytes([b & 0xFF for b in byte_array])
 
-class MboSchema(Schema):
+class MboSchema(StreamRecord):
     _java_class = "group.gnometrading.schemas.MboSchema"
 
     def __init__(
         self,
         java_schema=None,
         *,
-        exchange_id: int | None = None,
-        security_id: int | None = None,
+        stream_id: int | None = None,
         timestamp_event: int | None = None,
         timestamp_sent: int | None = None,
         timestamp_recv: int | None = None,
@@ -120,10 +130,8 @@ class MboSchema(Schema):
         ensure_jvm_started()
         schema = jpype.JClass(self._java_class)()
         enc = schema.encoder
-        if exchange_id is not None:
-            enc.exchangeId(int(exchange_id))
-        if security_id is not None:
-            enc.securityId(jpype.JLong(security_id))
+        if stream_id is not None:
+            enc.streamId(jpype.JLong(stream_id))
         if timestamp_event is not None:
             enc.timestampEvent(jpype.JLong(timestamp_event))
         if timestamp_sent is not None:
@@ -144,13 +152,6 @@ class MboSchema(Schema):
             enc.sequence(jpype.JLong(sequence))
         self._java = schema
 
-    @property
-    def exchange_id(self) -> int:
-        return int(self._java.decoder.exchangeId())
-
-    @property
-    def security_id(self) -> int:
-        return int(self._java.decoder.securityId())
 
     @property
     def timestamp_event(self) -> int:
@@ -190,8 +191,7 @@ class MboSchema(Schema):
 
     def to_dict(self) -> dict:
         return {
-            "exchange_id": self.exchange_id,
-            "security_id": self.security_id,
+            "stream_id": self.stream_id,
             "timestamp_event": self.timestamp_event,
             "timestamp_sent": self.timestamp_sent,
             "timestamp_recv": self.timestamp_recv,
@@ -204,7 +204,7 @@ class MboSchema(Schema):
         }
 
 
-class Mbp10Schema(Schema):
+class Mbp10Schema(StreamRecord):
     _java_class = "group.gnometrading.schemas.Mbp10Schema"
     NUM_LEVELS = 10
 
@@ -212,8 +212,7 @@ class Mbp10Schema(Schema):
         self,
         java_schema=None,
         *,
-        exchange_id: int | None = None,
-        security_id: int | None = None,
+        stream_id: int | None = None,
         timestamp_event: int | None = None,
         timestamp_sent: int | None = None,
         timestamp_recv: int | None = None,
@@ -233,10 +232,8 @@ class Mbp10Schema(Schema):
         ensure_jvm_started()
         schema = jpype.JClass(self._java_class)()
         enc = schema.encoder
-        if exchange_id is not None:
-            enc.exchangeId(int(exchange_id))
-        if security_id is not None:
-            enc.securityId(jpype.JLong(security_id))
+        if stream_id is not None:
+            enc.streamId(jpype.JLong(stream_id))
         if timestamp_event is not None:
             enc.timestampEvent(jpype.JLong(timestamp_event))
         if timestamp_sent is not None:
@@ -257,13 +254,6 @@ class Mbp10Schema(Schema):
         _set_level_fields(enc, level_kwargs, self.NUM_LEVELS)
         self._java = schema
 
-    @property
-    def exchange_id(self) -> int:
-        return int(self._java.decoder.exchangeId())
-
-    @property
-    def security_id(self) -> int:
-        return int(self._java.decoder.securityId())
 
     @property
     def timestamp_event(self) -> int:
@@ -321,8 +311,7 @@ class Mbp10Schema(Schema):
 
     def to_dict(self) -> dict:
         d = {
-            "exchange_id": self.exchange_id,
-            "security_id": self.security_id,
+            "stream_id": self.stream_id,
             "timestamp_event": self.timestamp_event,
             "timestamp_sent": self.timestamp_sent,
             "timestamp_recv": self.timestamp_recv,
@@ -352,8 +341,7 @@ class Mbp1Schema(Mbp10Schema):
         self,
         java_schema=None,
         *,
-        exchange_id: int | None = None,
-        security_id: int | None = None,
+        stream_id: int | None = None,
         timestamp_event: int | None = None,
         timestamp_sent: int | None = None,
         timestamp_recv: int | None = None,
@@ -373,10 +361,8 @@ class Mbp1Schema(Mbp10Schema):
         ensure_jvm_started()
         schema = jpype.JClass(self._java_class)()
         enc = schema.encoder
-        if exchange_id is not None:
-            enc.exchangeId(int(exchange_id))
-        if security_id is not None:
-            enc.securityId(jpype.JLong(security_id))
+        if stream_id is not None:
+            enc.streamId(jpype.JLong(stream_id))
         if timestamp_event is not None:
             enc.timestampEvent(jpype.JLong(timestamp_event))
         if timestamp_sent is not None:
@@ -398,13 +384,12 @@ class Mbp1Schema(Mbp10Schema):
         self._java = schema
 
 
-class BboSchema(Schema):
+class BboSchema(StreamRecord):
     def __init__(
         self,
         java_schema=None,
         *,
-        exchange_id: int | None = None,
-        security_id: int | None = None,
+        stream_id: int | None = None,
         timestamp_event: int | None = None,
         timestamp_recv: int | None = None,
         price: int | None = None,
@@ -425,10 +410,8 @@ class BboSchema(Schema):
         ensure_jvm_started()
         schema = jpype.JClass(type(self)._java_class)()
         enc = schema.encoder
-        if exchange_id is not None:
-            enc.exchangeId(int(exchange_id))
-        if security_id is not None:
-            enc.securityId(jpype.JLong(security_id))
+        if stream_id is not None:
+            enc.streamId(jpype.JLong(stream_id))
         if timestamp_event is not None:
             enc.timestampEvent(jpype.JLong(timestamp_event))
         if timestamp_recv is not None:
@@ -447,13 +430,6 @@ class BboSchema(Schema):
         _enc_optional(enc, "askCount0", ask_count_0)
         self._java = schema
 
-    @property
-    def exchange_id(self) -> int:
-        return int(self._java.decoder.exchangeId())
-
-    @property
-    def security_id(self) -> int:
-        return int(self._java.decoder.securityId())
 
     @property
     def timestamp_event(self) -> int:
@@ -505,8 +481,7 @@ class BboSchema(Schema):
 
     def to_dict(self) -> dict:
         return {
-            "exchange_id": self.exchange_id,
-            "security_id": self.security_id,
+            "stream_id": self.stream_id,
             "timestamp_event": self.timestamp_event,
             "timestamp_recv": self.timestamp_recv,
             "price": self.price,
@@ -530,15 +505,14 @@ class Bbo1mSchema(BboSchema):
     _java_class = "group.gnometrading.schemas.Bbo1mSchema"
 
 
-class TradesSchema(Schema):
+class TradesSchema(StreamRecord):
     _java_class = "group.gnometrading.schemas.TradesSchema"
 
     def __init__(
         self,
         java_schema=None,
         *,
-        exchange_id: int | None = None,
-        security_id: int | None = None,
+        stream_id: int | None = None,
         timestamp_event: int | None = None,
         timestamp_sent: int | None = None,
         timestamp_recv: int | None = None,
@@ -556,10 +530,8 @@ class TradesSchema(Schema):
         ensure_jvm_started()
         schema = jpype.JClass(self._java_class)()
         enc = schema.encoder
-        if exchange_id is not None:
-            enc.exchangeId(int(exchange_id))
-        if security_id is not None:
-            enc.securityId(jpype.JLong(security_id))
+        if stream_id is not None:
+            enc.streamId(jpype.JLong(stream_id))
         if timestamp_event is not None:
             enc.timestampEvent(jpype.JLong(timestamp_event))
         if timestamp_sent is not None:
@@ -577,13 +549,6 @@ class TradesSchema(Schema):
         _enc_optional(enc, "depth", depth, cast=jpype.JShort)
         self._java = schema
 
-    @property
-    def exchange_id(self) -> int:
-        return int(self._java.decoder.exchangeId())
-
-    @property
-    def security_id(self) -> int:
-        return int(self._java.decoder.securityId())
 
     @property
     def timestamp_event(self) -> int:
@@ -623,8 +588,7 @@ class TradesSchema(Schema):
 
     def to_dict(self) -> dict:
         return {
-            "exchange_id": self.exchange_id,
-            "security_id": self.security_id,
+            "stream_id": self.stream_id,
             "timestamp_event": self.timestamp_event,
             "timestamp_sent": self.timestamp_sent,
             "timestamp_recv": self.timestamp_recv,
@@ -637,13 +601,12 @@ class TradesSchema(Schema):
         }
 
 
-class OhlcvSchema(Schema):
+class OhlcvSchema(StreamRecord):
     def __init__(
         self,
         java_schema=None,
         *,
-        exchange_id: int | None = None,
-        security_id: int | None = None,
+        stream_id: int | None = None,
         timestamp_event: int | None = None,
         open: int | None = None,
         high: int | None = None,
@@ -658,10 +621,8 @@ class OhlcvSchema(Schema):
         ensure_jvm_started()
         schema = jpype.JClass(type(self)._java_class)()
         enc = schema.encoder
-        if exchange_id is not None:
-            enc.exchangeId(int(exchange_id))
-        if security_id is not None:
-            enc.securityId(jpype.JLong(security_id))
+        if stream_id is not None:
+            enc.streamId(jpype.JLong(stream_id))
         if timestamp_event is not None:
             enc.timestampEvent(jpype.JLong(timestamp_event))
         _enc_optional(enc, "open", open)
@@ -672,13 +633,6 @@ class OhlcvSchema(Schema):
             enc.volume(jpype.JLong(volume))
         self._java = schema
 
-    @property
-    def exchange_id(self) -> int:
-        return int(self._java.decoder.exchangeId())
-
-    @property
-    def security_id(self) -> int:
-        return int(self._java.decoder.securityId())
 
     @property
     def timestamp_event(self) -> int:
@@ -706,8 +660,7 @@ class OhlcvSchema(Schema):
 
     def to_dict(self) -> dict:
         return {
-            "exchange_id": self.exchange_id,
-            "security_id": self.security_id,
+            "stream_id": self.stream_id,
             "timestamp_event": self.timestamp_event,
             "open": self.open,
             "high": self.high,
@@ -729,8 +682,8 @@ class Ohlcv1hSchema(OhlcvSchema):
     _java_class = "group.gnometrading.schemas.Ohlcv1hSchema"
 
 
-# Schema type name → wrapper class
-_SCHEMA_WRAPPERS: dict[str, type[Schema]] = {
+# Record type name → wrapper class
+_RECORD_WRAPPERS: dict[str, type[StreamRecord]] = {
     "MBO": MboSchema,
     "MBP_10": Mbp10Schema,
     "MBP_1": Mbp1Schema,
@@ -743,20 +696,20 @@ _SCHEMA_WRAPPERS: dict[str, type[Schema]] = {
 }
 
 
-def get_schema_class(schema_type: SchemaType) -> type[Schema]:
-    """Return the Python Schema subclass for a given SchemaType."""
-    return _SCHEMA_WRAPPERS[schema_type.name]
+def get_record_class(record_type: RecordType) -> type[StreamRecord]:
+    """Return the Python wrapper class for a given RecordType."""
+    return _RECORD_WRAPPERS[record_type.name]
 
 
-def wrap_schema(java_schema) -> Schema:
-    """Wrap a Java Schema object in the appropriate Python wrapper.
+def wrap_record(java_record) -> StreamRecord:
+    """Wrap a Java StreamRecord in the appropriate Python wrapper.
 
     Args:
-        java_schema: A Java group.gnometrading.schemas.Schema instance.
+        java_record: A Java group.gnometrading.schemas.StreamRecord instance.
 
     Returns:
-        A typed Schema subclass with Python-friendly property accessors.
+        A typed StreamRecord subclass with Python-friendly property accessors.
     """
-    schema_type_name = str(java_schema.schemaType.name())
-    wrapper_cls = _SCHEMA_WRAPPERS.get(schema_type_name, Schema)
-    return wrapper_cls(java_schema)
+    record_type_name = str(java_record.recordType.name())
+    wrapper_cls = _RECORD_WRAPPERS.get(record_type_name, StreamRecord)
+    return wrapper_cls(java_record)

@@ -61,25 +61,26 @@ def _with_alpha(hex_color: str, alpha: float = 0.5) -> str:
     return f"rgba({r},{g},{b},{alpha})"
 
 
-def _iter_symbols(market_df: pd.DataFrame) -> list[tuple[int, int]]:
-    """Get unique (exchange_id, security_id) pairs from market data."""
-    if market_df.empty:
+def _iter_symbols(market_df: pd.DataFrame) -> list[int]:
+    """The listings in the market data, in order of first appearance."""
+    if market_df.empty or "listing_id" not in market_df.columns:
         return []
-    return list(
-        market_df.groupby(["exchange_id", "security_id"], sort=False).ngroups
-        and market_df.groupby(["exchange_id", "security_id"], sort=False).groups.keys()
-    )
+    return [int(lid) for lid in market_df["listing_id"].dropna().unique()]
 
 
-def _sym_label(eid: int, sid: int, lid: int | None = None) -> str:
-    if lid is not None:
-        return f"{eid}/{sid}/{lid}"
-    return f"{eid}/{sid}"
+def _sym_label(lid: int, ctx: "_ListingContext") -> str:
+    listing = ctx.listings.get(lid)
+    if listing is None:
+        return str(lid)
+    sec = ctx.securities.get(listing.security_id)
+    exch = ctx.exchanges.get(listing.exchange_id)
+    if sec is None or exch is None:
+        return str(lid)
+    return f"{sec.symbol}@{exch.exchange_name}"
 
 
 @dataclass
 class _ListingContext:
-    eid_sid_to_lid: dict[tuple[int, int], int]
     listings: dict[int, Listing]
     securities: dict[int, Security]
     exchanges: dict[int, Exchange]
@@ -91,7 +92,6 @@ def _get_listing_context(report: "BacktestReport") -> "_ListingContext":
     if cached is not None:
         return cached
 
-    eid_sid_to_lid: dict[tuple[int, int], int] = {}
     listings_map: dict[int, Listing] = {}
     securities_map: dict[int, Security] = {}
     exchanges_map: dict[int, Exchange] = {}
@@ -117,7 +117,6 @@ def _get_listing_context(report: "BacktestReport") -> "_ListingContext":
                         if results:
                             listing = results[0]
                             listings_map[lid] = listing
-                            eid_sid_to_lid[(listing.exchange_id, listing.security_id)] = lid
 
                     for sid in {l.security_id for l in listings_map.values()}:
                         results = client.get_security(security_id=sid)
@@ -132,7 +131,6 @@ def _get_listing_context(report: "BacktestReport") -> "_ListingContext":
                     pass
 
     ctx = _ListingContext(
-        eid_sid_to_lid=eid_sid_to_lid,
         listings=listings_map,
         securities=securities_map,
         exchanges=exchanges_map,
@@ -142,20 +140,16 @@ def _get_listing_context(report: "BacktestReport") -> "_ListingContext":
     return ctx
 
 
-def _build_color_map(report: "BacktestReport") -> dict[tuple[int, int], str]:
-    """Assign a deterministic color to each (exchange_id, security_id) pair."""
+def _build_color_map(report: "BacktestReport") -> dict[int, str]:
+    """Assign a deterministic color to each listing."""
     cached = getattr(report, "_color_map", None)
     if cached is not None:
         return cached
-    pairs: set[tuple[int, int]] = set()
-    if not report._market_df.empty:
-        for pair in report._market_df.groupby(["exchange_id", "security_id"], sort=False).groups:
-            pairs.add(pair)
+    listing_ids: set[int] = set(_iter_symbols(report._market_df))
     fills = report.fills
-    if not fills.empty and "exchange_id" in fills.columns and "security_id" in fills.columns:
-        for pair in fills.groupby(["exchange_id", "security_id"], sort=False).groups:
-            pairs.add(pair)
-    color_map = {pair: _PALETTE[i % len(_PALETTE)] for i, pair in enumerate(sorted(pairs))}
+    if not fills.empty and "listing_id" in fills.columns:
+        listing_ids.update(int(lid) for lid in fills["listing_id"].dropna().unique())
+    color_map = {lid: _PALETTE[i % len(_PALETTE)] for i, lid in enumerate(sorted(listing_ids))}
     report._color_map = color_map
     return color_map
 
@@ -224,16 +218,12 @@ def plot_pnl(
         symbols = _iter_symbols(report._market_df)
         ctx = _get_listing_context(report)
         color_map = _build_color_map(report)
-        for i, (eid, sid) in enumerate(symbols):
-            sym_mkt = report._market_df[
-                (report._market_df["exchange_id"] == eid)
-                & (report._market_df["security_id"] == sid)
-            ].sort_index()
+        for i, lid in enumerate(symbols):
+            sym_mkt = report._market_df[report._market_df["listing_id"] == lid].sort_index()
             sym_mkt = sym_mkt[~sym_mkt.index.duplicated(keep="last")]
             mid = _downsample(sym_mkt["mid_price"].astype(float), max_points)
-            color = _with_alpha(color_map.get((eid, sid), _PALETTE[i % len(_PALETTE)]))
-            lid = ctx.eid_sid_to_lid.get((eid, sid))
-            name = "mid price" if len(symbols) == 1 else f"mid {_sym_label(eid, sid, lid)}"
+            color = _with_alpha(color_map.get(lid, _PALETTE[i % len(_PALETTE)]))
+            name = "mid price" if len(symbols) == 1 else f"mid {_sym_label(lid, ctx)}"
             fig.add_trace(
                 go.Scattergl(
                     x=mid.index, y=mid.values, mode="lines", name=name,
@@ -322,10 +312,9 @@ def plot_position(
         ctx = _get_listing_context(report)
         color_map = _build_color_map(report)
         for i, col in enumerate(pos_by_sym.columns):
-            if isinstance(col, tuple):
-                lid = ctx.eid_sid_to_lid.get(col)
-                label = _sym_label(*col, lid)
-                color = color_map.get(col, _PALETTE[i % len(_PALETTE)])
+            if col in color_map:
+                label = _sym_label(col, ctx)
+                color = color_map[col]
             else:
                 label = str(col)
                 color = _PALETTE[i % len(_PALETTE)]
@@ -392,10 +381,9 @@ def plot_pnl_by_symbol(
     color_map = _build_color_map(report)
     fig = go.Figure()
     for i, col in enumerate(by_sym.columns):
-        if isinstance(col, tuple):
-            lid = ctx.eid_sid_to_lid.get(col)
-            label = _sym_label(col[0], col[1], lid)
-            color = color_map.get(col, _PALETTE[i % len(_PALETTE)])
+        if col in color_map:
+            label = _sym_label(col, ctx)
+            color = color_map[col]
         else:
             label = str(col)
             color = _PALETTE[i % len(_PALETTE)]
@@ -483,8 +471,8 @@ def plot_spread(
     ctx = _get_listing_context(report)
     color_map = _build_color_map(report)
     fig = go.Figure()
-    for i, (eid, sid) in enumerate(symbols):
-        sym_mkt = mkt[(mkt["exchange_id"] == eid) & (mkt["security_id"] == sid)]
+    for i, lid in enumerate(symbols):
+        sym_mkt = mkt[mkt["listing_id"] == lid]
         if "spread" in sym_mkt.columns:
             spread = _downsample(sym_mkt["spread"].astype(float), max_points)
         else:
@@ -492,9 +480,8 @@ def plot_spread(
                 (sym_mkt["ask_price_0"] - sym_mkt["bid_price_0"]).astype(float),
                 max_points,
             )
-        lid = ctx.eid_sid_to_lid.get((eid, sid))
-        name = f"spread {_sym_label(eid, sid, lid)}" if multi else "spread"
-        color = color_map.get((eid, sid), _PALETTE[i % len(_PALETTE)])
+        name = f"spread {_sym_label(lid, ctx)}" if multi else "spread"
+        color = color_map.get(lid, _PALETTE[i % len(_PALETTE)])
         fig.add_trace(
             go.Scattergl(
                 x=spread.index, y=spread.values, mode="lines", name=name,
@@ -517,30 +504,25 @@ def plot_spread(
 
 def plot_cross_exchange_spread(
     report: "BacktestReport",
-    exchange_id_a: int | None = None,
-    exchange_id_b: int | None = None,
-    security_id: int | None = None,
+    listing_id_a: int | None = None,
+    listing_id_b: int | None = None,
     *,
     title: str | None = None,
     max_points: int | None = DEFAULT_MAX_POINTS,
 ) -> go.Figure:
-    """Spread between two exchanges for the same security (in bps)."""
+    """Spread between two listings' mids (in bps); the first two listings in the data by default."""
     mkt = report._market_df.sort_index()
     symbols = _iter_symbols(mkt)
 
-    if exchange_id_a is None or exchange_id_b is None:
-        exchange_ids = sorted(set(eid for eid, _ in symbols))
-        if len(exchange_ids) < 2:
+    if listing_id_a is None or listing_id_b is None:
+        if len(symbols) < 2:
             fig = go.Figure()
-            fig.update_layout(title="Cross-Exchange Spread (need 2+ exchanges)", height=350)
+            fig.update_layout(title="Cross-Exchange Spread (need 2+ listings)", height=350)
             return fig
-        exchange_id_a = exchange_ids[0]
-        exchange_id_b = exchange_ids[1]
-    if security_id is None:
-        security_id = symbols[0][1] if symbols else 1
+        listing_id_a, listing_id_b = symbols[0], symbols[1]
 
-    mkt_a = mkt[(mkt["exchange_id"] == exchange_id_a) & (mkt["security_id"] == security_id)]
-    mkt_b = mkt[(mkt["exchange_id"] == exchange_id_b) & (mkt["security_id"] == security_id)]
+    mkt_a = mkt[mkt["listing_id"] == listing_id_a]
+    mkt_b = mkt[mkt["listing_id"] == listing_id_b]
 
     if mkt_a.empty or mkt_b.empty:
         fig = go.Figure()
@@ -567,10 +549,8 @@ def plot_cross_exchange_spread(
     spread_bps = _downsample(spread_bps, max_points)
 
     ctx = _get_listing_context(report)
-    lid_a = ctx.eid_sid_to_lid.get((exchange_id_a, security_id))
-    lid_b = ctx.eid_sid_to_lid.get((exchange_id_b, security_id))
-    label_a = _sym_label(exchange_id_a, security_id, lid_a)
-    label_b = _sym_label(exchange_id_b, security_id, lid_b)
+    label_a = _sym_label(listing_id_a, ctx)
+    label_b = _sym_label(listing_id_b, ctx)
 
     fig = go.Figure()
     fig.add_trace(
@@ -626,11 +606,11 @@ def _fills_table_html(report: "BacktestReport") -> str:
 
     # Listing ID column with tooltip
     ctx = _get_listing_context(report)
-    if ctx.eid_sid_to_lid and "exchange_id" in df.columns and "security_id" in df.columns:
+    if "listing_id" in df.columns:
         def _lid_cell(row):
-            lid = ctx.eid_sid_to_lid.get((row["exchange_id"], row["security_id"]))
-            if lid is None:
+            if pd.isna(row["listing_id"]) or row["listing_id"] == 0:
                 return ""
+            lid = int(row["listing_id"])
             listing = ctx.listings.get(lid)
             if listing:
                 sec = ctx.securities.get(listing.security_id)

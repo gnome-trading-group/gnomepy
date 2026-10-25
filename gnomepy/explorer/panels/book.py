@@ -219,7 +219,7 @@ def build_ladder(
 
 
 def build_book_tab_layout(
-    listings: list[tuple[int, int]],
+    listings: list[int],
     store: ExplorerDataStore,
 ) -> html.Div:
     n = len(listings)
@@ -231,8 +231,8 @@ def build_book_tab_layout(
         )]
     else:
         col_width = max(3, 12 // n)
-        for eid, sid in listings:
-            label = store.listing_label(eid, sid)
+        for lid in listings:
+            label = store.listing_label(lid)
             placeholder_cols.append(dbc.Col(
                 html.Div(
                     f"Navigate to a timestamp to view {label}",
