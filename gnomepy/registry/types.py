@@ -37,7 +37,6 @@ class Exchange:
     exchange_code: str
     exchange_name: str
     region: str
-    schema_type: str
     date_modified: str
     date_created: str
 

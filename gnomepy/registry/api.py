@@ -355,10 +355,9 @@ class RegistryClient:
         return res.json()
 
     def _post_as_operator(self, path: str, body: dict) -> dict:
-        # Routes that must name a person in the audit log are served under /cognito and only accept the
-        # `gnomepy login` ID token, never the API key.
+        # Routes that must name a person in the audit log admit only the `gnomepy login` ID token, never the API key.
         res = requests.post(
-            self.base_url + "/cognito" + path,
+            self.base_url + path,
             json=body,
             headers={"Authorization": get_id_token(), "Content-Type": "application/json"},
 
@@ -369,7 +368,7 @@ class RegistryClient:
 
     def _patch_as_operator(self, path: str, params: dict, body: dict) -> dict:
         res = requests.patch(
-            self.base_url + "/cognito" + path,
+            self.base_url + path,
             params=params,
             json=body,
             headers={"Authorization": get_id_token(), "Content-Type": "application/json"},
