@@ -55,6 +55,12 @@ class Source:
     active: bool
     date_modified: str
     date_created: str
+    # Its connections' capacity: subjects per connection, connections per scope (IP, KEY or ACCOUNT) and commands a
+    # minute; None where the source has no known limit.
+    max_per_connection: int = 50
+    connection_scope: str = "IP"
+    connections_per_scope: int | None = None
+    client_messages_per_minute: int | None = None
 
 
 @dataclass
