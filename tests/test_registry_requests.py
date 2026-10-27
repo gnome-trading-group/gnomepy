@@ -98,3 +98,26 @@ def test_get_sources_filters_by_code(monkeypatch):
     assert calls[0]["params"] == {"code": "PANDASCORE", "limit": 1000, "offset": 0}
     assert source.families == ["esports"]
     assert source.home_region == "eu-west-1"
+
+
+def test_get_source_accounts_filters_by_source_and_label(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, headers, timeout):
+        calls.append({"url": url, "params": params})
+        return _Response([{
+            "account_id": 3, "source_id": 4, "source_code": "KALSHI", "label": "md-1",
+            "secret_name": "gnome/market-data/kalshi/md-1", "connection_budget": None, "status": "ACTIVE",
+            "note": None, "created_by": "ops@example.com",
+            "date_modified": "2026-10-27T15:00:00.000Z", "date_created": "2026-10-27T15:00:00.000Z",
+        }])
+
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    [account] = client.get_source_accounts(source_code="KALSHI", label="md-1")
+
+    assert calls[0]["url"].endswith("/api/sources/accounts")
+    assert calls[0]["params"] == {"sourceCode": "KALSHI", "label": "md-1", "limit": 1000, "offset": 0}
+    assert account.secret_name == "gnome/market-data/kalshi/md-1"
+    assert account.connection_budget is None

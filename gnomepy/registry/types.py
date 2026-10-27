@@ -64,6 +64,26 @@ class Source:
 
 
 @dataclass
+class SourceAccount:
+    """A dedicated market-data account a source's shards collect with; its key is in Secrets Manager at secret_name.
+
+    connection_budget is the connections it may hold, None for the source's own connections_per_scope.
+    """
+
+    account_id: int
+    source_id: int
+    source_code: str
+    label: str
+    secret_name: str
+    connection_budget: int | None
+    status: str
+    note: str | None
+    created_by: str
+    date_created: str
+    date_modified: str
+
+
+@dataclass
 class Stream:
     """One thing collected from a source: a listing's book (subject_kind LISTING) or a vendor subject such as a match.
 

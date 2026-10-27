@@ -19,6 +19,7 @@ from gnomepy.registry.types import (
     ListingSpec,
     Security,
     Source,
+    SourceAccount,
     Stream,
     Strategy,
     StrategySession,
@@ -133,6 +134,15 @@ class RegistryClient:
         active: Optional[bool] = None,
     ) -> list[Source]:
         return self._get("/sources", _parse_kwarg_params(locals()), Source)
+
+    def get_source_accounts(
+        self,
+        *,
+        source_id: Optional[int] = None,
+        source_code: Optional[str] = None,
+        label: Optional[str] = None,
+    ) -> list[SourceAccount]:
+        return self._get("/sources/accounts", _parse_kwarg_params(locals()), SourceAccount)
 
     def get_streams(
         self,

@@ -13,6 +13,7 @@ from gnomepy.registry.types import (
     Security,
     SecurityType,
     Source,
+    SourceAccount,
     Stream,
 )
 
@@ -31,5 +32,6 @@ __all__ = [
     "Security",
     "SecurityType",
     "Source",
+    "SourceAccount",
     "Stream",
 ]
