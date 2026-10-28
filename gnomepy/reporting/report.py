@@ -342,6 +342,10 @@ class BacktestReport:
             "oms_rejects": dict(metadata.oms_rejects) if metadata else {},
             "oms_reject_count": sum(metadata.oms_rejects.values()) if metadata else 0,
             "warnings": metadata.warnings if metadata else [],
+            # Of the run's stream-time, the share collection had no data for; None when the run couldn't ask.
+            "market_data_missing_fraction": (
+                metadata.market_data["missing_fraction"] if metadata and metadata.market_data else None
+            ),
         }
 
     def summary_df(self) -> pd.Series:

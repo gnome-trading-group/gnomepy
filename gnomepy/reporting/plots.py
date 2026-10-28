@@ -154,6 +154,97 @@ def _build_color_map(report: "BacktestReport") -> dict[int, str]:
     return color_map
 
 
+
+_MISSING_COLOR = "#555555"
+# Bands drawn per figure; past this, stretches of a listing closer than a thousandth of the run are joined.
+_MAX_MISSING_BANDS = 500
+
+
+@dataclass
+class _MissingStretch:
+    listing_id: int | None
+    start: pd.Timestamp
+    end: pd.Timestamp
+    reason: str
+
+
+def _missing_stretches(report: "BacktestReport") -> list[_MissingStretch]:
+    """Where collection had no market data for the run's streams (metadata.market_data), oldest first."""
+    metadata = report.metadata
+    market_data = metadata.market_data if metadata is not None else None
+    if not market_data:
+        return []
+    stretches = [
+        _MissingStretch(stream.get("listing_id"), pd.to_datetime(m["from_ns"]), pd.to_datetime(m["to_ns"]), m["reason"])
+        for stream in market_data.get("streams", [])
+        for m in stream.get("missing", [])
+    ]
+    return sorted(stretches, key=lambda m: m.start)
+
+
+def _bands(stretches: list[_MissingStretch]) -> list[_MissingStretch]:
+    """The stretches to draw: as they are, or with near neighbours of a listing joined when there are too many."""
+    if len(stretches) <= _MAX_MISSING_BANDS:
+        return stretches
+    tolerance = (stretches[-1].end - stretches[0].start) / 1000
+    joined: dict[int | None, list[_MissingStretch]] = {}
+    for m in stretches:
+        bands = joined.setdefault(m.listing_id, [])
+        if bands and m.start - bands[-1].end <= tolerance:
+            last = bands[-1]
+            reason = last.reason if last.reason == m.reason else "several"
+            bands[-1] = _MissingStretch(m.listing_id, last.start, max(last.end, m.end), reason)
+        else:
+            bands.append(m)
+    return sorted((b for bands in joined.values() for b in bands), key=lambda m: m.start)
+
+
+def _shade_missing(fig: go.Figure, report: "BacktestReport") -> None:
+    """Shades each stretch the run had no market data, in its listing's color when several listings miss data, with a
+    marker atop each band whose hover says which listing, why and for how long."""
+    stretches = _missing_stretches(report)
+    if not stretches:
+        return
+    listing_ids = list(dict.fromkeys(m.listing_id for m in stretches))
+    multi = len(listing_ids) > 1
+    color_map = _build_color_map(report)
+    ctx = _get_listing_context(report)
+    subplots = getattr(fig, "_grid_ref", None) is not None
+
+    def color(lid):
+        return color_map.get(lid, _MISSING_COLOR) if multi else _MISSING_COLOR
+
+    def name(lid):
+        return _sym_label(lid, ctx) if lid else "vendor stream"
+
+    for band in _bands(stretches):
+        fig.add_vrect(
+            x0=band.start, x1=band.end, fillcolor=color(band.listing_id), opacity=0.18, line_width=0, layer="below",
+            **({"row": "all", "col": "all"} if subplots else {}),
+        )
+        reason = band.reason.lower().replace("_", " ")
+        fig.add_annotation(
+            x=band.start + (band.end - band.start) / 2, y=1, xref="x", yref="y domain", yanchor="bottom",
+            # Listings missing the same stretch stack their markers rather than hide each other.
+            yshift=10 * listing_ids.index(band.listing_id),
+            text="▾", showarrow=False, font=dict(size=11, color=color(band.listing_id)),
+            hovertext=(f"{name(band.listing_id)}<br>{reason}<br>{band.start:%H:%M:%S} for "
+                       f"{_fmt_ns_duration((band.end - band.start).value)}"),
+        )
+    # Shapes don't show in the legend: an entry per listing says what its bands are.
+    for lid in listing_ids:
+        entry = go.Scatter(
+            x=[None], y=[None], mode="markers",
+            name=f"missing: {name(lid)}" if multi else "market data missing",
+            marker=dict(symbol="square", size=12, color=_with_alpha(color(lid), 0.35)),
+        )
+        if subplots:
+            fig.add_trace(entry, row=1, col=1)
+        else:
+            fig.add_trace(entry)
+    fig.update_layout(showlegend=True, legend=_LEGEND_LAYOUT, margin=dict(r=160))
+
+
 def _lttb(series: pd.Series, n: int) -> pd.Series:
     """Largest-Triangle-Three-Buckets downsampling — preserves visual shape."""
     import numpy as np
@@ -286,6 +377,7 @@ def plot_pnl(
         fig.update_yaxes(title_text="mid", row=1, col=1, secondary_y=True, showgrid=False)
     fig.update_yaxes(title_text="DD", row=2, col=1)
     fig.update_xaxes(title_text="time", row=2, col=1)
+    _shade_missing(fig, report)
     return fig
 
 
@@ -366,6 +458,7 @@ def plot_position(
         margin=dict(r=160) if multi else None,
         title=title or "Position / Fees / Volume",
     )
+    _shade_missing(fig, report)
     return fig
 
 
@@ -499,6 +592,7 @@ def plot_spread(
         legend=_LEGEND_LAYOUT if multi else None,
         margin=dict(r=160) if multi else None,
     )
+    _shade_missing(fig, report)
     return fig
 
 
@@ -675,6 +769,7 @@ _METRIC_FORMAT: dict[str, str] = {
     "sortino": ",.3f",
     "sharpe_std": ",.3f",
     "pct_positive_buckets": ".1%",
+    "market_data_missing_fraction": ".1%",
 }
 
 
@@ -685,7 +780,9 @@ def _summary_table_html(summary: dict) -> str:
         if isinstance(v, (dict, list)):
             continue
         fmt = _METRIC_FORMAT.get(k)
-        if fmt:
+        if v is None:
+            formatted = "—"
+        elif fmt:
             formatted = f"{v:{fmt}}"
         elif isinstance(v, float):
             formatted = f"{v:,.4f}"
@@ -820,6 +917,60 @@ def _render_listings(report: "BacktestReport") -> str | None:
     )
 
 
+_MAX_MISSING_ROWS = 500
+
+
+def _fmt_ns_duration(ns: int) -> str:
+    seconds = ns / 1e9
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    if seconds < 3600:
+        return f"{seconds / 60:.1f} min"
+    return f"{seconds / 3600:.1f} h"
+
+
+def _render_market_data(report: "BacktestReport") -> str | None:
+    """Where collection had no market data for the run: totals, then each stretch by listing."""
+    metadata = report.metadata
+    market_data = metadata.market_data if metadata is not None else None
+    if not market_data:
+        return None
+    ctx = _get_listing_context(report)
+    totals = (
+        f'<p>Missing {_fmt_ns_duration(market_data["missing_ns"])} '
+        f'({market_data["missing_fraction"]:.1%} of the run\'s stream-time); '
+        f'on_missing <code>{market_data["on_missing"]}</code>: {market_data["marks_sent"]} bad-data marks sent, '
+        f'{market_data["marks_without_book"]} with no book yet to mark.'
+    )
+    if market_data["untracked_ns"]:
+        totals += (
+            f' {_fmt_ns_duration(market_data["untracked_ns"])} predates collection coverage, so whether data was '
+            f'collected then is unknown.'
+        )
+    totals += "</p>"
+    rows = []
+    for stream in market_data.get("streams", []):
+        lid = stream.get("listing_id")
+        if lid:
+            url = f"{ctx.controller_ui}/security-master/listings/{lid}"
+            name = f'<a class="listing-link" href="{url}">{_sym_label(lid, ctx)}</a>'
+        else:
+            name = f'stream {stream["stream_id"]}'
+        for m in stream.get("missing", []):
+            start = pd.to_datetime(m["from_ns"]).strftime("%Y-%m-%d %H:%M:%S")
+            reason = m["reason"].lower().replace("_", " ")
+            rows.append((m["from_ns"], f"<tr><td>{name}</td><td>{start}</td>"
+                         f"<td>{_fmt_ns_duration(m['to_ns'] - m['from_ns'])}</td><td>{reason}</td></tr>"))
+    if not rows:
+        return totals + '<p class="muted">No market data was missing.</p>'
+    rows.sort(key=lambda r: r[0])
+    note = (f'<p class="muted">Showing the first {_MAX_MISSING_ROWS:,} of {len(rows):,} stretches.</p>'
+            if len(rows) > _MAX_MISSING_ROWS else "")
+    header = "".join(f"<th>{h}</th>" for h in ("Listing", "From (UTC)", "For", "Why"))
+    body = "".join(html for _, html in rows[:_MAX_MISSING_ROWS])
+    return f'{totals}<table class="listings-table"><thead><tr>{header}</tr></thead><tbody>{body}</tbody></table>{note}'
+
+
 DEFAULT_SECTIONS: list[ReportSection] = [
     ReportSection("kpi", "Summary", _render_kpi),
     ReportSection("listings", "Listings", _render_listings),
@@ -830,6 +981,7 @@ DEFAULT_SECTIONS: list[ReportSection] = [
     ReportSection("spread", "Market Conditions", _render_spread),
     ReportSection("per_symbol", "Per-Symbol Breakdown", _render_per_symbol),
     ReportSection("fills", "Fills", _render_fills),
+    ReportSection("market_data", "Market Data", _render_market_data),
     ReportSection("warnings", "Warnings", _render_warnings),
 ]
 

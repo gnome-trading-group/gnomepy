@@ -64,6 +64,10 @@ class BacktestMetadata:
     # records: the refusal carries the order's ids but not its price or size.
     oms_rejects: dict[str, int] = field(default_factory=dict)
 
+    # Where collection says the run's market data was missing (gnome-market-data collection/missing): totals, the
+    # bad-data marks sent, and each stream's stretches with why. None when the run couldn't ask.
+    market_data: dict[str, Any] | None = None
+
     # Extensible
     extra: dict[str, Any] = field(default_factory=dict)
 

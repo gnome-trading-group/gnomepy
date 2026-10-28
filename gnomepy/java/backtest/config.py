@@ -320,6 +320,9 @@ class BacktestConfig:
     record_depth: int = 1
     measure_processing_time: bool = False
     seed: int | None = None
+    # Where collection says market data is missing: "mark" flags each stream bad there as the gateway does live,
+    # "fail" refuses to run, "ignore" replays as recorded. Always reported in the results.
+    on_missing: str = "mark"
 
     def _to_java(self):
         cls = jpype.JClass("group.gnometrading.backtest.config.BacktestConfig")
@@ -367,5 +370,6 @@ class BacktestConfig:
         obj.measureProcessingTime = self.measure_processing_time
         if self.seed is not None:
             obj.seed = jpype.JLong(self.seed)
+        obj.onMissing = jpype.JClass("group.gnometrading.backtest.config.OnMissing").valueOf(self.on_missing.upper())
 
         return obj

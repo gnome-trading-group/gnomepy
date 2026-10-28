@@ -21,7 +21,12 @@ from importlib.metadata import version as _pkg_version
 
 logger = logging.getLogger(__name__)
 
-from gnomepy.config import config as gnome_config, resolve_registry_api_key
+from gnomepy.config import (
+    MARKET_DATA_API_KEY_SECRET,
+    config as gnome_config,
+    resolve_market_data_api_key,
+    resolve_registry_api_key,
+)
 from gnomepy.java._jvm import ensure_jvm_started
 from gnomepy.java.backtest.config import BacktestConfig
 from gnomepy.java.backtest.orders import ExecutionReport
@@ -226,6 +231,8 @@ class Backtest:
         self._end_date = None
         self._warnings: list[str] = []
         self._warning_handler = None
+        self._on_missing = None
+        self._asked_market_data = False
 
     def _build_driver(self):
         BacktestDriverFactory = jpype.JClass(
@@ -288,8 +295,10 @@ class Backtest:
             s3 = create_caching_s3_proxy(s3, md_cache, bucket)
             logger.debug("market data caching enabled: %s", md_cache._root)
 
+        self._on_missing = str(java_config.onMissing.name()).lower()
         self._driver = BacktestDriverFactory.create(
-            java_config, security_master, java_oms, java_strategy, self._recorder, s3, context
+            java_config, security_master, java_oms, java_strategy, self._recorder, s3, context,
+            self._market_data_api(),
         )
         # What the run simulated with, resolved: rerunning with the same as-of time and seed reproduces it.
         self._simulation_as_of = str(java_config.simulationAsOf)
@@ -434,6 +443,48 @@ class Backtest:
 
         return result
 
+    def _market_data_api(self):
+        """The market-data API, to learn where the run's data is missing; None, with a warning, without its key."""
+        key = resolve_market_data_api_key()
+        self._asked_market_data = bool(key)
+        if not key:
+            self._warnings.append(
+                f"No market-data API key (MARKET_DATA_API_KEY or the {MARKET_DATA_API_KEY_SECRET} secret): "
+                "the run can't know where its market data is missing"
+            )
+            return None
+        host = os.environ.get("MARKET_DATA_API_HOST", gnome_config.MARKET_DATA_API_HOST)
+        return jpype.JClass("group.gnometrading.data.MarketDataApi")(host, key)
+
+    def _market_data_report(self) -> dict | None:
+        """Where the run's market data was missing, as the factory learned it; None if it couldn't ask."""
+        if self._driver is None or not self._asked_market_data:
+            return None
+        streams = [
+            {
+                "stream_id": int(m.streamId()),
+                "listing_id": int(m.listingId()) or None,
+                "missing_ns": int(m.missingNs()),
+                "untracked_ns": int(m.untrackedNs()),
+                "missing": [
+                    {"from_ns": int(s.fromNs()), "to_ns": int(s.toNs()), "reason": str(s.reason())}
+                    for s in m.missing()
+                ],
+            }
+            for m in self._driver.getMissingData()
+        ]
+        missing_ns = sum(s["missing_ns"] for s in streams)
+        run_ns = int((self._end_date - self._start_date).total_seconds() * 1e9)
+        return {
+            "on_missing": self._on_missing,
+            "missing_ns": missing_ns,
+            "untracked_ns": sum(s["untracked_ns"] for s in streams),
+            "missing_fraction": missing_ns / (run_ns * len(streams)) if streams and run_ns > 0 else 0.0,
+            "marks_sent": int(self._driver.getMissingMarksSent()),
+            "marks_without_book": int(self._driver.getMissingMarksWithoutBook()),
+            "streams": streams,
+        }
+
     def _build_metadata(self, wall_time: float, event_count: int) -> BacktestMetadata:
         """Assemble BacktestMetadata from all available sources."""
         strategy_name = self._resolve_strategy_name()
@@ -488,6 +539,7 @@ class Backtest:
             seed=self._seed,
             simulation=self._simulation,
             warnings=self._warnings,
+            market_data=self._market_data_report(),
             oms_rejects=(
                 {str(k): int(v) for k, v in dict(self._recorder.getOmsRejectCounts()).items()}
                 if self._recorder is not None

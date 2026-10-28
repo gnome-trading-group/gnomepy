@@ -55,6 +55,11 @@ def test_measure_processing_time_and_seed_reach_java():
     assert int(java.seed) == 1234
 
 
+def test_on_missing_reaches_java():
+    assert str(_config()._to_java().onMissing.name()) == "MARK"
+    assert str(_config(on_missing="fail")._to_java().onMissing.name()) == "FAIL"
+
+
 def test_lognormal_seed_is_optional():
     assert LogNormalLatencyConfig()._to_java().seed is None
     assert int(LogNormalLatencyConfig(seed=7)._to_java().seed) == 7

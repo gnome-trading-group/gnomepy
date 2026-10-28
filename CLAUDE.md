@@ -37,7 +37,7 @@ gnomepy login                                   # OAuth2 PKCE auth flow
 - `sweep.py` — Expands YAML configs with list or `{min,max,step}` range values into a cartesian product for parameter sweeps. Also supports a `scenarios` key for running the same strategy across multiple listing/timewindow combinations; total jobs = scenarios × sweep combinations.
 - `remote.py` — HTTP client wrapping the gnome-controller backtest and research job APIs (submit, status, list, cancel; research job input uploads and output downloads). Uses Cognito id_token from `auth.py`. The research job runner image is `docker/research-job/`.
 - `registry/` — `RegistryClient` for the gnome-registry API (security master, streams/sources, fees, simulation parameters, strategies/sessions, alerts). See "Registry client" below.
-- `config.py` — Per-stage hosts (`DevConfig`/`ProdConfig`) picked by the `STAGE` env var, plus registry API key and alerts URL resolution.
+- `config.py` — Per-stage hosts (`DevConfig`/`ProdConfig`: registry, market-data API, controller, Cognito) picked by the `STAGE` env var, plus API key and alerts URL resolution.
 
 ### Data flow
 
@@ -79,6 +79,8 @@ YAML config
 
 **Sweep simulation blocks:** Dot-notation keys like `exchanges.KALSHI.fee_model.taker_fee` or `listings.48212.network_latency.latency_nanos` target nested YAML fields; the swept block must name its model (`type`) in the config. Multiple keys produce a cartesian product with strategy args.
 
+**Missing market data:** a backtest asks the market-data API's `collection/missing` (Java `MarketDataApi`, built in `runner.py` with `MARKET_DATA_API_KEY`, else the `gnome/api-keys/market-data` mirror) where collection had no data for its streams. `on_missing` (config): `mark` (default) re-sends the stream's last book flagged bad data at each stretch's start, as the gateway does live; `fail` refuses the run; `ignore` replays as recorded. Every run reports it in `metadata.market_data` and `summary.json`'s `market_data_missing_fraction` (the controller's "Missing data" column); `report.html` shades the stretches on its time charts (hover the ▾ markers) and lists them in a Market Data section; without a key the run warns and reports nothing. Time before coverage was tracked is `untracked_ns`, never marked.
+
 **Scenarios:** A `scenarios` key at the top level defines named listing/timewindow groups (each with `start_date`, `end_date`, `listings`, and optional `strategy_args` overrides). When present, `start_date`/`end_date`/`listings` are omitted from the top level. Total jobs = scenarios × sweep combinations; results are tagged with scenario name.
 
 ## Registry client
@@ -86,7 +88,7 @@ YAML config
 `gnomepy/registry/api.py` — `RegistryClient` wraps the gnome-registry REST API. Reads page through `limit`/`offset` and parse into the dataclasses in `registry/types.py`.
 
 - **Host:** `https://{config.REGISTRY_API_HOST}/api`, chosen by `STAGE` (`dev` or `prod`; unset or unknown means prod, so set `STAGE=dev` when testing against dev). `base_url=` overrides it.
-- **API key:** `api_key=`, else `GNOME_REGISTRY_API_KEY`, else `REGISTRY_API_KEY_ID` looked up through API Gateway `GetApiKey` (needs AWS credentials). The lookup is cached per process because `GetApiKey` is an account-wide, tightly throttled call and warm Lambdas build a client per invocation. No key raises `ValueError`.
+- **API key:** `api_key=`, else `GNOME_REGISTRY_API_KEY`, else `REGISTRY_API_KEY_ID` looked up through API Gateway `GetApiKey`, else the Secrets Manager mirror `gnome/api-keys/registry` (both need AWS credentials; Batch backtest and research job roles may read the mirror). Lookups are cached per process because `GetApiKey` is an account-wide, tightly throttled call and warm Lambdas build a client per invocation. No key raises `ValueError`. A stale `GNOME_REGISTRY_API_KEY` in a shell (e.g. prod's key with `STAGE=dev`) wins over the mirror and gets 401s.
 - **Operator routes:** `_post_as_operator`/`_patch_as_operator` send the `gnomepy login` Cognito ID token (`auth.get_id_token()`) instead of the API key, because those routes must name a person in the audit log (e.g. `stop_strategy_session`, `create_vendor_source`, `update_source`). They fail in Lambdas and CI where nobody has logged in; automated callers use the API-key variant (e.g. `stop_strategy_session_as_service` with an `actor`).
 - **Alerts:** `send_alert` posts to `<alerts url>/alerts` with the client's API key. `type` is a type from the registry's alert catalog (e.g. `LAUNCH_FAILED`) or `CUSTOM`, whose `severity` the caller sets (capped below paging). Reuse a `key` to dedupe while firing and send `status="RESOLVED"` with it to close. The URL is `alerts_url=`, else `ALERTS_API_URL` (sessions have it), else SSM `/gnome/alerting/api-url`.
 - Request timeout is 60s: API Gateway gives up at 29s, so anything longer is a dropped connection.
