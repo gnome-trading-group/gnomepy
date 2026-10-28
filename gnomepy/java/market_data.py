@@ -14,7 +14,6 @@ from gnomepy.java.enums import RecordType
 logger = logging.getLogger(__name__)
 
 _StreamEntry = None
-_EntryType = None
 _LocalDateTime = None
 _S3Client = None
 _GetObjectRequest = None
@@ -23,13 +22,12 @@ _UNSET = object()
 
 
 def _resolve_classes():
-    global _StreamEntry, _EntryType, _LocalDateTime, _S3Client, _GetObjectRequest
+    global _StreamEntry, _LocalDateTime, _S3Client, _GetObjectRequest
 
     if _StreamEntry is not None:
         return
 
     _StreamEntry = jpype.JClass("group.gnometrading.data.StreamEntry")
-    _EntryType = jpype.JClass("group.gnometrading.data.StreamEntry$EntryType")
     _LocalDateTime = jpype.JClass("java.time.LocalDateTime")
     _S3Client = jpype.JClass("software.amazon.awssdk.services.s3.S3Client")
     _GetObjectRequest = jpype.JClass("software.amazon.awssdk.services.s3.model.GetObjectRequest")
@@ -114,7 +112,6 @@ class MarketDataClient:
                 int(stream_id),
                 java_record_type,
                 java_dt,
-                _EntryType.AGGREGATED,
             ))
             current += timedelta(minutes=1)
 

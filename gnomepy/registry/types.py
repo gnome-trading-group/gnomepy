@@ -185,6 +185,9 @@ class Event:
     exchange_id: int | None = None
     native_event_id: str | None = None
     native_url: str | None = None
+    # About USD traded over the last 24 hours, as the classifier last read it; None before its first reading.
+    volume_24h: float | None = None
+    volume_updated_at: str | None = None
 
 
 @dataclass

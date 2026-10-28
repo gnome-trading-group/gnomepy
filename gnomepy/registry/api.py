@@ -101,8 +101,23 @@ class RegistryClient:
         resolved: Optional[bool] = None,
         exchange_id: Optional[int] = None,
         native_event_id: Optional[str] = None,
+        exchange_ids: Optional[list[int]] = None,
+        categories: Optional[list[str]] = None,
+        tags: Optional[list[str]] = None,
+        expiry_from: Optional[str] = None,
+        expiry_to: Optional[str] = None,
+        min_volume_24h: Optional[float] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> list[Event]:
-        return self._get("/events", _parse_kwarg_params(locals()), Event)
+        """Events matching every given filter. List filters match any of their values; ``sort_by="volume_24h"`` puts
+        events with no volume reading last."""
+        params = _parse_kwarg_params(locals())
+        # The registry reads list filters as one comma-separated value; requests would repeat the key per item.
+        for key in ("exchangeIds", "categories", "tags"):
+            if key in params:
+                params[key] = ",".join(str(v) for v in params[key])
+        return self._get("/events", params, Event)
 
     def get_event_contracts(
         self,

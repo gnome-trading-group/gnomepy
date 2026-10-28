@@ -64,7 +64,7 @@ def test_the_engines_reads_are_served_from_the_cache_after_the_first(tmp_path):
     StreamEntry = jpype.JClass("group.gnometrading.data.StreamEntry")
     RecordType = jpype.JClass("group.gnometrading.schemas.RecordType")
     minute = jpype.JClass("java.time.LocalDateTime").of(2026, 1, 1, 0, 0)
-    entry = StreamEntry(7, RecordType.MBP_10, minute, StreamEntry.EntryType.AGGREGATED)
+    entry = StreamEntry(7, RecordType.MBP_10, minute)
     record = Mbp10Schema(stream_id=7, timestamp_event=1, timestamp_recv=2, action="Add", side="Bid")
     real = _CountingS3({str(entry.getKey()): zstandard.ZstdCompressor().compress(record.encode())})
     caching = create_caching_s3_proxy(real.client, MarketDataCache(tmp_path), BUCKET)
