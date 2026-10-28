@@ -81,8 +81,14 @@ class StreamRecord:
 
     @property
     def is_bad_data(self) -> bool:
-        """The record may not reflect its source (a gap, a resync, a lost stream) until a snapshot clears it."""
+        """The record may not reflect its source (a gap, a resync, a lost stream) until a snapshot clears it. While a
+        listing's book is bad the OMS refuses new orders on it (``RejectReason.MARKET_DATA_BAD``); resting ones stay."""
         return bool(self._java.isBadData())
+
+    @property
+    def is_snapshot(self) -> bool:
+        """The record is a whole book, e.g. the one that clears a bad-data spell."""
+        return bool(self._java.isSnapshot())
 
     @property
     def event_timestamp(self) -> int:

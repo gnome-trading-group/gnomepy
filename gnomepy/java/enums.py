@@ -116,6 +116,8 @@ class RejectReason(Enum):
     INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS"
     SELF_TRADE = "SELF_TRADE"
     MARKET_CLOSED = "MARKET_CLOSED"
+    # Our OMS refused the order: the listing's book is flagged bad data until a good book arrives.
+    MARKET_DATA_BAD = "MARKET_DATA_BAD"
 
     def to_java(self):
         return _java_enum("group.gnometrading.schemas.RejectReason", self.value)
