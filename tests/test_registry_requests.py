@@ -141,3 +141,66 @@ def test_get_source_accounts_filters_by_source_and_label(monkeypatch):
     assert calls[0]["params"] == {"sourceCode": "KALSHI", "label": "md-1", "limit": 1000, "offset": 0}
     assert account.secret_name == "gnome/market-data/kalshi/md-1"
     assert account.connection_budget is None
+
+
+def _relationship_row(**extra):
+    return {"relationship_id": 1, "security_id_a": 10, "security_id_b": 11, "relationship_type": "IMPLIES",
+            "method": "derived", "date_created": "x", **extra}
+
+
+def test_contract_relationships_parse_with_or_without_confidence_and_flags(monkeypatch):
+    pages = [[_relationship_row(confidence=0.9)],
+             [_relationship_row(flags=["RESOLUTION_SOURCE_DIFFERS"], evidence={"rule": "threshold"}, derivation_version="d1")]]
+    monkeypatch.setattr(registry_api.requests, "get", lambda url, params, headers, timeout: _Response(pages.pop(0)))
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    old, = client.get_contract_relationships()
+    new, = client.get_contract_relationships()
+
+    assert old.flags == [] and old.evidence is None
+    assert new.flags == ["RESOLUTION_SOURCE_DIFFERS"] and new.derivation_version == "d1"
+
+
+def test_proposition_reads_send_id_lists_as_one_value(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, headers, timeout):
+        calls.append((url, params))
+        if url.endswith("/proposition-subjects"):
+            return _Response([{"subject_id": 3, "key": "btc-usd", "description": "", "date_created": "x",
+                               "date_modified": "x", "proposition_count": 2}])
+        return _Response([{"security_id": 10, "subject_id": 3, "extracted_subject_id": 3, "fields": {"kind": "THRESHOLD"},
+                           "method": "VENUE", "extractor_version": "v1", "source_hash": "h", "date_created": "x",
+                           "date_modified": "x", "symbol": "ignored"}])
+
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    subject, = client.get_proposition_subjects(subject_ids=[3, 4], dirty=True)
+    proposition, = client.get_contract_propositions(security_ids=[10, 11])
+
+    assert calls[0][1] == {"subjectIds": "3,4", "dirty": "true", "limit": 1000, "offset": 0}
+    assert calls[1][1] == {"securityIds": "10,11", "limit": 1000, "offset": 0}
+    assert subject.proposition_count == 2 and subject.canonical_subject_id is None
+    assert proposition.fields == {"kind": "THRESHOLD"}
+
+
+def test_reconcile_posts_camel_case_relationships(monkeypatch):
+    posted = []
+
+    def fake_post(url, json, headers, timeout):
+        posted.append((url, json))
+        return _Response({"inserted": 1})
+
+    monkeypatch.setattr(registry_api.requests, "post", fake_post)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    client.reconcile_contract_relationships(
+        security_ids=[10, 11], method="derived", derivation_version="d1", subject_id=3,
+        relationships=[{"security_id_a": 10, "security_id_b": 11, "relationship_type": "IMPLIES", "flags": []}],
+    )
+
+    assert posted == [("https://registry.example.com/api/contract-relationships/reconcile", {
+        "securityIds": [10, 11], "method": "derived", "derivationVersion": "d1", "subjectId": 3,
+        "relationships": [{"securityIdA": 10, "securityIdB": 11, "relationshipType": "IMPLIES", "flags": []}],
+    })]

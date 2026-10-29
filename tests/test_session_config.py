@@ -64,3 +64,24 @@ def test_an_unknown_block_is_refused(tmp_path):
     path.write_text("mode: paper\nlistings:\n  - listing_id: 7\nexchanges:\n  KALSHI:\n    fee: {model: static}\n")
     with pytest.raises(ValueError, match="exchanges.KALSHI has unknown blocks: fee"):
         SessionConfig.from_yaml(path)
+
+
+def test_data_only_streams_reach_the_registry_de_duplicated(tmp_path):
+    path = tmp_path / "session.yaml"
+    path.write_text("mode: paper\nlistings:\n  - listing_id: 7\nstreams: [900, 901, 900]\n")
+    config = SessionConfig.from_yaml(path)
+
+    assert config.streams == [900, 901]
+    assert config.to_session_config()["streams"] == [900, 901]
+
+
+def test_a_session_without_streams_sends_none():
+    assert "streams" not in _paper().to_session_config()
+
+
+@pytest.mark.parametrize("streams", ["900", [900, "901"], [0], [1.5], [True], [2**31]])
+def test_streams_that_are_not_stream_ids_are_refused(tmp_path, streams):
+    path = tmp_path / "session.yaml"
+    path.write_text(f"mode: paper\nlistings:\n  - listing_id: 7\nstreams: {json.dumps(streams)}\n")
+    with pytest.raises(ValueError, match="streams must be a list of positive int32 stream ids"):
+        SessionConfig.from_yaml(path)

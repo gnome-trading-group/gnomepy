@@ -31,6 +31,20 @@ def _overrides(where: str, value: Any) -> dict[str, Any]:
     return value
 
 
+# Stream ids double as Aeron stream ids, which are int32.
+_MAX_STREAM_ID = 2**31 - 1
+
+
+def _streams(value: Any) -> list[int]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(
+        isinstance(v, bool) or not isinstance(v, int) or not 0 < v <= _MAX_STREAM_ID for v in value
+    ):
+        raise ValueError("streams must be a list of positive int32 stream ids")
+    return list(dict.fromkeys(value))
+
+
 @dataclass
 class ListingSessionConfig:
     listing_id: int
@@ -58,6 +72,10 @@ class SessionConfig:
     # The time the session reads the registry's simulation parameters and fees as known at (ISO-8601). A deployed
     # session is pinned by the registry when it launches; a local run pins when it starts.
     simulation_as_of: str | None = None
+    # Market-data stream ids (registry md.stream) the session reads without trading them, from any region; a traded
+    # listing's own book stream is implied. Paper only: live sessions still open their own feeds, and the launcher
+    # refuses a live session that sets this.
+    streams: list[int] = field(default_factory=list)
 
     def simulation(self) -> dict[str, Any]:
         """The session's ``simulation`` config value, as the orchestrator reads it."""
@@ -79,6 +97,8 @@ class SessionConfig:
             "mode": self.mode,
             "listings": [lsc.listing_id for lsc in self.listings],
         }
+        if self.streams:
+            config["streams"] = _streams(self.streams)
         if self.session_id is not None:
             config["session.id"] = self.session_id
         if self.strategy_id is not None:
@@ -132,4 +152,5 @@ class SessionConfig:
             strategy=strategy,
             seed=data.get("seed"),
             simulation_as_of=data.get("simulation_as_of"),
+            streams=_streams(data.get("streams")),
         )

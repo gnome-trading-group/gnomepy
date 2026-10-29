@@ -10,13 +10,16 @@ import requests
 from gnomepy.auth import get_id_token
 from gnomepy.config import config, resolve_alerts_api_url, resolve_registry_api_key
 from gnomepy.registry.types import (
+    ContractProposition,
     ContractRelationship,
+    ContractSource,
     Currency,
     Event,
     EventContract,
     Exchange,
     Listing,
     ListingSpec,
+    PropositionSubject,
     Security,
     Source,
     SourceAccount,
@@ -138,6 +141,42 @@ class RegistryClient:
         relationship_type: Optional[str] = None,
     ) -> list[ContractRelationship]:
         return self._get("/contract-relationships", _parse_kwarg_params(locals()), ContractRelationship)
+
+    def get_proposition_subjects(
+        self,
+        *,
+        subject_ids: Optional[list[int]] = None,
+        key: Optional[str] = None,
+        search: Optional[str] = None,
+        canonical: Optional[bool] = None,
+        dirty: Optional[bool] = None,
+    ) -> list[PropositionSubject]:
+        params = _parse_kwarg_params(locals())
+        if subject_ids is not None:
+            params["subjectIds"] = ",".join(map(str, subject_ids))
+        return self._get("/proposition-subjects", params, PropositionSubject)
+
+    def get_contract_propositions(
+        self,
+        *,
+        security_ids: Optional[list[int]] = None,
+        subject_id: Optional[int] = None,
+    ) -> list[ContractProposition]:
+        params = _parse_kwarg_params(locals())
+        if security_ids is not None:
+            params["securityIds"] = ",".join(map(str, security_ids))
+        return self._get("/contract-propositions", params, ContractProposition)
+
+    def get_contract_sources(
+        self,
+        *,
+        security_ids: Optional[list[int]] = None,
+        exchange_id: Optional[int] = None,
+    ) -> list[ContractSource]:
+        params = _parse_kwarg_params(locals())
+        if security_ids is not None:
+            params["securityIds"] = ",".join(map(str, security_ids))
+        return self._get("/contract-sources", params, ContractSource)
 
     def get_sources(
         self,
@@ -273,6 +312,45 @@ class RegistryClient:
 
     def bulk_create_contract_relationships(self, items: list[dict]) -> list[dict]:
         return self._post_bulk("/contract-relationships", items)
+
+    def create_proposition_subjects(self, items: list[dict]) -> list[dict]:
+        """Creates subjects by ``key`` (with an optional ``description``), or returns the ones that exist."""
+        return self._post_bulk("/proposition-subjects", items)
+
+    def upsert_contract_sources(self, items: list[dict]) -> list[dict]:
+        """Writes each security's venue source (``security_id``, ``exchange_id``, ``source``, ``source_hash``)."""
+        return self._post_bulk("/contract-sources", items)
+
+    def upsert_contract_propositions(self, items: list[dict]) -> list[dict]:
+        """Writes one proposition per security; returns ``security_id``, resolved ``subject_id`` and ``changed`` each."""
+        return self._post_bulk("/contract-propositions", items)
+
+    def reconcile_contract_relationships(
+        self,
+        *,
+        security_ids: list[int],
+        relationships: list[dict],
+        method: str,
+        derivation_version: str,
+        subject_id: Optional[int] = None,
+        derived_at: Optional[str] = None,
+    ) -> dict:
+        """Replaces the derived relationships touching ``security_ids`` with ``relationships`` in one transaction.
+
+        Manual rows are kept, and a relationship on a pair a person already related is skipped. With ``subject_id``,
+        also records the subject as derived as of ``derived_at`` (when its propositions were read; default now).
+        """
+        body = {
+            "securityIds": security_ids,
+            "relationships": [{_to_camel_case(k): v for k, v in r.items()} for r in relationships],
+            "method": method,
+            "derivationVersion": derivation_version,
+        }
+        if subject_id is not None:
+            body["subjectId"] = subject_id
+        if derived_at is not None:
+            body["derivedAt"] = derived_at
+        return self._post("/contract-relationships/reconcile", body)
 
     def patch_event_contract(self, event_contract_id: int, **kwargs) -> dict:
         body = {_to_camel_case(k): v for k, v in kwargs.items()}
@@ -469,6 +547,14 @@ class RegistryClient:
         gnomepy_version: str | None = None,
         availability_zone: str | None = None,
     ) -> dict:
+        """Launch a session (``SessionConfig.to_session_config()`` builds ``config``).
+
+        ``config`` keys the registry reads: ``listings`` (traded listing ids), ``streams`` (market-data stream ids the
+        session reads without trading, any region; paper only; the registry leases them with each
+        traded listing's book stream from the collector shards), ``strategy.type``/``strategy.class``,
+        ``strategy.args.<name>``, ``simulation`` (paper), ``latency.profile``, ``accounts`` (live) and
+        ``overrides.<orchestrator property>``. Other keys reach the instance as environment variables.
+        """
         body = {
             "sessionId": session_id,
             "strategyId": strategy_id,

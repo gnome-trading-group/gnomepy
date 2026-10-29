@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 
 
@@ -207,18 +207,47 @@ class ContractRelationship:
     security_id_a: int
     security_id_b: int
     relationship_type: str
-    confidence: float
     method: str
     date_created: str
+    flags: list[str] = field(default_factory=list)
+    evidence: dict | None = None
+    derivation_version: str | None = None
 
 
 @dataclass
-class HedgeKeyword:
-    hedge_keyword_id: int
-    security_id: int
-    keyword: str
-    date_modified: str
+class PropositionSubject:
+    subject_id: int
+    key: str
+    description: str
     date_created: str
+    date_modified: str
+    derived_at: str | None = None
+    has_embedding: bool = False
+    canonical_subject_id: int | None = None
+    proposition_count: int = 0
+
+
+@dataclass
+class ContractSource:
+    security_id: int
+    exchange_id: int
+    source: dict
+    source_hash: str
+    date_created: str
+    date_modified: str
+
+
+@dataclass
+class ContractProposition:
+    security_id: int
+    subject_id: int
+    extracted_subject_id: int
+    fields: dict
+    method: str
+    extractor_version: str
+    source_hash: str
+    date_created: str
+    date_modified: str
 
 
 @dataclass

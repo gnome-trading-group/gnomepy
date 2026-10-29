@@ -8,72 +8,37 @@ _DIRECTIONAL_TYPES = frozenset({"IMPLIES"})
 
 
 class RelationshipGraph:
-    def __init__(
-        self,
-        relationships: list[ContractRelationship],
-        min_confidence: float = 0.0,
-    ) -> None:
-        # adj[relationship_type][security_id] -> list of (other_security_id, confidence)
-        self._adj: dict[str, dict[int, list[tuple[int, float]]]] = defaultdict(
-            lambda: defaultdict(list)
-        )
+    def __init__(self, relationships: list[ContractRelationship]) -> None:
+        # adj[relationship_type][security_id] -> other security ids
+        self._adj: dict[str, dict[int, list[int]]] = defaultdict(lambda: defaultdict(list))
 
         for rel in relationships:
-            if rel.confidence < min_confidence:
-                continue
-            self._adj[rel.relationship_type][rel.security_id_a].append(
-                (rel.security_id_b, rel.confidence)
-            )
+            self._adj[rel.relationship_type][rel.security_id_a].append(rel.security_id_b)
             if rel.relationship_type not in _DIRECTIONAL_TYPES:
-                self._adj[rel.relationship_type][rel.security_id_b].append(
-                    (rel.security_id_a, rel.confidence)
-                )
+                self._adj[rel.relationship_type][rel.security_id_b].append(rel.security_id_a)
 
-    def get_equivalents(self, security_id: int, min_confidence: float = 0.0) -> list[int]:
-        return self._get_related(security_id, "EQUIVALENT", min_confidence)
+    def get_equivalents(self, security_id: int) -> list[int]:
+        return self.get_related(security_id, "EQUIVALENT")
 
-    def get_equivalent_pairs(self, min_confidence: float = 0.0) -> list[tuple[int, int]]:
+    def get_equivalent_pairs(self) -> list[tuple[int, int]]:
         seen: set[tuple[int, int]] = set()
         pairs: list[tuple[int, int]] = []
         for sid, neighbors in self._adj.get("EQUIVALENT", {}).items():
-            for other_sid, confidence in neighbors:
-                if confidence < min_confidence:
-                    continue
+            for other_sid in neighbors:
                 pair = (min(sid, other_sid), max(sid, other_sid))
                 if pair not in seen:
                     seen.add(pair)
                     pairs.append(pair)
         return pairs
 
-    def get_implies(self, security_id: int, min_confidence: float = 0.0) -> list[int]:
-        return self._get_related(security_id, "IMPLIES", min_confidence)
+    def get_implies(self, security_id: int) -> list[int]:
+        return self.get_related(security_id, "IMPLIES")
 
-    def get_implied_by(self, security_id: int, min_confidence: float = 0.0) -> list[int]:
-        results = []
-        for sid, neighbors in self._adj.get("IMPLIES", {}).items():
-            for other_sid, conf in neighbors:
-                if other_sid == security_id and conf >= min_confidence:
-                    results.append(sid)
-        return results
+    def get_implied_by(self, security_id: int) -> list[int]:
+        return [sid for sid, neighbors in self._adj.get("IMPLIES", {}).items() if security_id in neighbors]
 
-    def get_implies_pairs(self, min_confidence: float = 0.0) -> list[tuple[int, int, float]]:
-        pairs: list[tuple[int, int, float]] = []
-        for sid, neighbors in self._adj.get("IMPLIES", {}).items():
-            for other_sid, confidence in neighbors:
-                if confidence >= min_confidence:
-                    pairs.append((sid, other_sid, confidence))
-        return pairs
+    def get_implies_pairs(self) -> list[tuple[int, int]]:
+        return [(sid, other_sid) for sid, neighbors in self._adj.get("IMPLIES", {}).items() for other_sid in neighbors]
 
-    def get_related(
-        self,
-        security_id: int,
-        relationship_type: str,
-        min_confidence: float = 0.0,
-    ) -> list[int]:
-        return self._get_related(security_id, relationship_type, min_confidence)
-
-    def _get_related(
-        self, security_id: int, relationship_type: str, min_confidence: float
-    ) -> list[int]:
-        neighbors = self._adj.get(relationship_type, {}).get(security_id, [])
-        return [other_id for other_id, conf in neighbors if conf >= min_confidence]
+    def get_related(self, security_id: int, relationship_type: str) -> list[int]:
+        return list(self._adj.get(relationship_type, {}).get(security_id, []))
