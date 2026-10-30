@@ -212,6 +212,9 @@ class ContractRelationship:
     flags: list[str] = field(default_factory=list)
     evidence: dict | None = None
     derivation_version: str | None = None
+    # The other security of each side's BINARY event, from a connected read; consumers rebuild contrapositives with it.
+    complement_a: int | None = None
+    complement_b: int | None = None
 
 
 @dataclass

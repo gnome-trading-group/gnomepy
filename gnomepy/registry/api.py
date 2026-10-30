@@ -142,6 +142,13 @@ class RegistryClient:
     ) -> list[ContractRelationship]:
         return self._get("/contract-relationships", _parse_kwarg_params(locals()), ContractRelationship)
 
+    def get_connected_relationships(self, *, security_ids: list[int]) -> list[ContractRelationship]:
+        """Every relationship in the connected sets of these securities (reached through relationships and
+        complements), with each side's complement: the rows a consumer needs to rebuild the complete relation, which
+        the registry stores only the fewest rows of (see ``relations.close``)."""
+        params = {"securityIds": ",".join(map(str, security_ids)), "connected": "true"}
+        return self._get("/contract-relationships", params, ContractRelationship)
+
     def get_proposition_subjects(
         self,
         *,

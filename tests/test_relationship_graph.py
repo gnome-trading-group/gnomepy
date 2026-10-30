@@ -4,7 +4,7 @@ from gnomepy.registry.graph import RelationshipGraph
 from gnomepy.registry.types import ContractRelationship, ContractType, EventContract, Security
 
 
-def make_rel(rel_id, id_a, id_b, rel_type, method="derived", flags=()):
+def make_rel(rel_id, id_a, id_b, rel_type, method="derived", flags=(), complement_a=None, complement_b=None):
     return ContractRelationship(
         relationship_id=rel_id,
         security_id_a=id_a,
@@ -13,6 +13,8 @@ def make_rel(rel_id, id_a, id_b, rel_type, method="derived", flags=()):
         method=method,
         date_created="2025-01-01T00:00:00",
         flags=list(flags),
+        complement_a=complement_a,
+        complement_b=complement_b,
     )
 
 
@@ -76,17 +78,14 @@ class TestRelationshipGraphImpliesDirectional:
 
 
 class TestRelationshipGraphEquivalentPairs:
-    def test_no_duplicates(self):
+    def test_equivalence_chains_into_every_pair_once(self):
         g = RelationshipGraph(
             [
                 make_rel(1, 100, 200, "EQUIVALENT"),
                 make_rel(2, 200, 300, "EQUIVALENT"),
             ]
         )
-        pairs = g.get_equivalent_pairs()
-        assert len(pairs) == 2
-        assert (100, 200) in pairs
-        assert (200, 300) in pairs
+        assert g.get_equivalent_pairs() == [(100, 200), (100, 300), (200, 300)]
 
     def test_pair_normalized(self):
         g = RelationshipGraph([make_rel(1, 200, 100, "EQUIVALENT")])
@@ -205,8 +204,18 @@ class _StubRegistry:
     def get_security(self, *, security_id):
         return [self._securities[security_id]] if security_id in self._securities else []
 
-    def get_contract_relationships(self, *, security_id):
-        return [r for r in self._relationships if security_id in (r.security_id_a, r.security_id_b)]
+    def get_connected_relationships(self, *, security_ids):
+        reached, frontier, rows = set(security_ids), list(security_ids), {}
+        while frontier:
+            sid = frontier.pop()
+            for r in self._relationships:
+                if sid in (r.security_id_a, r.security_id_b):
+                    rows[r.relationship_id] = r
+                    for other in (r.security_id_a, r.security_id_b):
+                        if other not in reached:
+                            reached.add(other)
+                            frontier.append(other)
+        return list(rows.values())
 
 
 class TestRelationshipGraphLoad:
@@ -229,10 +238,33 @@ class TestRelationshipGraphLoad:
 
     def test_relationship_touching_two_loaded_securities_is_kept_once(self):
         g = RelationshipGraph.load(self.client, [1])
-        assert g.get_implies_pairs() == [(10, 11)]
+        assert [r.relationship_id for r in g.get_stored()].count(3) == 1
 
     def test_flagged_relationships_left_out_by_default(self):
         assert RelationshipGraph.load(self.client, [1]).get_equivalents(11) == []
 
     def test_flagged_relationships_kept_when_asked(self):
         assert RelationshipGraph.load(self.client, [1], allow_flagged=True).get_equivalents(11) == [91]
+
+
+class TestRelationshipGraphCompleteRelation:
+    def test_a_ladder_stored_as_steps_answers_every_pair(self):
+        g = RelationshipGraph([make_rel(1, 103, 102, "IMPLIES"), make_rel(2, 102, 101, "IMPLIES")])
+        assert g.get_implies(103) == [101, 102]
+        assert g.get_implied_by(101) == [102, 103]
+        assert (103, 101) in g.get_implies_pairs()
+
+    def test_no_sides_follow_from_complements_on_the_rows(self):
+        g = RelationshipGraph([make_rel(1, 103, 102, "IMPLIES", complement_a=203, complement_b=202)])
+        assert g.get_complement(203) == 103
+        assert g.get_implies(202) == [203]
+
+    def test_flags_apply_to_the_composed_route(self):
+        rows = [make_rel(1, 1, 2, "IMPLIES"), make_rel(2, 2, 3, "EQUIVALENT", flags=["RESOLUTION_SOURCE_DIFFERS"])]
+        assert RelationshipGraph(rows).get_flags(1, 3) == ("RESOLUTION_SOURCE_DIFFERS",)
+        assert RelationshipGraph(rows, allow_flagged=False).get_implies(1) == [2]
+
+    def test_explain_names_the_rows_behind_an_implied_pair(self):
+        g = RelationshipGraph([make_rel(7, 3, 2, "IMPLIES"), make_rel(8, 2, 1, "IMPLIES")])
+        assert g.explain(3, 1) == [7, 8]
+        assert g.explain(1, 3) is None
