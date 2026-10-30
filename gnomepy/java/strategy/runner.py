@@ -189,11 +189,8 @@ def _register_s3_finalizer() -> None:
 def _run_until_signalled(java_args) -> None:
     """Starts the trading orchestrator and blocks until SIGINT/SIGTERM, then closes it and exits the JVM."""
     _register_s3_finalizer()
-    # Must load TradingOrchestrator before Orchestrator.start() — its static initializer
-    # sets instanceClass, which Orchestrator.start() uses to instantiate the orchestrator.
-    jpype.JClass("group.gnometrading.trading.TradingOrchestrator")
-    Orchestrator = jpype.JClass("group.gnometrading.di.Orchestrator")
-    orchestrator = Orchestrator.start(java_args)
+    Main = jpype.JClass("group.gnometrading.orchestrator.Main")
+    orchestrator = Main.start("session", java_args)
     System = jpype.JClass("java.lang.System")
 
     def _shutdown(sig, frame):
