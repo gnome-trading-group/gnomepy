@@ -118,6 +118,14 @@ class RejectReason(Enum):
     MARKET_CLOSED = "MARKET_CLOSED"
     # Our OMS refused the order: the listing's book is flagged bad data until a good book arrives.
     MARKET_DATA_BAD = "MARKET_DATA_BAD"
+    # The order gateway refused the order or cancel and sent nothing to the venue.
+    GATEWAY_UNAVAILABLE = "GATEWAY_UNAVAILABLE"
+    GATEWAY_NOT_READY = "GATEWAY_NOT_READY"
+    GATEWAY_DEGRADED = "GATEWAY_DEGRADED"
+    SESSION_NOT_REGISTERED = "SESSION_NOT_REGISTERED"
+    LISTING_NOT_LEASED = "LISTING_NOT_LEASED"
+    SESSION_CAP = "SESSION_CAP"
+    UNKNOWN_ORDER = "UNKNOWN_ORDER"
 
     def to_java(self):
         return _java_enum("group.gnometrading.schemas.RejectReason", self.value)
