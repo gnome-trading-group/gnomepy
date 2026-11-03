@@ -231,6 +231,20 @@ class PropositionSubject:
 
 
 @dataclass
+class SubjectMergeLogEntry:
+    """One merge or unmerge of proposition subjects, in the order they happened. Only a person unmerges."""
+    merge_log_id: int
+    action: str
+    alias_subject_id: int
+    canonical_subject_id: int
+    actor: str
+    propositions_moved: int
+    date_created: str
+    alias_key: str | None = None
+    canonical_key: str | None = None
+
+
+@dataclass
 class SubjectMergeCandidate:
     """A subject merge the classifier judged right but held back for a person: ``hold`` says why (``PRICE``: two
     venues' prices for a new equivalence disagree; ``COLLISION``: two outcomes of one event would read alike)."""

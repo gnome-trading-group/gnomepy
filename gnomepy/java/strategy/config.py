@@ -73,8 +73,7 @@ class SessionConfig:
     # session is pinned by the registry when it launches; a local run pins when it starts.
     simulation_as_of: str | None = None
     # Market-data stream ids (registry md.stream) the session reads without trading them, from any region; a traded
-    # listing's own book stream is implied. Paper only: live sessions still open their own feeds, and the launcher
-    # refuses a live session that sets this.
+    # listing's own book stream is implied. The launcher leases them from the collector shards with the book streams.
     streams: list[int] = field(default_factory=list)
 
     def simulation(self) -> dict[str, Any]:

@@ -236,3 +236,22 @@ def test_subject_merges_and_their_review_queue(monkeypatch):
                              "gain": 5, "details": {"prices": [[0.1, 0.4]]}}]
     assert gets[0] == {"limit": 1000, "offset": 0}
     assert candidate.alias_key == "b" and candidate.hold == "PRICE"
+
+
+def test_reads_the_subject_merge_log(monkeypatch):
+    gets = []
+
+    def fake_get(url, params, headers, timeout):
+        gets.append((url, params))
+        return _Response([{"merge_log_id": 2, "action": "UNMERGE", "alias_subject_id": 4, "canonical_subject_id": 3,
+                           "actor": "me@example.com", "propositions_moved": 9, "date_created": "x",
+                           "alias_key": "b", "canonical_key": "a"}])
+
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    entry, = client.get_subject_merge_log(action="UNMERGE")
+
+    assert gets[0] == ("https://registry.example.com/api/proposition-subjects/merges",
+                       {"action": "UNMERGE", "history": "true", "limit": 1000, "offset": 0})
+    assert entry.action == "UNMERGE" and entry.alias_key == "b"

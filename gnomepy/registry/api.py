@@ -27,6 +27,7 @@ from gnomepy.registry.types import (
     Strategy,
     StrategySession,
     SubjectMergeCandidate,
+    SubjectMergeLogEntry,
 )
 
 logger = logging.getLogger(__name__)
@@ -163,6 +164,14 @@ class RegistryClient:
         if subject_ids is not None:
             params["subjectIds"] = ",".join(map(str, subject_ids))
         return self._get("/proposition-subjects", params, PropositionSubject)
+
+    def get_subject_merge_log(
+        self, *, subject_id: Optional[int] = None, action: Optional[str] = None,
+    ) -> list[SubjectMergeLogEntry]:
+        """Every merge and unmerge of proposition subjects, newest first; ``action`` is ``MERGE`` or ``UNMERGE``."""
+        params = _parse_kwarg_params(locals())
+        params["history"] = "true"
+        return self._get("/proposition-subjects/merges", params, SubjectMergeLogEntry)
 
     def get_subject_merge_candidates(self, *, status: Optional[str] = None) -> list[SubjectMergeCandidate]:
         """Subject merges held back for a person: ``PENDING`` (the default), ``MERGED``, ``DISMISSED`` or ``ALL``."""
@@ -573,8 +582,8 @@ class RegistryClient:
         """Launch a session (``SessionConfig.to_session_config()`` builds ``config``).
 
         ``config`` keys the registry reads: ``listings`` (traded listing ids), ``streams`` (market-data stream ids the
-        session reads without trading, any region; paper only; the registry leases them with each
-        traded listing's book stream from the collector shards), ``strategy.type``/``strategy.class``,
+        session reads without trading, any region; the registry leases them with each traded listing's book
+        stream from the collector shards), ``strategy.type``/``strategy.class``,
         ``strategy.args.<name>``, ``simulation`` (paper), ``latency.profile``, ``accounts`` (live) and
         ``overrides.<orchestrator property>``. Other keys reach the instance as environment variables.
         """
