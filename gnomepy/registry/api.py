@@ -26,6 +26,7 @@ from gnomepy.registry.types import (
     Stream,
     Strategy,
     StrategySession,
+    SubjectMergeCandidate,
 )
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,10 @@ class RegistryClient:
         if subject_ids is not None:
             params["subjectIds"] = ",".join(map(str, subject_ids))
         return self._get("/proposition-subjects", params, PropositionSubject)
+
+    def get_subject_merge_candidates(self, *, status: Optional[str] = None) -> list[SubjectMergeCandidate]:
+        """Subject merges held back for a person: ``PENDING`` (the default), ``MERGED``, ``DISMISSED`` or ``ALL``."""
+        return self._get("/proposition-subjects/merge-candidates", _parse_kwarg_params(locals()), SubjectMergeCandidate)
 
     def get_contract_propositions(
         self,
@@ -323,6 +328,17 @@ class RegistryClient:
     def create_proposition_subjects(self, items: list[dict]) -> list[dict]:
         """Creates subjects by ``key`` (with an optional ``description``), or returns the ones that exist."""
         return self._post_bulk("/proposition-subjects", items)
+
+    def merge_proposition_subjects(self, *, from_subject_id: int, into_subject_id: int, actor: str) -> dict:
+        """Merges ``from_subject_id`` into ``into_subject_id`` from an automated caller (no `gnomepy login`); ``actor``
+        is recorded in the merge log, e.g. "classifier:subject-merger". Only a person unmerges, from the controller."""
+        return self._post("/proposition-subjects/merges",
+                          {"fromSubjectId": from_subject_id, "intoSubjectId": into_subject_id, "actor": actor})
+
+    def upsert_subject_merge_candidates(self, items: list[dict]) -> list[dict]:
+        """Queues merges held back for a person (``alias_subject_id``, ``canonical_subject_id``, ``hold``, ``reason``,
+        ``gain``, ``details``). A pending pair is refreshed; one a person already merged or dismissed is left alone."""
+        return self._post_bulk("/proposition-subjects/merge-candidates", items)
 
     def upsert_contract_sources(self, items: list[dict]) -> list[dict]:
         """Writes each security's venue source (``security_id``, ``exchange_id``, ``source``, ``source_hash``)."""

@@ -3,6 +3,8 @@ from gnomepy.registry.api import REQUEST_TIMEOUT_SECONDS, RegistryClient
 
 
 class _Response:
+    ok = True
+
     def __init__(self, body):
         self._body = body
 
@@ -204,3 +206,33 @@ def test_reconcile_posts_camel_case_relationships(monkeypatch):
         "securityIds": [10, 11], "method": "derived", "derivationVersion": "d1", "subjectId": 3,
         "relationships": [{"securityIdA": 10, "securityIdB": 11, "relationshipType": "IMPLIES", "flags": []}],
     })]
+
+
+def test_subject_merges_and_their_review_queue(monkeypatch):
+    posted, gets = [], []
+
+    def fake_post(url, json, headers, timeout):
+        posted.append((url, json))
+        return _Response([{"candidate_id": 1}] if isinstance(json, list) else {"alias_subject_id": 4})
+
+    def fake_get(url, params, headers, timeout):
+        gets.append(params)
+        return _Response([{"candidate_id": 1, "alias_subject_id": 4, "canonical_subject_id": 3, "hold": "PRICE",
+                           "reason": "same award", "gain": 5, "status": "PENDING", "date_created": "x",
+                           "date_modified": "x", "alias_key": "b", "canonical_key": "a", "details": {}}])
+
+    monkeypatch.setattr(registry_api.requests, "post", fake_post)
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    client.merge_proposition_subjects(from_subject_id=4, into_subject_id=3, actor="classifier:subject-merger")
+    client.upsert_subject_merge_candidates([{"alias_subject_id": 4, "canonical_subject_id": 3, "hold": "PRICE",
+                                             "reason": "same award", "gain": 5, "details": {"prices": [[0.1, 0.4]]}}])
+    candidate, = client.get_subject_merge_candidates()
+
+    assert posted[0] == ("https://registry.example.com/api/proposition-subjects/merges",
+                         {"fromSubjectId": 4, "intoSubjectId": 3, "actor": "classifier:subject-merger"})
+    assert posted[1][1] == [{"aliasSubjectId": 4, "canonicalSubjectId": 3, "hold": "PRICE", "reason": "same award",
+                             "gain": 5, "details": {"prices": [[0.1, 0.4]]}}]
+    assert gets[0] == {"limit": 1000, "offset": 0}
+    assert candidate.alias_key == "b" and candidate.hold == "PRICE"

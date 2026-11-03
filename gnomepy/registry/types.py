@@ -231,6 +231,26 @@ class PropositionSubject:
 
 
 @dataclass
+class SubjectMergeCandidate:
+    """A subject merge the classifier judged right but held back for a person: ``hold`` says why (``PRICE``: two
+    venues' prices for a new equivalence disagree; ``COLLISION``: two outcomes of one event would read alike)."""
+    candidate_id: int
+    alias_subject_id: int
+    canonical_subject_id: int
+    hold: str
+    reason: str
+    gain: int
+    status: str
+    date_created: str
+    date_modified: str
+    alias_key: str | None = None
+    canonical_key: str | None = None
+    details: dict = field(default_factory=dict)
+    decided_by: str | None = None
+    decided_at: str | None = None
+
+
+@dataclass
 class ContractSource:
     security_id: int
     exchange_id: int
