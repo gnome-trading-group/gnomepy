@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 import os
 import signal
 import sys
@@ -22,6 +23,13 @@ from gnomepy.java.recorder import MetricRecorder
 from gnomepy.java.schemas import wrap_record
 from gnomepy.java.streams import StreamDirectory
 from gnomepy.java.strategy.config import SessionConfig, StrategyConfig
+
+
+def _configure_logging() -> None:
+    """Sends Python INFO logs to stdout, which a session instance ships to CloudWatch with the orchestrator's own log;
+    unconfigured, Python drops everything below WARNING. Leaves logging alone if the caller already set it up."""
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 def _load_python_strategy(import_path: str, kwargs: dict | None = None) -> Strategy:
@@ -122,6 +130,7 @@ def run_strategy_session(
         jar: Explicit path to the gnome-orchestrator uber JAR.
         gnome_root: Root directory of GNOME repos for JAR discovery.
     """
+    _configure_logging()
     classpath = [jar] if jar else discover_classpath("gnome-orchestrator", gnome_root)
     ensure_jvm_started(classpath=classpath, jvm_args=STRATEGY_JVM_OPTIONS)
 
@@ -148,6 +157,7 @@ def run_strategy_session(
 
 def run_from_env() -> None:
     """Entry point for a strategy session instance — reads config from env vars, runs strategy."""
+    _configure_logging()
     strategy_class = os.environ["STRATEGY_CLASS"]
     args_json = os.environ.get("STRATEGY_ARGS_JSON", "")
     strategy_args = json.loads(args_json) if args_json else {}
