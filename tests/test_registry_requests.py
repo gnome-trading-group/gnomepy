@@ -68,10 +68,11 @@ def test_get_event_filters_by_scheduled_start_and_reads_it(monkeypatch):
     monkeypatch.setattr(registry_api.requests, "get", fake_get)
     client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
 
-    events = client.get_event(start_from="2026-11-08T00:00:00Z", start_to="2026-11-09T00:00:00Z", sort_by="start_time")
+    events = client.get_event(event_ids=[7, 8], start_from="2026-11-08T00:00:00Z", start_to="2026-11-09T00:00:00Z",
+                              sort_by="start_time")
 
-    assert calls == [{"startFrom": "2026-11-08T00:00:00Z", "startTo": "2026-11-09T00:00:00Z", "sortBy": "start_time",
-                      "limit": 1000, "offset": 0}]
+    assert calls == [{"eventIds": "7,8", "startFrom": "2026-11-08T00:00:00Z", "startTo": "2026-11-09T00:00:00Z",
+                      "sortBy": "start_time", "limit": 1000, "offset": 0}]
     assert events[0].start_time == "2026-11-08T23:00:00"
 
 

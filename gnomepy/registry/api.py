@@ -106,6 +106,7 @@ class RegistryClient:
         resolved: Optional[bool] = None,
         exchange_id: Optional[int] = None,
         native_event_id: Optional[str] = None,
+        event_ids: Optional[list[int]] = None,
         exchange_ids: Optional[list[int]] = None,
         categories: Optional[list[str]] = None,
         tags: Optional[list[str]] = None,
@@ -121,7 +122,7 @@ class RegistryClient:
         events with no volume reading last. ``start_from``/``start_to`` bound the scheduled start (ISO-8601)."""
         params = _parse_kwarg_params(locals())
         # The registry reads list filters as one comma-separated value; requests would repeat the key per item.
-        for key in ("exchangeIds", "categories", "tags"):
+        for key in ("eventIds", "exchangeIds", "categories", "tags"):
             if key in params:
                 params[key] = ",".join(str(v) for v in params[key])
         return self._get("/events", params, Event)
