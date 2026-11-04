@@ -111,12 +111,14 @@ class RegistryClient:
         tags: Optional[list[str]] = None,
         expiry_from: Optional[str] = None,
         expiry_to: Optional[str] = None,
+        start_from: Optional[str] = None,
+        start_to: Optional[str] = None,
         min_volume_24h: Optional[float] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> list[Event]:
         """Events matching every given filter. List filters match any of their values; ``sort_by="volume_24h"`` puts
-        events with no volume reading last."""
+        events with no volume reading last. ``start_from``/``start_to`` bound the scheduled start (ISO-8601)."""
         params = _parse_kwarg_params(locals())
         # The registry reads list filters as one comma-separated value; requests would repeat the key per item.
         for key in ("exchangeIds", "categories", "tags"):

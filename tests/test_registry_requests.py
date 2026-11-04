@@ -56,6 +56,25 @@ def test_get_event_sends_list_filters_as_one_comma_separated_value_and_reads_vol
     assert events[0].volume_24h == 1250.5
 
 
+def test_get_event_filters_by_scheduled_start_and_reads_it(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, headers, timeout):
+        calls.append(params)
+        return _Response([{"event_id": 7, "title": "A", "description": None, "category": "Sports", "tags": None,
+                           "resolved": False, "resolved_at": None, "expiry": None, "date_modified": "x",
+                           "date_created": "x", "start_time": "2026-11-08T23:00:00", "start_time_updated_at": "y"}])
+
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    events = client.get_event(start_from="2026-11-08T00:00:00Z", start_to="2026-11-09T00:00:00Z", sort_by="start_time")
+
+    assert calls == [{"startFrom": "2026-11-08T00:00:00Z", "startTo": "2026-11-09T00:00:00Z", "sortBy": "start_time",
+                      "limit": 1000, "offset": 0}]
+    assert events[0].start_time == "2026-11-08T23:00:00"
+
+
 def test_get_fee_timelines_sends_only_the_given_bounds_and_keys_by_listing(monkeypatch):
     calls = []
 

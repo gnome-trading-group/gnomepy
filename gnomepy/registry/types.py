@@ -188,6 +188,10 @@ class Event:
     # About USD traded over the last 24 hours, as the classifier last read it; None before its first reading.
     volume_24h: float | None = None
     volume_updated_at: str | None = None
+    # The scheduled start as the venue lists it now (UTC), as the classifier last read it; None when the venue gives
+    # none. Follows reschedules, unlike times in tickers and rules text.
+    start_time: str | None = None
+    start_time_updated_at: str | None = None
 
 
 @dataclass
