@@ -26,6 +26,7 @@ from gnomepy.registry.types import (
     Stream,
     Strategy,
     StrategySession,
+    SubjectKeyAlias,
     SubjectMergeCandidate,
     SubjectMergeLogEntry,
 )
@@ -179,6 +180,11 @@ class RegistryClient:
     def get_subject_merge_candidates(self, *, status: Optional[str] = None) -> list[SubjectMergeCandidate]:
         """Subject merges held back for a person: ``PENDING`` (the default), ``MERGED``, ``DISMISSED`` or ``ALL``."""
         return self._get("/proposition-subjects/merge-candidates", _parse_kwarg_params(locals()), SubjectMergeCandidate)
+
+    def get_subject_key_aliases(self, *, subject_ids: list[int]) -> list[SubjectKeyAlias]:
+        """The key aliases of these subjects, each read across its merge tree (a merged subject's are its canonical's)."""
+        return self._get("/proposition-subjects",
+                         {"subjectIds": ",".join(map(str, subject_ids)), "keyAliases": "true"}, SubjectKeyAlias)
 
     def get_contract_propositions(
         self,
@@ -346,6 +352,21 @@ class RegistryClient:
         is recorded in the merge log, e.g. "classifier:subject-merger". Only a person unmerges, from the controller."""
         return self._post("/proposition-subjects/merges",
                           {"fromSubjectId": from_subject_id, "intoSubjectId": into_subject_id, "actor": actor})
+
+    def change_subject_key_aliases(self, *, subject_id: int, actor: str, set: list[dict] | None = None,
+                                   remove: list[dict] | None = None) -> list[dict]:
+        """Sets and removes a subject's key aliases in one change, from an automated caller (no `gnomepy login`);
+        ``actor`` is recorded on each alias, e.g. "classifier:key-reconcile". Each ``set`` item: ``kind`` (``ENTITY`` or
+        ``MEASURE``), ``key``, ``canonical_key``, ``origin`` (``MERGE``, ``RECONCILE`` or ``MANUAL``), and optionally
+        ``flags``, ``merge_log_id`` (required for ``MERGE``) and ``reason``; each ``remove`` item: ``kind`` and ``key``.
+        Returns the subject's aliases after the change."""
+        body = {
+            "subjectId": subject_id,
+            "actor": actor,
+            "set": [{_to_camel_case(k): v for k, v in item.items()} for item in set or []],
+            "remove": [{_to_camel_case(k): v for k, v in item.items()} for item in remove or []],
+        }
+        return self._patch("/proposition-subjects", {}, body)
 
     def upsert_subject_merge_candidates(self, items: list[dict]) -> list[dict]:
         """Queues merges held back for a person (``alias_subject_id``, ``canonical_subject_id``, ``hold``, ``reason``,

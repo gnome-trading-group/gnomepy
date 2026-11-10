@@ -28,7 +28,8 @@ DEFAULT_JVM_ARGS = [
 ]
 
 # Live and paper strategy sessions. Kept here, beside DEFAULT_JVM_ARGS, so the Python runner and the EC2
-# bootstrap that launches Java strategies (which reads STRATEGY_JVM_ARGS) cannot drift apart.
+# bootstrap that launches Java strategies (which reads STRATEGY_JVM_OPTIONS, and takes DEFAULT_JVM_ARGS' module access
+# from the orchestrator jar's manifest instead) cannot drift apart.
 STRATEGY_JVM_OPTIONS = ["-XX:+UseZGC", "-XX:ConcGCThreads=2"]
 STRATEGY_JVM_ARGS = [*DEFAULT_JVM_ARGS, *STRATEGY_JVM_OPTIONS]
 

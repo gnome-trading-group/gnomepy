@@ -275,3 +275,52 @@ def test_reads_the_subject_merge_log(monkeypatch):
     assert gets[0] == ("https://registry.example.com/api/proposition-subjects/merges",
                        {"action": "UNMERGE", "history": "true", "limit": 1000, "offset": 0})
     assert entry.action == "UNMERGE" and entry.alias_key == "b"
+
+
+def test_subject_key_aliases_are_read_from_the_subjects_route(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, headers, timeout):
+        calls.append({"url": url, "params": params})
+        return _Response([{
+            "requested_subject_id": 7, "canonical_subject_id": 7, "subject_id": 7, "kind": "ENTITY", "key": "bos",
+            "canonical_key": "celtics", "flags": [], "origin": "RECONCILE", "merge_log_id": None, "reason": "same team",
+            "actor": "classifier:key-reconcile", "date_created": "2026-11-10T00:00:00Z",
+            "date_modified": "2026-11-10T00:00:00Z",
+        }])
+
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    aliases = client.get_subject_key_aliases(subject_ids=[7, 9])
+
+    assert calls == [{"url": "https://registry.example.com/api/proposition-subjects",
+                      "params": {"subjectIds": "7,9", "keyAliases": "true", "limit": 1000, "offset": 0}}]
+    assert (aliases[0].key, aliases[0].canonical_key, aliases[0].flags) == ("bos", "celtics", [])
+
+
+def test_subject_key_aliases_are_changed_with_one_patch_naming_the_actor(monkeypatch):
+    calls = []
+
+    def fake_patch(url, params, json, headers, timeout):
+        calls.append({"url": url, "json": json, "timeout": timeout})
+        return _Response([])
+
+    monkeypatch.setattr(registry_api.requests, "patch", fake_patch)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    client.change_subject_key_aliases(
+        subject_id=7, actor="classifier:key-reconcile",
+        set=[{"kind": "ENTITY", "key": "james-talarico", "canonical_key": "democratic", "origin": "RECONCILE",
+              "flags": ["PARTY_NOMINEE"], "merge_log_id": None}],
+        remove=[{"kind": "ENTITY", "key": "bos"}],
+    )
+
+    assert calls == [{
+        "url": "https://registry.example.com/api/proposition-subjects",
+        "json": {"subjectId": 7, "actor": "classifier:key-reconcile",
+                 "set": [{"kind": "ENTITY", "key": "james-talarico", "canonicalKey": "democratic", "origin": "RECONCILE",
+                          "flags": ["PARTY_NOMINEE"], "mergeLogId": None}],
+                 "remove": [{"kind": "ENTITY", "key": "bos"}]},
+        "timeout": REQUEST_TIMEOUT_SECONDS,
+    }]

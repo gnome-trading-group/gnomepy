@@ -249,6 +249,26 @@ class SubjectMergeLogEntry:
 
 
 @dataclass
+class SubjectKeyAlias:
+    """One entity or measure spelled two ways on a subject: derivation reads ``key`` as ``canonical_key``. Stored on the
+    subject's canonical subject; ``requested_subject_id`` is the id it was asked for. ``flags`` go onto every
+    relationship that rests on it (``PARTY_NOMINEE``: a party joined to its nominee)."""
+    requested_subject_id: int
+    canonical_subject_id: int
+    subject_id: int
+    kind: str
+    key: str
+    canonical_key: str
+    origin: str
+    actor: str
+    date_created: str
+    date_modified: str
+    flags: list[str] = field(default_factory=list)
+    merge_log_id: int | None = None
+    reason: str | None = None
+
+
+@dataclass
 class SubjectMergeCandidate:
     """A subject merge the classifier judged right but held back for a person: ``hold`` says why (``PRICE``: two
     venues' prices for a new equivalence disagree; ``COLLISION``: two outcomes of one event would read alike)."""
