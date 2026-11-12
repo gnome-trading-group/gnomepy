@@ -323,6 +323,10 @@ class BacktestConfig:
     # Where collection says market data is missing: "mark" flags each stream bad there as the gateway does live,
     # "fail" refuses to run, "ignore" replays as recorded. Always reported in the results.
     on_missing: str = "mark"
+    # Estimates the venue liquidity rewards resting orders earn (Kalshi's program), from the programs the registry knew
+    # at simulation_as_of; results.rewards_df() reads them. Snapshots are taken every rewards_snapshot_seconds.
+    rewards: bool = True
+    rewards_snapshot_seconds: int = 3600
 
     def _to_java(self):
         cls = jpype.JClass("group.gnometrading.backtest.config.BacktestConfig")
@@ -371,5 +375,7 @@ class BacktestConfig:
         if self.seed is not None:
             obj.seed = jpype.JLong(self.seed)
         obj.onMissing = jpype.JClass("group.gnometrading.backtest.config.OnMissing").valueOf(self.on_missing.upper())
+        obj.rewards = self.rewards
+        obj.rewardsSnapshotSeconds = jpype.JLong(self.rewards_snapshot_seconds)
 
         return obj

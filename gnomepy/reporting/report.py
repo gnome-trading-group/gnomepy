@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -9,6 +10,8 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from gnomepy._fs import resolve_fs
+
+logger = logging.getLogger(__name__)
 from gnomepy.reporting.metrics import Curves, build_curves, compute_max_drawdown, compute_sharpe, mid_price
 from gnomepy.reporting.plots import (
     DEFAULT_MAX_POINTS,
@@ -239,6 +242,21 @@ class BacktestReport:
 
     # -- Metadata ------------------------------------------------------------
 
+    def rewards_df(self) -> pd.DataFrame:
+        """Estimated venue liquidity rewards per listing and program period (``BacktestResults.rewards_df``)."""
+        return self._results.rewards_df() if self._results is not None else pd.DataFrame()
+
+    @cached_property
+    def maker_rebates_df(self) -> pd.DataFrame | None:
+        """Estimated maker rebates per MAKER fill, or None when the registry couldn't be read for them."""
+        if self._results is None:
+            return pd.DataFrame()
+        try:
+            return self._results.maker_rebates_df()
+        except Exception as e:  # noqa: BLE001 - the report still renders without them; summary says None
+            logger.warning("Couldn't estimate maker rebates from the registry's fee schedules: %s", e)
+            return None
+
     @property
     def metadata(self):
         """BacktestMetadata from the results (None if not available)."""
@@ -251,6 +269,38 @@ class BacktestReport:
     @property
     def fills(self) -> pd.DataFrame:
         return self._curves.fills
+
+    @cached_property
+    def rewards_curve(self) -> pd.Series:
+        """Estimated venue rewards accrued so far, in dollars: liquidity rewards (gross) at each recorded snapshot plus
+        maker rebates as each maker fill lands. Empty when the run earned none."""
+        parts = []
+        series = self._results.rewards_timeseries_df() if self._results is not None else pd.DataFrame()
+        if not series.empty:
+            parts.append(series.groupby(level=0)["gross"].sum())
+        rebates = self.maker_rebates_df
+        if rebates is not None and not rebates.empty:
+            parts.append(rebates.groupby(level=0)["rebate"].sum().cumsum())
+        if not parts:
+            return pd.Series(dtype=float)
+        index = parts[0].index
+        for part in parts[1:]:
+            index = index.union(part.index)
+        total = sum(part.reindex(index).ffill().fillna(0.0) for part in parts)
+        if self._window is not None:
+            total = total.loc[self._window[0]:self._window[1]]
+        return total.rename("rewards")
+
+    @property
+    def pnl_with_rewards_curve(self) -> pd.Series:
+        """Fill PnL plus the estimated rewards accrued by then; the fill PnL alone when the run earned none."""
+        pnl = self.pnl_curve
+        rewards = self.rewards_curve
+        if rewards.empty or pnl.empty:
+            return pnl
+        index = pnl.index.union(rewards.index)
+        combined = pnl.reindex(index).ffill().fillna(0.0) + rewards.reindex(index).ffill().fillna(0.0)
+        return combined.rename("pnl_with_rewards")
 
     # -- Raw frames ----------------------------------------------------------
 
@@ -345,6 +395,26 @@ class BacktestReport:
             # Of the run's stream-time, the share collection had no data for; None when the run couldn't ask.
             "market_data_missing_fraction": (
                 metadata.market_data["missing_fraction"] if metadata and metadata.market_data else None
+            ),
+            **self._rewards_summary(),
+        }
+
+    def _rewards_summary(self) -> dict:
+        """Estimated venue rewards over the whole run (never windowed): Kalshi liquidity rewards gross and as the
+        venue would pay the periods that ended, and Polymarket International maker rebates."""
+        rewards = self.rewards_df()
+        rebates = self.maker_rebates_df
+        gross = float(rewards["gross"].sum()) if not rewards.empty else 0.0
+        rebate_total = None if rebates is None else float(rebates["rebate"].sum()) if not rebates.empty else 0.0
+        pnl = self.pnl_curve
+        return {
+            "rewards_estimated_gross": gross,
+            "rewards_estimated_paid": float(rewards["paid"].sum()) if not rewards.empty else 0.0,
+            "maker_rebates_estimated": rebate_total,
+            # Liquidity rewards gross plus maker rebates, and the fill PnL with them: the curve the report draws.
+            "rewards_estimated_total": gross + (rebate_total or 0.0),
+            "final_pnl_with_rewards_estimated": (
+                (float(pnl.iloc[-1]) if not pnl.empty else 0.0) + gross + (rebate_total or 0.0)
             ),
         }
 

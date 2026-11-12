@@ -329,6 +329,20 @@ def plot_pnl(
                      line=dict(width=1.2)),
         row=1, col=1,
     )
+    rewards = report.rewards_curve
+    if not rewards.empty:
+        rewards = _downsample(rewards, max_points)
+        with_rewards = _downsample(report.pnl_with_rewards_curve, max_points)
+        fig.add_trace(
+            go.Scatter(x=rewards.index, y=rewards.values, mode="lines", name="Rewards (est.)",
+                         line=dict(width=1.2, dash="dot", color="#16a34a"), line_shape="hv"),
+            row=1, col=1,
+        )
+        fig.add_trace(
+            go.Scattergl(x=with_rewards.index, y=with_rewards.values, mode="lines", name="PnL + rewards (est.)",
+                         line=dict(width=1.2, dash="dash", color="#7c3aed")),
+            row=1, col=1,
+        )
     fig.add_trace(
         go.Scatter(x=dd.index, y=dd.values, mode="lines", name="Drawdown",
                    line=dict(width=1, color="crimson"), fill="tozeroy",
@@ -526,12 +540,18 @@ _KPI_KEYS = [
     ("total_notional", "Notional Volume", False),
     ("duration_seconds", "Duration", False),
 ]
+# Shown only for a run that earned estimated rewards.
+_REWARD_KPI_KEYS = [
+    ("rewards_estimated_total", "Rewards (est.)", True),
+    ("final_pnl_with_rewards_estimated", "PnL + rewards (est.)", True),
+]
 
 
 def _kpi_cards_html(summary: dict) -> str:
     """Render key metrics as styled cards."""
     cards = []
-    for key, label, colored in _KPI_KEYS:
+    keys = _KPI_KEYS + (_REWARD_KPI_KEYS if summary.get("rewards_estimated_total") else [])
+    for key, label, colored in keys:
         value = summary.get(key, 0)
         formatted = _fmt(key, value)
         if key == "duration_seconds":
@@ -765,6 +785,8 @@ _METRIC_FORMAT: dict[str, str] = {
     "final_position": ",.4f",
     "total_fees": ",.2f",
     "final_pnl": ",.2f",
+    "rewards_estimated_total": ",.2f",
+    "final_pnl_with_rewards_estimated": ",.2f",
     "sharpe": ",.3f",
     "sortino": ",.3f",
     "sharpe_std": ",.3f",
@@ -971,6 +993,41 @@ def _render_market_data(report: "BacktestReport") -> str | None:
     return f'{totals}<table class="listings-table"><thead><tr>{header}</tr></thead><tbody>{body}</tbody></table>{note}'
 
 
+def _render_rewards(report: "BacktestReport") -> str | None:
+    """Estimated venue rewards: each listing's liquidity programs, then maker rebates."""
+    rewards = report.rewards_df()
+    rebates = report.maker_rebates_df
+    if rewards.empty and (rebates is None or rebates.empty):
+        return None
+    ctx = _get_listing_context(report)
+    parts = ['<p class="muted">Estimates from the books and our resting orders, not venue payouts. A period is paid '
+             'only once it ends inside the run.</p>']
+    if not rewards.empty:
+        rows = []
+        for r in rewards.itertuples(index=False):
+            url = f"{ctx.controller_ui}/security-master/listings/{r.listing_id}"
+            name = f'<a class="listing-link" href="{url}">{_sym_label(r.listing_id, ctx)}</a>'
+            end = r.period_end.strftime("%Y-%m-%d %H:%M") if pd.notna(r.period_end) else "open"
+            paid = f"${r.paid:,.2f}" if pd.notna(r.paid) else "—"
+            counting = f"{r.counting_fraction:.0%}" if pd.notna(r.counting_fraction) else "—"
+            no_data = f"{r.no_data_fraction:.0%}" if pd.notna(r.no_data_fraction) else "—"
+            rows.append(f"<tr><td>{name}</td><td>{r.period_start:%Y-%m-%d %H:%M} – {end}</td>"
+                        f"<td>${r.program_reward:,.2f}</td><td>${r.gross:,.2f}</td><td>{paid}</td>"
+                        f"<td>{counting}</td><td>{no_data}</td></tr>")
+        header = "".join(f"<th>{h}</th>" for h in
+                         ("Listing", "Period (UTC)", "Program reward", "Gross", "Paid", "Counting", "No data"))
+        parts.append(f'<p>Liquidity rewards: ${rewards["gross"].sum():,.2f} gross, '
+                     f'${rewards["paid"].sum():,.2f} paid on periods that ended.</p>'
+                     f'<table class="listings-table"><thead><tr>{header}</tr></thead>'
+                     f'<tbody>{"".join(rows)}</tbody></table>')
+    if rebates is None:
+        parts.append('<p class="muted">Maker rebates couldn\'t be estimated: the registry\'s fee schedules '
+                     'weren\'t readable.</p>')
+    elif not rebates.empty:
+        parts.append(f'<p>Maker rebates: ${rebates["rebate"].sum():,.2f} on {len(rebates):,} maker fills.</p>')
+    return "".join(parts)
+
+
 DEFAULT_SECTIONS: list[ReportSection] = [
     ReportSection("kpi", "Summary", _render_kpi),
     ReportSection("listings", "Listings", _render_listings),
@@ -981,6 +1038,7 @@ DEFAULT_SECTIONS: list[ReportSection] = [
     ReportSection("spread", "Market Conditions", _render_spread),
     ReportSection("per_symbol", "Per-Symbol Breakdown", _render_per_symbol),
     ReportSection("fills", "Fills", _render_fills),
+    ReportSection("rewards", "Rewards (estimated)", _render_rewards),
     ReportSection("market_data", "Market Data", _render_market_data),
     ReportSection("warnings", "Warnings", _render_warnings),
 ]

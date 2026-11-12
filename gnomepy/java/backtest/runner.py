@@ -389,6 +389,7 @@ class Backtest:
             self._collect_java_warnings()
         finally:
             self._remove_warning_handler()
+        self._driver.finishRewards(jpype.JLong(end_ns))
         if self._recorder is not None:
             self._recorder.closeOpenOrders(jpype.JLong(end_ns))
         wall_time = time.time() - t0

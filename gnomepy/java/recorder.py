@@ -15,19 +15,24 @@ from gnomepy._fs import (
     fs_write_parquet,
     resolve_fs,
 )
+from gnomepy.fees import load_fee_timelines
 from gnomepy.java.statics import Scales
 from gnomepy.metadata import BacktestMetadata
+from gnomepy.registry.api import RegistryClient
 
 # Byte-encoding constants mirrored from BacktestRecorder.java
 _SIDE_MAP = {0: "None", 1: "Bid", 2: "Ask"}
 _OTYPE_MAP = {0: "Limit", 1: "Market"}
 _STATUS_MAP = {0: "Filled", 1: "PartialFill", 2: "Cancelled", 3: "Rejected", 4: "Expired", 5: "Open"}
+_LIQUIDITY_MAP = {0: "Unknown", 1: "Maker", 2: "Taker"}
+# A program period with no end, as the recorder writes it (Java's Long.MAX_VALUE).
+_OPEN_ENDED = np.iinfo(np.int64).max
 
 
 # SBE null for int64 price and size fields: the recorder writes it for an empty book side or a tick with no trade.
 _NULL_LONG = np.iinfo(np.int64).min
 
-_STREAMS = ("market", "orders", "fills", "intents")
+_STREAMS = ("market", "orders", "fills", "intents", "rewards")
 
 # (price columns, size columns) per stream. Market columns depend on the recorded depth, so they are matched by name.
 _UNIT_COLUMNS = {
@@ -37,6 +42,7 @@ _UNIT_COLUMNS = {
     ),
     "fills": (("fill_price", "book_bid_price", "book_ask_price"), ("fill_qty", "leaves_qty")),
     "intents": (("bid_price", "ask_price", "take_limit_price"), ("bid_size", "ask_size", "take_size")),
+    "rewards": (("program_reward", "gross", "market_gross", "market_paid"), ()),
 }
 
 
@@ -228,6 +234,7 @@ class BacktestResults:
         intent_df: pd.DataFrame | None = None,
         custom_metrics: dict[str, pd.DataFrame] | None = None,
         metadata: BacktestMetadata | None = None,
+        rewards_df: pd.DataFrame | None = None,
     ) -> "BacktestResults":
         """Construct a BacktestResults directly from DataFrames (no Java recorder).
 
@@ -236,7 +243,7 @@ class BacktestResults:
         result = cls.__new__(cls)
         result._java = None
         result._metadata = metadata
-        frames = (market_df, orders_df, fills_df, intent_df)
+        frames = (market_df, orders_df, fills_df, intent_df, rewards_df)
         result._frames = {
             (stream, True): df if df is not None else pd.DataFrame() for stream, df in zip(_STREAMS, frames)
         }
@@ -413,6 +420,8 @@ class BacktestResults:
 
         df = _buffer_to_df(self._java.getFillRecords())
         df["side"] = _decode_bytes(df["side"].values, _SIDE_MAP)
+        if "liquidity" in df.columns:
+            df["liquidity"] = _decode_bytes(df["liquidity"].values, _LIQUIDITY_MAP)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df = df.set_index("timestamp")
 
@@ -438,6 +447,84 @@ class BacktestResults:
         df = _buffer_to_df(self._java.getIntentRecords())
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         return df.set_index("timestamp")
+
+    # ------------------------------------------------------------------
+    # Rewards (estimated)
+    # ------------------------------------------------------------------
+
+    def rewards_timeseries_df(self, scale_prices: bool = True) -> pd.DataFrame:
+        """What each listing's venue liquidity programs had accrued at each snapshot, cumulative. Estimates.
+
+        Columns: timestamp (index), listing_id, venue_program_id, market, period_start, period_end (NaT when the
+        program has no end), program_reward, gross (ours on this listing), share_nanos, market_gross (ours on the
+        whole market), market_paid (what the venue would pay the market at that gross once the period ends),
+        counting_nanos, one_sided_nanos, depth_unknown_nanos, no_data_nanos.
+        """
+        return self._frame("rewards", scale_prices, self._build_rewards_df)
+
+    def _build_rewards_df(self) -> pd.DataFrame:
+        if self._java is None or int(self._java.getRewardRecords().getCount()) == 0:
+            return pd.DataFrame()
+        df = _buffer_to_df(self._java.getRewardRecords())
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df["period_start"] = pd.to_datetime(df["period_start"])
+        df["period_end"] = pd.to_datetime(df["period_end"].where(df["period_end"] != _OPEN_ENDED))
+        return df.set_index("timestamp")
+
+    def rewards_df(self) -> pd.DataFrame:
+        """Estimated venue liquidity rewards, one row per listing and program period, as they stood at the run's end.
+
+        ``gross`` is our estimate in dollars on the listing. A period that ended inside the run is ``closed`` and has
+        ``paid``: the venue's closing rule (Kalshi: whole cents, nothing under $1) applied to the whole market, split
+        across its listings by gross. An open period's ``paid`` is NaN. The ``*_fraction`` columns divide the period
+        into time that counted, a side short of the program's size, a side possibly deeper than the feed shows, and
+        no data.
+        """
+        series = self.rewards_timeseries_df()
+        if series.empty:
+            return pd.DataFrame()
+        run_end = series.index.max()
+        last = series.reset_index().groupby(["listing_id", "venue_program_id"], sort=True).last().reset_index()
+        last["closed"] = last["period_end"].notna() & (last["period_end"] <= run_end)
+        share = (last["gross"] / last["market_gross"]).where(last["market_gross"] > 0, 0.0)
+        last["paid"] = (last["market_paid"] * share).where(last["closed"])
+        period_ns = (last["period_end"].fillna(run_end) - last["period_start"]).dt.total_seconds() * 1e9
+        for kind in ("counting", "one_sided", "depth_unknown", "no_data"):
+            last[f"{kind}_fraction"] = (last[f"{kind}_nanos"] / period_ns).where(period_ns > 0)
+        columns = ["listing_id", "venue_program_id", "market", "period_start", "period_end", "closed",
+                   "program_reward", "gross", "paid", "counting_fraction", "one_sided_fraction",
+                   "depth_unknown_fraction", "no_data_fraction"]
+        return last[columns]
+
+    def maker_rebates_df(self, registry: RegistryClient | None = None) -> pd.DataFrame:
+        """Estimated maker rebates paid apart from the fill (Polymarket International's), one row per MAKER fill.
+
+        A maker fill earns the fee schedule's ``maker_rebate_share`` of the taker fee the same fill would have paid,
+        under the schedule in force at the fill as the registry knew it at the run's ``simulation_as_of``. Fills on
+        listings without such a rebate are left out. ``rebate`` is in dollars.
+        """
+        fills = self.fills_df(scale_prices=False)
+        if fills.empty or "liquidity" not in fills.columns:
+            return pd.DataFrame()
+        makers = fills[fills["liquidity"] == "Maker"]
+        if makers.empty:
+            return pd.DataFrame()
+        known_as_of = self._metadata.simulation_as_of if self._metadata is not None else None
+        timelines = load_fee_timelines(
+            registry or RegistryClient(), sorted(int(i) for i in makers["listing_id"].unique()), known_as_of=known_as_of)
+        rows = []
+        for ts, fill in makers.iterrows():
+            timeline = timelines.get(int(fill["listing_id"]))
+            schedule = timeline.at(int(ts.value)) if timeline is not None else None
+            if schedule is None or schedule.maker_rebate_share <= 0:
+                continue
+            taker_fee = schedule.fee(fill["side"] == "Bid", int(fill["fill_price"]), int(fill["fill_qty"]), False)
+            rows.append({"timestamp": ts, "listing_id": int(fill["listing_id"]), "client_oid": int(fill["client_oid"]),
+                         "share": schedule.maker_rebate_share,
+                         "rebate": schedule.maker_rebate_share * taker_fee / Scales.PRICE})
+        if not rows:
+            return pd.DataFrame()
+        return pd.DataFrame(rows).set_index("timestamp")
 
     def _frame(self, stream: str, scaled: bool, build) -> pd.DataFrame:
         key = (stream, scaled)
@@ -483,7 +570,7 @@ class BacktestResults:
     def save(self, output: str | Path) -> None:
         """Save all recorder data to Parquet files in the given directory or S3 prefix.
 
-        Writes: market.parquet, orders.parquet, fills.parquet, intents.parquet,
+        Writes: market.parquet, orders.parquet, fills.parquet, intents.parquet, rewards.parquet,
         custom/{name}.parquet for each custom metric stream, and metadata.json.
 
         Args:
@@ -497,6 +584,7 @@ class BacktestResults:
             ("orders", self.orders_df()),
             ("fills", self.fills_df()),
             ("intents", self.intent_records_df()),
+            ("rewards", self.rewards_timeseries_df()),
         ]:
             if not df.empty:
                 fs_write_parquet(fs, f"{base}/{stream_name}.parquet", df)

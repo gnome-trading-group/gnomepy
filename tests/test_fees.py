@@ -47,7 +47,7 @@ def test_timeline_holds_each_schedule_until_the_next_and_leaves_gaps_unknown():
 
 def test_load_fee_timelines_parses_each_listing():
     class Registry:
-        def get_fee_timelines(self, listing_ids, start=None, end=None):
+        def get_fee_timelines(self, listing_ids, start=None, end=None, known_as_of=None):
             return {7: [_entry("2026-01-01T00:00:00Z", None, 0.07)], 9: []}
 
     timelines = load_fee_timelines(Registry(), [7, 9])

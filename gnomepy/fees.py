@@ -230,8 +230,9 @@ def load_fee_timelines(
     *,
     start: str | None = None,
     end: str | None = None,
+    known_as_of: str | None = None,
 ) -> dict[int, FeeTimeline]:
     """Each listing's fee timeline from the registry, optionally trimmed to the schedules in force within
-    [start, end]."""
-    raw = registry.get_fee_timelines(listing_ids, start=start, end=end)
+    [start, end] and to what the registry knew at ``known_as_of``."""
+    raw = registry.get_fee_timelines(listing_ids, start=start, end=end, known_as_of=known_as_of)
     return {listing_id: FeeTimeline.from_registry(entries) for listing_id, entries in raw.items()}
