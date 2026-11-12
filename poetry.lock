@@ -3217,4 +3217,4 @@ strategy = ["numpy", "scipy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.13,<3.14"
-content-hash = "428c4dd4d76558987820c709ba6e4e2678bb33ba21033b724bcb7d0d51a7f429"
+content-hash = "f7bbc8d188511b35205672a6793c6e25fcc7dcb4b66215ef65282fe54e54822d"

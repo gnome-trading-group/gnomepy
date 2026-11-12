@@ -14,7 +14,9 @@ dependencies = [
     "pytz (>=2025.1,<2026.0)",
     "pyyaml (>=6.0,<7.0)",
     "click (>=8.1,<9.0)",
-    "jpype1 (>=1.5.0,<2.0.0)",
+    # 1.7.x leaks a Python type on every callback from a Java thread, which is how live sessions call strategies
+    # (jpype-project/jpype#1576).
+    "jpype1 (>=1.5.0,<1.7.0)",
 ]
 
 [project.optional-dependencies]
