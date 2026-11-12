@@ -102,7 +102,14 @@ class Strategy(ABC):
         """
         return self._metric_recorder
 
-    def request_exit(self, reason: str, *, flatten: bool = False, timeout: timedelta = timedelta(minutes=5)) -> bool:
+    def request_exit(
+        self,
+        reason: str,
+        *,
+        flatten: bool = False,
+        timeout: timedelta = timedelta(minutes=5),
+        notify: bool = False,
+    ) -> bool:
         """End this session, e.g. a pregame strategy once its match has started. Safe to call from any thread.
 
         From then on ``on_market_data`` and ``on_execution_report`` are no longer called. The session cancels the
@@ -110,6 +117,9 @@ class Strategy(ABC):
         ``timeout`` has passed. It then raises a SESSION_EXITED alert (a WARNING if positions it was asked to close
         are still held), and stops: it shows as STOPPED with ``reason``. Without ``flatten``, positions are kept,
         e.g. to hold them to settlement.
+
+        The alert is always recorded on the controller's Alerts page. A clean exit is only posted to Slack with
+        ``notify``; a WARNING is posted regardless.
 
         Only the first request counts. In a backtest the strategy just goes quiet.
 
@@ -119,7 +129,7 @@ class Strategy(ABC):
         if self._control is None:
             logger.warning("request_exit(%r) before the strategy was initialized; ignored", reason)
             return False
-        return bool(self._control.requestExit(reason, flatten, int(timeout.total_seconds() * 1000)))
+        return bool(self._control.requestExit(reason, flatten, int(timeout.total_seconds() * 1000), notify))
 
     @property
     def is_exiting(self) -> bool:

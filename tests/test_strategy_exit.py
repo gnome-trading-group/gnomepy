@@ -17,8 +17,8 @@ class _FakeControl:
     def __init__(self):
         self.requests = []
 
-    def requestExit(self, reason, flatten, timeout_millis):
-        self.requests.append((reason, flatten, timeout_millis))
+    def requestExit(self, reason, flatten, timeout_millis, notify):
+        self.requests.append((reason, flatten, timeout_millis, notify))
         return len(self.requests) == 1
 
     def isExiting(self):
@@ -29,19 +29,19 @@ def test_request_exit_passes_the_reason_flatten_and_timeout_to_the_session():
     strategy = _Quiet()
     strategy._control = _FakeControl()
 
-    assert strategy.request_exit("match went live", flatten=True, timeout=timedelta(seconds=90))
+    assert strategy.request_exit("match went live", flatten=True, timeout=timedelta(seconds=90), notify=True)
 
-    assert strategy._control.requests == [("match went live", True, 90_000)]
+    assert strategy._control.requests == [("match went live", True, 90_000, True)]
     assert strategy.is_exiting
 
 
-def test_request_exit_keeps_positions_by_default():
+def test_request_exit_keeps_positions_and_stays_out_of_slack_by_default():
     strategy = _Quiet()
     strategy._control = _FakeControl()
 
     strategy.request_exit("done")
 
-    assert strategy._control.requests == [("done", False, 300_000)]
+    assert strategy._control.requests == [("done", False, 300_000, False)]
 
 
 def test_only_the_first_request_counts():
