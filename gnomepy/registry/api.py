@@ -321,6 +321,23 @@ class RegistryClient:
         res.raise_for_status()
         return {item["listingId"]: item["timeline"] for item in res.json()}
 
+    def get_incentive_timelines(
+        self,
+        listing_ids: list[int],
+        *,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        known_as_of: Optional[str] = None,
+    ) -> dict[int, list[dict]]:
+        """Each listing's venue incentive programs, as their versions over time; times are ISO-8601."""
+        params = {"listingIds": ",".join(str(i) for i in listing_ids), "from": start, "to": end, "knownAsOf": known_as_of}
+        res = requests.get(
+            self.base_url + "/incentive-programs", params={k: v for k, v in params.items() if v is not None},
+            headers={"x-api-key": self.api_key}, timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        res.raise_for_status()
+        return {item["listingId"]: item["programs"] for item in res.json()}
+
     def get_simulation_parameters(
         self, *, exchange_id: Optional[int] = None, known_as_of: Optional[str] = None, history: bool = False,
     ) -> list[dict]:

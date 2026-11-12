@@ -83,6 +83,9 @@ def _java_schedule(taker, maker):
         def currency(self):
             return "USD"
 
+        def makerRebateShare(self):
+            return 0.0
+
     return JavaFeeSchedule()
 
 
@@ -112,3 +115,18 @@ def test_strategies_get_the_schedule_in_force_at_the_backtests_time():
 def test_price_curve_rates_refuse_other_shapes():
     with pytest.raises(ValueError):
         FeeSchedule.from_definition(VECTORS[-1]["definition"]).price_curve_rates()
+
+
+def test_a_maker_rebate_is_read_but_never_changes_the_fee():
+    definition = {
+        "currency": "USD", "components": [{"kind": "PRICE_CURVE", "taker": 0.05, "maker": 0, "exponent": 1}],
+        "rounding": {"mode": "HALF_UP", "increment": 0.00001, "scope": "FILL"},
+    }
+    plain = FeeSchedule.from_definition(definition)
+    rebated = FeeSchedule.from_definition({**definition, "makerRebate": {"share": 0.25}})
+
+    assert plain.maker_rebate_share == 0.0
+    assert rebated.maker_rebate_share == 0.25
+    assert rebated.fee(True, 500_000_000, 1_000_000, True) == plain.fee(True, 500_000_000, 1_000_000, True) == 0
+    with pytest.raises(ValueError):
+        FeeSchedule("USD", (), maker_rebate_share=1.5)

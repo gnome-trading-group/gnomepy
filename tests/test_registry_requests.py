@@ -94,6 +94,24 @@ def test_get_fee_timelines_sends_only_the_given_bounds_and_keys_by_listing(monke
     assert timelines == {7: [{"effectiveFrom": "2026-01-01T00:00:00.000Z"}], 9: []}
 
 
+def test_get_incentive_timelines_sends_only_the_given_bounds_and_keys_by_listing(monkeypatch):
+    calls = []
+
+    def fake_get(url, params, headers, timeout):
+        calls.append({"url": url, "params": params})
+        return _Response([{"listingId": 7, "programs": [{"venueProgramId": "k1", "versions": []}]},
+                          {"listingId": 9, "programs": []}])
+
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    timelines = client.get_incentive_timelines([7, 9], known_as_of="2026-11-01T00:00:00Z")
+
+    assert calls == [{"url": "https://registry.example.com/api/incentive-programs",
+                      "params": {"listingIds": "7,9", "knownAsOf": "2026-11-01T00:00:00Z"}}]
+    assert timelines == {7: [{"venueProgramId": "k1", "versions": []}], 9: []}
+
+
 def test_get_streams_joins_id_lists_and_keeps_known_fields(monkeypatch):
     calls = []
     row = {

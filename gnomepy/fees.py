@@ -51,6 +51,8 @@ class FeeSchedule:
 
     ``rounding_increment_units`` is in price units; ``rounding_scope`` is ``FILL`` (each fill rounded on its own) or
     ``ORDER_ACCUMULATOR`` (Kalshi: the balance change is rounded and the excess carried across the order's fills).
+    ``maker_rebate_share`` is the part of the taker fee a maker fill earns back later, as a reward paid apart from the
+    fill (Polymarket International's maker rebate); it never changes :meth:`fee`.
     """
 
     currency: str
@@ -58,8 +60,11 @@ class FeeSchedule:
     rounding_mode: str = "NONE"
     rounding_increment_units: int = 0
     rounding_scope: str = "FILL"
+    maker_rebate_share: float = 0.0
 
     def __post_init__(self):
+        if not 0.0 <= self.maker_rebate_share <= 1.0:
+            raise ValueError(f"a maker rebate share must be in [0, 1]: {self.maker_rebate_share}")
         if self.rounding_scope == "ORDER_ACCUMULATOR" and self.rounding_mode != "CEIL":
             raise ValueError("ORDER_ACCUMULATOR rounding must be CEIL")
         if self.rounding_mode != "NONE" and self.rounding_increment_units <= 0:
@@ -75,17 +80,18 @@ class FeeSchedule:
                 raise ValueError(f"unknown fee component {c}")
             components.append(FeeComponent(kind, float(c["taker"]), float(c["maker"]),
                                            float(c.get("exponent", 1.0)), side))
+        rebate = float((definition.get("makerRebate") or {}).get("share", 0.0))
         rounding = definition["rounding"]
         mode = rounding["mode"]
         if mode not in _MODES:
             raise ValueError(f"unknown rounding mode {mode}")
         if mode == "NONE":
-            return cls(definition["currency"], tuple(components))
+            return cls(definition["currency"], tuple(components), maker_rebate_share=rebate)
         scope = rounding["scope"]
         if scope not in _SCOPES:
             raise ValueError(f"unknown rounding scope {scope}")
         increment = round(float(rounding["increment"]) * PRICE_SCALE)
-        return cls(definition["currency"], tuple(components), mode, increment, scope)
+        return cls(definition["currency"], tuple(components), mode, increment, scope, rebate)
 
     def fee(self, buy: bool, price: int, qty: int, maker: bool, state: OrderFeeState | None = None) -> int:
         """The fee for one fill in price units, rounded as the venue rounds it.
@@ -108,7 +114,7 @@ class FeeSchedule:
         )
         r = schedule.rounding()
         return cls(str(schedule.currency()), components, str(r.mode().name()), int(r.incrementUnits()),
-                   str(r.scope().name()))
+                   str(r.scope().name()), float(schedule.makerRebateShare()))
 
     def price_curve_rates(self) -> tuple[float, float]:
         """(taker, maker) rates of a schedule that is one ``rate × p(1−p)`` curve on both sides, as Kalshi's and
