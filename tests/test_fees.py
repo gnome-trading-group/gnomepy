@@ -83,9 +83,6 @@ def _java_schedule(taker, maker):
         def currency(self):
             return "USD"
 
-        def makerRebateShare(self):
-            return 0.0
-
     return JavaFeeSchedule()
 
 
