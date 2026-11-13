@@ -50,6 +50,17 @@ class BacktestMetadata:
     gnomepy_research_commit: str | None = None
     gnomepy_commit: str | None = None
     backtest_jar_hash: str | None = None
+    # The engine (gnome-backtest) and the runtime (gnome-strategies) and OMS inside it.
+    engine_version: str | None = None
+    runtime_version: str | None = None
+    oms_version: str | None = None
+    # Where a Java strategy's classes came from: "commit" (strategy_commit) or "local" (a checkout at
+    # strategy_commit, with uncommitted changes when strategy_dirty). None when they came from the engine jar.
+    strategy_source: str | None = None
+    strategy_commit: str | None = None
+    strategy_dirty: bool | None = None
+    # The orchestrator release the strategy's sessions run on, as its commit pins it.
+    platform_orchestrator: str | None = None
     java_version: str | None = None
     python_version: str | None = None
     os_info: str | None = None

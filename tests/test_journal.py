@@ -45,12 +45,28 @@ def _market_data() -> tuple[int, bytes]:
     return _MBP10_TEMPLATE, b"\x00" * 40
 
 
-def _segment(records, first_sequence: int, source: int = 8) -> bytes:
+_SEGMENT_HEADER = b"GNJ2" + struct.pack("<H", 2) + b"\x00" * 10
+
+
+def _arrival(sequence: int) -> int:
+    return 1_700_000_000_000_000_000 + sequence * 1_000
+
+
+def _records(records, first_sequence: int, source: int = 8, legacy: bool = False) -> bytes:
     out = b""
     for offset, (template, payload) in enumerate(records):
-        out += struct.pack("<QHHH", first_sequence + offset, source, template, len(payload)) + payload
+        sequence = first_sequence + offset
+        if legacy:
+            out += struct.pack("<QHHH", sequence, source, template, len(payload)) + payload
+        else:
+            out += struct.pack("<QQHHH", sequence, _arrival(sequence), source, template, len(payload)) + payload
+    return out
+
+
+def _segment(records, first_sequence: int, source: int = 8, legacy: bool = False) -> bytes:
+    header = b"" if legacy else _SEGMENT_HEADER
     # A segment file keeps its mapped size; the zeros after its records are where a reader stops.
-    return out + b"\x00" * 64
+    return header + _records(records, first_sequence, source, legacy) + b"\x00" * 64
 
 
 def _write(directory, index: int, data: bytes, kind: str = "zst") -> None:
@@ -104,9 +120,39 @@ def test_a_missing_segment_is_refused(tmp_path):
 
 
 def test_a_sequence_gap_is_refused():
-    data = _segment([_market_data()], 1)[:-64] + _segment([_market_data()], 3)
+    data = _SEGMENT_HEADER + _records([_market_data()], 1) + _records([_market_data()], 3)
 
     with pytest.raises(ValueError, match="expected 2 but got 3"):
+        list(iter_records(data))
+
+
+def test_records_carry_their_arrival_time():
+    records = list(iter_records(_segment([_market_data(), _row(0, "<q", 1)], 5, source=7), previous_sequence=4))
+
+    assert [(sequence, arrival, source) for sequence, arrival, source, _, _ in records] == [
+        (5, _arrival(5), 7),
+        (6, _arrival(6), 7),
+    ]
+    assert bytes(records[1][4]) == _row(0, "<q", 1)[1]
+
+
+def test_a_segment_from_before_arrival_times_reads_without_them():
+    records = list(iter_records(_segment([_market_data()], 1, legacy=True)))
+
+    assert [(sequence, arrival) for sequence, arrival, _, _, _ in records] == [(1, None)]
+
+
+def test_a_journal_spanning_the_format_change_reads_whole(tmp_path):
+    _write(tmp_path, 0, _segment(_DECLARATIONS, 1, legacy=True))
+    _write(tmp_path, 1, _segment([_row(1, "<i", 7)], 1 + len(_DECLARATIONS)))
+
+    assert read_journal_metrics(tmp_path)["levels"]["level"].tolist() == [7]
+
+
+def test_a_newer_segment_format_is_refused():
+    data = b"GNJ2" + struct.pack("<H", 3) + b"\x00" * 10 + b"\x00" * 64
+
+    with pytest.raises(ValueError, match="format 3"):
         list(iter_records(data))
 
 
@@ -118,9 +164,9 @@ def test_a_row_for_an_undeclared_stream_is_refused(tmp_path):
 
 
 def test_streams_from_different_sources_keep_their_own_ids(tmp_path):
-    strategy = _segment([_stream(0, 1, "strategy"), _column(0, 0, _LONG, "x"), _row(0, "<q", 1)], 1, source=8)
-    other = _segment([_stream(0, 1, "oms"), _column(0, 0, _INT, "y"), _row(0, "<i", 2)], 4, source=9)
-    _write(tmp_path, 0, strategy[:-64] + other)
+    strategy = _records([_stream(0, 1, "strategy"), _column(0, 0, _LONG, "x"), _row(0, "<q", 1)], 1, source=8)
+    other = _records([_stream(0, 1, "oms"), _column(0, 0, _INT, "y"), _row(0, "<i", 2)], 4, source=9)
+    _write(tmp_path, 0, _SEGMENT_HEADER + strategy + other)
 
     metrics = read_journal_metrics(tmp_path)
 

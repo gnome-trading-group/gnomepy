@@ -1,9 +1,10 @@
 # backtest image
 
 Runs `gnomepy backtest` against a pinned commit of the private
-`gnomepy-research` repo. Java JARs (`gnome-backtest`) are baked into
-the image; the research repo is cloned at run time so a single image
-can target any commit.
+`gnomepy-research` repo, a `gnome-strategies` commit, or both. The
+`gnome-backtest` engine jar is baked into the image; the research repo is
+cloned and a strategy commit compiled at run time, so a single image can
+target any commit. The image carries a JDK for that compile.
 
 ## Build
 
@@ -26,16 +27,20 @@ The entrypoint expects these env vars (set by the Batch job definition):
 | ----------------- | ------------------------------------------------- |
 | `RUN_ID`          | backtest run identifier                           |
 | `S3_BUCKET`       | S3 bucket for configs and results                 |
-| `RESEARCH_COMMIT` | git SHA or ref of `gnomepy-research` to check out |
+| `RESEARCH_COMMIT` | git SHA or ref of `gnomepy-research` to check out; optional with `STRATEGY_COMMIT` |
+| `STRATEGY_COMMIT` | optional: `gnome-strategies` SHA a Java strategy is compiled from (`--strategy-commit`) |
+| `ENGINE_VERSION`  | optional: `gnome-backtest` release to run on instead of the baked-in jar (`--engine-version`) |
 
 `AWS_BATCH_JOB_ARRAY_INDEX` is injected automatically by Batch (defaults to 0).
-`GH_TOKEN` is fetched from Secrets Manager (`gnomepy/gh-token`) at startup.
+`GH_TOKEN` is fetched from Secrets Manager (`gnomepy/gh-token`) for the research clone; gnomepy reads the same
+secret to fetch a strategy commit or an engine release.
 
 ## Notes
 
 - `gnomepy` is installed from the working tree at build time — rebuild the image to bump it.
 - `gnomepy-research` is installed with `--no-deps` so it cannot override the baked-in `gnomepy`.
 - `GH_TOKEN` is unset before the backtest runs.
+- Strategy and engine changes never rebuild this image; only gnomepy and the default engine do.
 
 ## Example configs
 

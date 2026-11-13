@@ -2,6 +2,8 @@
 classpath holds the same strategy and journal classes the orchestrator runs; skipped without it."""
 from __future__ import annotations
 
+import time
+
 import jpype
 import pytest
 
@@ -9,7 +11,7 @@ from gnomepy.java._classpath import discover_classpath
 from gnomepy.java._jvm import ensure_jvm_started
 from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.strategy.runner import _create_strategy_callback
-from gnomepy.journal import read_journal_metrics
+from gnomepy.journal import iter_records, read_journal_metrics, read_segments
 
 
 def _jar_available() -> bool:
@@ -81,7 +83,7 @@ class _Session:
             jpype.JClass("java.nio.file.Path").of(str(journal_dir)), 1 << 20, self.segments.append
         )
         self.pollers = [
-            buffer.createPoller(self.writer.source(source))
+            self.writer.journal(buffer, source)
             for buffer, source in (
                 (self.market_data, _MARKET_DATA),
                 (exec_reports, _EXEC_REPORT),
@@ -161,3 +163,24 @@ def test_a_stream_declared_but_never_recorded_is_empty(tmp_path):
     heartbeat = read_journal_metrics(tmp_path)["heartbeat"]
     assert heartbeat.empty
     assert list(heartbeat.columns) == ["updates"]
+
+
+def test_every_record_carries_when_it_reached_its_ring(tmp_path):
+    started = time.time_ns()
+    session = _Session(tmp_path, _DecisionStrategy())
+    session.tick(1_000, 0.41)
+    session.tick(2_000, 0.42)
+    session.close()
+    finished = time.time_ns()
+
+    arrivals = []
+    previous = 0
+    for segment in read_segments(tmp_path):
+        for sequence, arrival, _, _, _ in iter_records(segment, previous):
+            arrivals.append(arrival)
+            previous = sequence
+
+    assert arrivals
+    # The wall clock, not the market data's own timestamps, and in the order the records were published.
+    assert all(started <= arrival <= finished for arrival in arrivals)
+    assert arrivals == sorted(arrivals)

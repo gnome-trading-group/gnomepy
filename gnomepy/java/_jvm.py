@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import os
 import threading
 import zipfile
 from pathlib import Path
@@ -86,6 +87,12 @@ def ensure_jvm_started(
 
         jpype.startJVM(*args, **kwargs)
         atexit.register(_shutdown_jvm_safe)
+
+
+def jvm_classpath() -> list[str]:
+    """The running JVM's classpath entries."""
+    value = str(jpype.JClass("java.lang.System").getProperty("java.class.path") or "")
+    return [entry for entry in value.split(os.pathsep) if entry]
 
 
 def shutdown_jvm() -> None:

@@ -60,9 +60,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         ca-certificates \
-        openjdk-21-jre-headless \
+        openjdk-21-jdk-headless \
     && rm -rf /var/lib/apt/lists/*
 
+# A JDK, not a JRE: a Java strategy run by commit is compiled for its backtest.
 # Resolve JAVA_HOME dynamically so the image works on both amd64 and arm64.
 RUN ln -sf "$(dirname "$(dirname "$(readlink -f "$(which java)")")")" /usr/lib/jvm/current
 ENV JAVA_HOME=/usr/lib/jvm/current

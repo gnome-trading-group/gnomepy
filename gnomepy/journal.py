@@ -1,8 +1,10 @@
 """Reads the journal a live or paper session ships to S3 as it runs, and the strategy metrics recorded in it.
 
 A session's journal is ``s3://gnome-journals-<stage>/<session_id>/segment-NNNNN.zst``: zstd-compressed segments
-holding, in one global order, every message the session saw and sent. Each record is a 14-byte header
-(global sequence u64, source id u16, template id u16, payload length u16, little-endian) and an SBE payload.
+holding, in one global order, every message the session saw and sent. A segment starts with a 16-byte header (magic
+``GNJ2``, format u16, reserved) and each record is a 22-byte header (global sequence u64, arrival time u64 in epoch
+nanoseconds, source id u16, template id u16, payload length u16, little-endian) and an SBE payload. Segments written
+before the format had a header hold 14-byte record headers without the arrival time.
 
 Metric streams are declared at runtime, so the journal carries their declarations ahead of their rows: a
 ``MetricStream`` record names a stream, a ``MetricColumn`` record per column names it and gives its type, and each
@@ -24,7 +26,12 @@ import zstandard
 
 from gnomepy._fs import fs_list_files, fs_read_bytes, resolve_fs
 
-_RECORD_HEADER = struct.Struct("<QHHH")
+_SEGMENT_HEADER_SIZE = 16
+_SEGMENT_MAGIC = b"GNJ2"
+_FORMAT = struct.Struct("<H")
+_SUPPORTED_FORMAT = 2
+_RECORD_HEADER = struct.Struct("<QQHHH")
+_LEGACY_RECORD_HEADER = struct.Struct("<QHHH")
 _MESSAGE_HEADER = struct.Struct("<HHHH")
 _U16 = struct.Struct("<H")
 _STREAM_BLOCK = struct.Struct("<HH")
@@ -66,7 +73,7 @@ def read_journal_metrics(journal: str | Path) -> dict[str, pd.DataFrame]:
     decoder = _MetricDecoder()
     previous = 0
     for segment in read_segments(journal):
-        for sequence, source_id, template_id, payload in iter_records(segment, previous):
+        for sequence, _, source_id, template_id, payload in iter_records(segment, previous):
             decoder.feed(sequence, source_id, template_id, payload)
             previous = sequence
     return decoder.frames()
@@ -94,27 +101,48 @@ def read_segments(journal: str | Path) -> Iterator[bytes]:
         yield data
 
 
-def iter_records(segment: bytes, previous_sequence: int = 0) -> Iterator[tuple[int, int, int, memoryview]]:
-    """Each record in a segment as (global sequence, source id, template id, payload).
+def iter_records(
+    segment: bytes, previous_sequence: int = 0
+) -> Iterator[tuple[int, int | None, int, int, memoryview]]:
+    """Each record in a segment as (global sequence, arrival time, source id, template id, payload).
+
+    The arrival time is when the record reached the session, in epoch nanoseconds; None in a segment written before
+    the journal recorded it.
 
     Raises:
         ValueError: if a record doesn't follow the one before it, so a journal with a missing segment never reads as
-            whole.
+            whole; or if the segment is in a format newer than this reader.
     """
     view = memoryview(segment)
-    offset = 0
+    if bytes(view[: len(_SEGMENT_MAGIC)]) == _SEGMENT_MAGIC:
+        (version,) = _FORMAT.unpack_from(view, len(_SEGMENT_MAGIC))
+        if version != _SUPPORTED_FORMAT:
+            raise ValueError(f"Journal segment format {version} is newer than this gnomepy reads; upgrade gnomepy")
+        yield from _records(view, _SEGMENT_HEADER_SIZE, previous_sequence, timed=True)
+    else:
+        yield from _records(view, 0, previous_sequence, timed=False)
+
+
+def _records(
+    view: memoryview, offset: int, previous_sequence: int, timed: bool
+) -> Iterator[tuple[int, int | None, int, int, memoryview]]:
+    header = _RECORD_HEADER if timed else _LEGACY_RECORD_HEADER
     expected = previous_sequence + 1
     end = len(view)
-    while offset + _RECORD_HEADER.size <= end:
-        sequence, source_id, template_id, length = _RECORD_HEADER.unpack_from(view, offset)
+    while offset + header.size <= end:
+        if timed:
+            sequence, arrival, source_id, template_id, length = header.unpack_from(view, offset)
+        else:
+            sequence, source_id, template_id, length = header.unpack_from(view, offset)
+            arrival = None
         if sequence == 0:
             return
         if sequence != expected:
             raise ValueError(f"Journal sequence gap: expected {expected} but got {sequence}")
-        offset += _RECORD_HEADER.size
+        offset += header.size
         if offset + length > end:
             return
-        yield sequence, source_id, template_id, view[offset : offset + length]
+        yield sequence, arrival, source_id, template_id, view[offset : offset + length]
         offset += length
         expected += 1
 

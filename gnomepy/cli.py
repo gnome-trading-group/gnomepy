@@ -18,6 +18,13 @@ from gnomepy.auth import login as _auth_login
 from gnomepy.auth import logout as _auth_logout
 from gnomepy.config import _STAGE
 from gnomepy.java.backtest.runner import run_backtest
+from gnomepy.java.backtest.sources import (
+    RELEASE_VERSION,
+    BacktestSources,
+    StrategySourceError,
+    prepare_sources,
+    resolve_strategy_commit,
+)
 from gnomepy.java.strategy.config import SessionConfig
 from gnomepy.java.strategy.runner import run_strategy_session
 from gnomepy.registry.api import RegistryClient
@@ -203,6 +210,19 @@ def backtest() -> None:
     "--output",
     help="Directory or s3:// URI to save results (default: ./<job_id>)",
 )
+@click.option(
+    "--strategy-commit",
+    help="gnome-strategies git ref whose strategies/ a Java strategy is compiled from",
+)
+@click.option(
+    "--strategy-source",
+    type=click.Path(exists=True, file_okay=False),
+    help="Local gnome-strategies checkout (or its strategies/ dir) to compile, uncommitted edits included",
+)
+@click.option(
+    "--engine-version",
+    help="gnome-backtest release to run on (default: the engine on the classpath, normally the latest)",
+)
 @click.option("--job-id", "job_id", help="Job ID (default: generated UUIDv7)")
 @click.option("--no-progress", is_flag=True, help="Disable progress output")
 @click.option("--no-cache", is_flag=True, help="Disable local market data caching")
@@ -210,6 +230,9 @@ def backtest_run(
     config: str,
     strategy_path: str | None,
     java_strategy: str | None,
+    strategy_commit: str | None,
+    strategy_source: str | None,
+    engine_version: str | None,
     output: str | None,
     job_id: str | None,
     no_progress: bool,
@@ -218,6 +241,13 @@ def backtest_run(
     """Run a backtest locally and generate a report."""
     if strategy_path and java_strategy:
         raise click.UsageError("pass either --strategy or --java-strategy, not both")
+    if strategy_commit and strategy_source:
+        raise click.UsageError("pass either --strategy-commit or --strategy-source, not both")
+    try:
+        sources = prepare_sources(strategy_commit, strategy_source, engine_version)
+    except StrategySourceError as e:
+        raise click.ClickException(str(e)) from e
+    _echo_sources(sources)
 
     strategy = strategy_path or java_strategy or None
     parsed = yaml.safe_load(Path(config).read_text())
@@ -226,14 +256,35 @@ def backtest_run(
     use_cache = not no_cache
 
     if not params and not scenarios:
-        _run_single(config, strategy, output, job_id or uuid7(), no_progress, use_cache)
+        _run_single(config, strategy, output, job_id or uuid7(), no_progress, use_cache, sources)
     else:
-        _run_sweep(config, parsed, params, scenarios, strategy, output, job_id, no_progress, use_cache)
+        _run_sweep(config, parsed, params, scenarios, strategy, output, job_id, no_progress, use_cache, sources)
 
 
-def _run_single(config: str, strategy, output: str | None, job_id: str, no_progress: bool, cache: bool = True) -> None:
+def _echo_sources(sources: BacktestSources) -> None:
+    click.echo(f"engine: gnome-backtest {sources.engine_version} ({sources.engine_jar_hash})")
+    if sources.strategy_source == "commit":
+        click.echo(f"strategy: gnome-strategies {sources.strategy_commit}")
+    elif sources.strategy_source == "local":
+        state = " with uncommitted changes" if sources.strategy_dirty else ""
+        click.echo(f"strategy: local checkout at {sources.strategy_commit}{state}")
+    for w in sources.warnings:
+        click.echo(f"warning: {w}", err=True)
+
+
+def _run_single(
+    config: str,
+    strategy,
+    output: str | None,
+    job_id: str,
+    no_progress: bool,
+    cache: bool = True,
+    sources: BacktestSources | None = None,
+) -> None:
     click.echo(f"job_id: {job_id}")
-    results = run_backtest(config, strategy=strategy, backtest_id=job_id, progress=not no_progress, cache=cache)
+    results = run_backtest(
+        config, strategy=strategy, backtest_id=job_id, progress=not no_progress, cache=cache, sources=sources,
+    )
     if results is None:
         return
 
@@ -265,6 +316,7 @@ def _run_sweep(
     sweep_id: str | None,
     no_progress: bool,
     cache: bool = True,
+    sources: BacktestSources | None = None,
 ) -> None:
     jobs = expand_scenarios_and_sweeps(parsed)
     sweep_id = sweep_id or uuid7()
@@ -294,7 +346,7 @@ def _run_sweep(
             results = run_backtest(
                 tmp.name, strategy=strategy, backtest_id=this_job_id,
                 progress=not no_progress, original_config_path=config,
-                cache=cache,
+                cache=cache, sources=sources,
             )
 
             job_entry: dict = {
@@ -393,10 +445,35 @@ def _generate_report(results, base_path: str) -> None:
     required=True,
     help="YAML backtest config file (supports sweep and scenario syntax)",
 )
-@click.option("--research-commit", default="main", show_default=True, help="gnomepy-research git ref")
+@click.option(
+    "--research-commit",
+    help="gnomepy-research git ref (default: main, or none when --strategy-commit is given)",
+)
+@click.option(
+    "--strategy-commit",
+    help="gnome-strategies git ref a Java strategy is compiled from; submitted as the SHA it names now",
+)
+@click.option("--engine-version", help="gnome-backtest release to run on (default: the image's)")
 @click.option("--dry-run", is_flag=True, help="Preview sweep expansion without submitting")
-def backtest_submit(config: str, research_commit: str, dry_run: bool) -> None:
+def backtest_submit(
+    config: str,
+    research_commit: str | None,
+    strategy_commit: str | None,
+    engine_version: str | None,
+    dry_run: bool,
+) -> None:
     """Submit a backtest (or parameter sweep) to AWS Batch."""
+    if engine_version and not RELEASE_VERSION.match(engine_version):
+        raise click.UsageError(f"--engine-version {engine_version} is not a release (X.Y.Z)")
+    if strategy_commit:
+        # A branch moves; every job of the run, and any rerun, compiles the commit it named at submit.
+        try:
+            strategy_commit = resolve_strategy_commit(strategy_commit)
+        except StrategySourceError as e:
+            raise click.ClickException(str(e)) from e
+        click.echo(f"strategy_commit: {strategy_commit}")
+    elif not research_commit:
+        research_commit = "main"
     config_yaml = Path(config).read_text()
     parsed = yaml.safe_load(config_yaml)
     params = sweep_params(parsed)
@@ -415,7 +492,12 @@ def backtest_submit(config: str, research_commit: str, dry_run: bool) -> None:
     if dry_run:
         return
 
-    result = submit_backtest(config_yaml, research_commit=research_commit)
+    result = submit_backtest(
+        config_yaml,
+        research_commit=research_commit,
+        strategy_commit=strategy_commit,
+        engine_version=engine_version,
+    )
     click.echo(f"run_id:    {result['run_id']}")
     click.echo(f"job_count: {result['job_count']}")
     click.echo(f"status:    {result['status']}")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import importlib
 import json
 import logging
@@ -27,9 +26,10 @@ from gnomepy.config import (
     resolve_market_data_api_key,
     resolve_registry_api_key,
 )
-from gnomepy.java._jvm import ensure_jvm_started
+from gnomepy.java._jvm import ensure_jvm_started, jvm_classpath
 from gnomepy.java.backtest.config import BacktestConfig
 from gnomepy.java.backtest.orders import ExecutionReport
+from gnomepy.java.backtest.sources import BacktestSources, describe_engine
 from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.oms import PositionViewWrapper
 from gnomepy.java.recorder import BacktestResults, MetricRecorder as PyMetricRecorder
@@ -140,8 +140,8 @@ def _create_java_strategy(class_name: str, strategy_id: int, position_view, secu
     except Exception as e:
         raise RuntimeError(
             f"Failed to load Java strategy class {class_name!r}. "
-            "Make sure the JAR containing it is on the JVM classpath "
-            "(set GNOME_JARS, pass extra_jars=, or use --jar)."
+            "Make sure it is on the JVM classpath: run a gnome-strategies commit (--strategy-commit) or "
+            "checkout (--strategy-source), or set GNOME_JARS."
         ) from e
     return StrategyFactory.createWithOwnBuffers(
         class_name, jpype.JInt(strategy_id), position_view, security_master, args
@@ -193,6 +193,7 @@ class Backtest:
         strategy_args: dict | None = None,
         original_config_path: str | Path | None = None,
         cache: bool | str | Path = True,
+        sources: BacktestSources | None = None,
     ):
         """
         Args:
@@ -209,8 +210,22 @@ class Backtest:
                 be recorded instead.
             cache: Enable local market data caching. True (default) uses ~/.gnomepy/cache/,
                 a path string uses that directory, False disables caching.
+            sources: The engine and strategy classes to run, from ``prepare_sources``. Without it the JVM runs
+                the default engine, and the strategy must be in it or Python.
         """
-        ensure_jvm_started()
+        if sources is None:
+            ensure_jvm_started()
+            sources = describe_engine(jvm_classpath())
+        else:
+            ensure_jvm_started(classpath=sources.classpath)
+            started = {str(Path(e).resolve()) for e in jvm_classpath()}
+            missing = [e for e in sources.classpath if str(Path(e).resolve()) not in started]
+            if missing:
+                raise RuntimeError(
+                    f"the JVM was already started without {missing}; a process runs one engine and one strategy "
+                    "source, so start a new one"
+                )
+        self._sources = sources
         self._config = config
         self._strategy = strategy
         self._backtest_id = backtest_id
@@ -229,7 +244,7 @@ class Backtest:
         self._simulation = None
         self._start_date = None
         self._end_date = None
-        self._warnings: list[str] = []
+        self._warnings: list[str] = list(sources.warnings)
         self._warning_handler = None
         self._on_missing = None
         self._asked_market_data = False
@@ -433,15 +448,6 @@ class Backtest:
         result["python_version"] = platform.python_version()
         result["os_info"] = platform.platform()
 
-        gnome_jars = os.environ.get("GNOME_JARS", "")
-        if gnome_jars:
-            try:
-                jar_path = Path(gnome_jars.split(":")[0])
-                digest = hashlib.sha256(jar_path.read_bytes()).hexdigest()[:16]
-                result["backtest_jar_hash"] = f"sha256:{digest}"
-            except Exception:
-                pass
-
         return result
 
     def _market_data_api(self):
@@ -532,7 +538,14 @@ class Backtest:
             gnomepy_research_version=gnomepy_research_version,
             gnomepy_research_commit=gnomepy_research_commit,
             gnomepy_commit=env.get("gnomepy_commit"),
-            backtest_jar_hash=env.get("backtest_jar_hash"),
+            backtest_jar_hash=self._sources.engine_jar_hash,
+            engine_version=self._sources.engine_version,
+            runtime_version=self._sources.runtime_version,
+            oms_version=self._sources.oms_version,
+            strategy_source=self._sources.strategy_source,
+            strategy_commit=self._sources.strategy_commit,
+            strategy_dirty=self._sources.strategy_dirty,
+            platform_orchestrator=self._sources.platform_orchestrator,
             java_version=env.get("java_version"),
             python_version=env.get("python_version"),
             os_info=env.get("os_info"),
@@ -603,6 +616,7 @@ def run_backtest(
     original_config_path: str | Path | None = None,
     progress: bool = True,
     cache: bool | str | Path = True,
+    sources: BacktestSources | None = None,
 ) -> BacktestResults | None:
     """Run a backtest end-to-end.
 
@@ -615,6 +629,7 @@ def run_backtest(
             is a temp file during parameter sweeps).
         cache: Enable local market data caching. True uses ~/.gnomepy/cache/, a path
             uses that directory, False disables caching.
+        sources: The engine and strategy classes to run, from ``prepare_sources``.
 
     Returns BacktestResults if recording is enabled, else None.
     """
@@ -628,5 +643,6 @@ def run_backtest(
         strategy_args=strategy_args,
         original_config_path=original_config_path,
         cache=cache,
+        sources=sources,
     )
     return bt.run(progress=progress)

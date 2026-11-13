@@ -36,11 +36,22 @@ def _request(method: str, path: str, **kwargs) -> dict:
     return resp.json()
 
 
-def submit_backtest(config_yaml: str, research_commit: str = "main") -> dict:
-    return _request("POST", "/backtests", json={
-        "config": config_yaml,
-        "research_commit": research_commit,
-    })
+def submit_backtest(
+    config_yaml: str,
+    research_commit: str | None = "main",
+    strategy_commit: str | None = None,
+    engine_version: str | None = None,
+) -> dict:
+    """Submit a run. ``strategy_commit`` is a full gnome-strategies SHA; ``engine_version`` a gnome-backtest release."""
+    body = {"config": config_yaml}
+    for key, value in (
+        ("research_commit", research_commit),
+        ("strategy_commit", strategy_commit),
+        ("engine_version", engine_version),
+    ):
+        if value:
+            body[key] = value
+    return _request("POST", "/backtests", json=body)
 
 
 def get_backtest(run_id: str) -> dict:
