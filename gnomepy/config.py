@@ -53,6 +53,8 @@ def resolve_alerts_api_url() -> str:
 class Config:
     REGISTRY_API_HOST: str
     MARKET_DATA_API_HOST: str
+    # The samples API (gnome-registry SamplesApiStack; SSM /gnome/samples/api-url): processes' readings over time.
+    SAMPLES_API_HOST: str
     CONTROLLER_API_URL: str
     CONTROLLER_UI_URL: str
     COGNITO_DOMAIN: str
@@ -61,6 +63,7 @@ class Config:
 class DevConfig(Config):
     REGISTRY_API_HOST: str = 'i3116oczxe.execute-api.us-east-1.amazonaws.com'
     MARKET_DATA_API_HOST: str = '9imu88ibol.execute-api.us-east-1.amazonaws.com'
+    SAMPLES_API_HOST: str = '7dlo3298p9.execute-api.us-east-1.amazonaws.com'
     CONTROLLER_API_URL: str = 'https://uwfjao7rtf.execute-api.us-east-1.amazonaws.com/api'
     CONTROLLER_UI_URL: str = 'https://controller-dev.gnometrading.group'
     COGNITO_DOMAIN: str = 'gnome-controller-dev.auth.us-east-1.amazoncognito.com'
@@ -72,6 +75,7 @@ class StagingConfig(Config):
 class ProdConfig(Config):
     REGISTRY_API_HOST: str = 'n5dxpwnij0.execute-api.us-east-1.amazonaws.com'
     MARKET_DATA_API_HOST: str = 'icj8z6151a.execute-api.us-east-1.amazonaws.com'
+    SAMPLES_API_HOST: str = 'nbic8snf21.execute-api.us-east-1.amazonaws.com'
     CONTROLLER_API_URL: str = 'https://5yoy6t6fba.execute-api.us-east-1.amazonaws.com/api'
     CONTROLLER_UI_URL: str = 'https://controller.gnometrading.group'
     COGNITO_DOMAIN: str = 'gnome-controller-prod.auth.us-east-1.amazoncognito.com'
