@@ -83,6 +83,9 @@ def _java_schedule(taker, maker):
         def currency(self):
             return "USD"
 
+        def makerRebateShare(self):  # noqa: N802 - the Java method's name
+            return 0.0
+
     return JavaFeeSchedule()
 
 

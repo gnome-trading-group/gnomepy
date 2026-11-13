@@ -16,7 +16,7 @@ import jpype
 from jpype import JImplements, JOverride
 
 from gnomepy.java._classpath import discover_classpath
-from gnomepy.java._jvm import STRATEGY_JVM_OPTIONS, ensure_jvm_started
+from gnomepy.java._jvm import ensure_jvm_started, session_jvm_options
 from gnomepy.java.backtest.strategy import Strategy
 from gnomepy.java.oms import PositionViewWrapper
 from gnomepy.java.recorder import MetricRecorder
@@ -132,7 +132,7 @@ def run_strategy_session(
     """
     _configure_logging()
     classpath = [jar] if jar else discover_classpath("gnome-orchestrator", gnome_root)
-    ensure_jvm_started(classpath=classpath, jvm_args=STRATEGY_JVM_OPTIONS)
+    ensure_jvm_started(classpath=classpath, jvm_args=session_jvm_options(classpath))
 
     effective_strategy = strategy
     if effective_strategy is None and config.strategy is not None:
@@ -163,7 +163,7 @@ def run_from_env() -> None:
     strategy_args = json.loads(args_json) if args_json else {}
 
     classpath = discover_classpath("gnome-orchestrator")
-    ensure_jvm_started(classpath=classpath, jvm_args=STRATEGY_JVM_OPTIONS)
+    ensure_jvm_started(classpath=classpath, jvm_args=session_jvm_options(classpath))
 
     py_strategy = _load_python_strategy(strategy_class, strategy_args or None)
 

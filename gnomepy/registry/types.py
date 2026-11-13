@@ -332,6 +332,7 @@ class StrategySession:
     date_created: str
     date_modified: str
     research_commit: str | None = None
+    strategy_commit: str | None = None
     instance_id: str | None = None
     instance_type: str | None = None
     launch_region: str | None = None

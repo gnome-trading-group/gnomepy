@@ -114,7 +114,7 @@ class FeeSchedule:
         )
         r = schedule.rounding()
         return cls(str(schedule.currency()), components, str(r.mode().name()), int(r.incrementUnits()),
-                   str(r.scope().name()))
+                   str(r.scope().name()), float(schedule.makerRebateShare()))
 
     def price_curve_rates(self) -> tuple[float, float]:
         """(taker, maker) rates of a schedule that is one ``rate × p(1−p)`` curve on both sides, as Kalshi's and

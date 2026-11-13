@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import threading
+import zipfile
 from pathlib import Path
 
 import jpype
@@ -27,11 +28,25 @@ DEFAULT_JVM_ARGS = [
     "--add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED",
 ]
 
-# Live and paper strategy sessions. Kept here, beside DEFAULT_JVM_ARGS, so the Python runner and the EC2
-# bootstrap that launches Java strategies (which reads STRATEGY_JVM_OPTIONS, and takes DEFAULT_JVM_ARGS' module access
-# from the orchestrator jar's manifest instead) cannot drift apart.
-STRATEGY_JVM_OPTIONS = ["-XX:+UseZGC", "-XX:ConcGCThreads=2"]
-STRATEGY_JVM_ARGS = [*DEFAULT_JVM_ARGS, *STRATEGY_JVM_OPTIONS]
+# Shipped in the gnome-orchestrator jar, which its EC2 bootstrap reads for a java strategy too, so a session's JVM
+# options come with the release its commit pins and both launch paths take the same ones.
+SESSION_JVM_OPTIONS_ENTRY = "session-jvm-options"
+
+
+def session_jvm_options(classpath: list[str]) -> list[str]:
+    """The JVM options a live or paper session starts with, from the orchestrator jar on ``classpath``."""
+    for entry in classpath:
+        if not entry.endswith(".jar") or not zipfile.is_zipfile(entry):
+            continue
+        with zipfile.ZipFile(entry) as jar:
+            if SESSION_JVM_OPTIONS_ENTRY not in jar.namelist():
+                continue
+            lines = jar.read(SESSION_JVM_OPTIONS_ENTRY).decode().splitlines()
+        return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+    raise RuntimeError(
+        f"No jar on the classpath ships {SESSION_JVM_OPTIONS_ENTRY}; use a gnome-orchestrator release that has it: "
+        f"{classpath}"
+    )
 
 
 def ensure_jvm_started(

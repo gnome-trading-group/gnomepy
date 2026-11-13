@@ -614,13 +614,16 @@ class RegistryClient:
         mode: str,
         config: dict,
         research_commit: str | None = None,
+        strategy_commit: str | None = None,
         region: str | None = None,
         instance_type: str | None = None,
-        orchestrator_version: str | None = None,
-        gnomepy_version: str | None = None,
         availability_zone: str | None = None,
     ) -> dict:
         """Launch a session (``SessionConfig.to_session_config()`` builds ``config``).
+
+        A python strategy runs from ``research_commit`` (gnomepy-research), a java one from ``strategy_commit``
+        (gnome-strategies); either defaults to main. The commit pins the orchestrator and gnomepy releases the session
+        runs on, which the session row records.
 
         ``config`` keys the registry reads: ``listings`` (traded listing ids), ``streams`` (market-data stream ids the
         session reads without trading, any region; the registry leases them with each traded listing's book
@@ -636,10 +639,9 @@ class RegistryClient:
         }
         optional = {
             "researchCommit": research_commit,
+            "strategyCommit": strategy_commit,
             "region": region,
             "instanceType": instance_type,
-            "orchestratorVersion": orchestrator_version,
-            "gnomepyVersion": gnomepy_version,
             "availabilityZone": availability_zone,
         }
         body.update({key: value for key, value in optional.items() if value is not None})

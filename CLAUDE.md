@@ -65,7 +65,7 @@ YAML config
 
 **JVM:** One global JVM per process. Never start it manually — call `ensure_jvm_started()`. JPype keyword collisions (e.g. Java reserved words as field names) require the `"NONE"` string workaround.
 
-**JVM flags live only in `java/_jvm.py`.** `DEFAULT_JVM_ARGS` (backtests) and `STRATEGY_JVM_ARGS` (live/paper sessions) are the single source; gnome-orchestrator's EC2 `start-session.sh` reads `STRATEGY_JVM_ARGS` from the installed gnomepy. Never copy the flags into a script or Dockerfile, or the Python and Java launch paths drift apart.
+**JVM flags live in one place each.** `DEFAULT_JVM_ARGS` in `java/_jvm.py` is the module access (gnome-orchestrator's jar manifest carries the same for `java -jar`). A live/paper session's other options ship in the gnome-orchestrator jar (`session-jvm-options`): `session_jvm_options(classpath)` reads them for the Python runner, and the EC2 `start-session.sh` reads the same file for a java strategy. Never copy the flags into a script or Dockerfile, or the Python and Java launch paths drift apart.
 
 **Backtest jars must match.** gnomepy runs whatever Java is on the classpath, normally the gnome-backtest uber jar, which bundles the gnome-oms version pinned in gnome-backtest's `pom.xml`. After a gnome-oms (or gnome-simulation) change, bump that pin and rebuild gnome-backtest (`mvn install -DskipTests`), or `GNOME_JARS` points at an engine without the change. If `GNOME_JARS` lists separate jars, their versions must agree.
 
@@ -104,7 +104,7 @@ Many services install gnomepy from PyPI, so a release that breaks a public API o
 - gnome-launcher (`^3.1.0`), gnome-bot (`^3.1.0`)
 - gnomepy-research (`>=3.1.0,<4.0.0`), and through it research jobs and backtests
 - gnome-pipelines (`gnomepy[live-data] >=3.1.0,<4.0.0`, and `==3.1.0` in its data-api image, kept equal to its lock)
-- Live/paper strategy sessions: gnome-orchestrator's EC2 `start-session.sh` installs `gnomepy[strategy,live-data]==$GNOMEPY_VERSION` (set by the registry's session launcher from the session config's `gnomepyVersion`, else the latest gnomepy on PyPI at launch) and reads `STRATEGY_JVM_ARGS` from it. So an unpinned session picks up a new gnomepy release on its next launch.
+- Live/paper strategy sessions: gnome-orchestrator's EC2 `start-session.sh` installs `gnomepy[strategy,live-data]==$GNOMEPY_VERSION` for a python strategy (a java one needs no gnomepy). The registry's session launcher takes that version from the session's research commit (gnomepy-research `platform.properties`), so a gnomepy release reaches sessions only through a commit that pins it.
 
 Release a fix with `scripts/release.sh`, then bump each affected consumer. Majors (`3.0.0`) need consumers with caret or `<N` ranges to bump deliberately.
 
