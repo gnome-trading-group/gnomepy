@@ -1,3 +1,6 @@
+import pytest
+import requests
+
 from gnomepy.registry import api as registry_api
 from gnomepy.registry.api import REQUEST_TIMEOUT_SECONDS, RegistryClient
 
@@ -342,3 +345,72 @@ def test_subject_key_aliases_are_changed_with_one_patch_naming_the_actor(monkeyp
                  "remove": [{"kind": "ENTITY", "key": "bos"}]},
         "timeout": REQUEST_TIMEOUT_SECONDS,
     }]
+
+
+class _Status:
+    def __init__(self, status_code, body=None):
+        self.status_code = status_code
+        self.ok = status_code < 400
+        self._body = body
+
+    def raise_for_status(self):
+        if not self.ok:
+            raise requests.HTTPError(f"{self.status_code}", response=self)
+
+    def json(self):
+        return self._body
+
+
+def _answering(monkeypatch, *answers):
+    sleeps, calls = [], []
+    pending = list(answers)
+
+    def fake_get(url, params, headers, timeout):
+        calls.append(url)
+        answer = pending.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(registry_api.requests, "get", fake_get)
+    monkeypatch.setattr(registry_api.time, "sleep", sleeps.append)
+    return calls, sleeps
+
+
+def test_a_get_the_registry_faults_on_is_tried_again(monkeypatch):
+    calls, sleeps = _answering(
+        monkeypatch, _Status(500), requests.ConnectionError("reset by peer"), _Status(200, []))
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    assert client.get_event_contracts(event_id=5) == []
+    assert len(calls) == 3
+    assert sleeps == [1.0, 2.0]
+
+
+def test_a_get_still_failing_after_its_attempts_raises_the_last_fault(monkeypatch):
+    calls, _ = _answering(monkeypatch, _Status(504), _Status(503), _Status(504))
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    with pytest.raises(requests.HTTPError, match="504"):
+        client.get_event(tags=["cs2"])
+    assert len(calls) == 3
+
+
+def test_a_dropped_connection_on_every_attempt_raises_it(monkeypatch):
+    calls, _ = _answering(monkeypatch, *[requests.ConnectionError("reset")] * 3)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    with pytest.raises(requests.ConnectionError):
+        client.get_exchange()
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("fault", [_Status(400), _Status(404), requests.ReadTimeout("slow")])
+def test_client_errors_and_timeouts_are_not_tried_again(monkeypatch, fault):
+    calls, sleeps = _answering(monkeypatch, fault)
+    client = RegistryClient(base_url="https://registry.example.com", api_key="service-key")
+
+    with pytest.raises((requests.HTTPError, requests.ReadTimeout)):
+        client.get_exchange()
+    assert len(calls) == 1
+    assert sleeps == []

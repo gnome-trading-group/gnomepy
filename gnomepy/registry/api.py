@@ -3,6 +3,7 @@ __all__ = ["RegistryClient"]
 import dataclasses
 import logging
 import os
+import time
 from typing import Optional
 
 import requests
@@ -35,6 +36,11 @@ logger = logging.getLogger(__name__)
 
 # API Gateway gives up on an integration after 29s, so a request still open well past that is a dropped connection.
 REQUEST_TIMEOUT_SECONDS = 60
+# A GET is safe to repeat, and the registry's faults are mostly passing ones: a cold or briefly throttled Lambda, a
+# dropped connection. A request that timed out isn't tried again; it already held its caller a minute.
+GET_ATTEMPTS = 3
+GET_RETRY_STATUSES = frozenset({500, 502, 503, 504})
+GET_RETRY_DELAY_SECONDS = 1.0
 
 
 def _to_camel_case(snake_str: str) -> str:
@@ -50,6 +56,19 @@ def _parse_kwarg_params(items) -> dict:
         for k, v in params.items()
         if v is not None and k != "self"
     }
+
+
+def _get_with_retries(url: str, params: dict, headers: dict) -> requests.Response:
+    for attempt in range(1, GET_ATTEMPTS):
+        try:
+            res = requests.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
+            if res.ok or res.status_code not in GET_RETRY_STATUSES:
+                return res
+            logger.warning("GET %s answered %d; trying again", url, res.status_code)
+        except requests.ConnectionError as e:
+            logger.warning("GET %s failed (%s); trying again", url, e)
+        time.sleep(GET_RETRY_DELAY_SECONDS * attempt)
+    return requests.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT_SECONDS)
 
 
 class RegistryClient:
@@ -314,9 +333,8 @@ class RegistryClient:
     ) -> dict[int, list[dict]]:
         """Each listing's fee schedules over time, as the registry resolves them; times are ISO-8601."""
         params = {"listingIds": ",".join(str(i) for i in listing_ids), "from": start, "to": end, "knownAsOf": known_as_of}
-        res = requests.get(
-            self.base_url + "/fees", params={k: v for k, v in params.items() if v is not None},
-            headers={"x-api-key": self.api_key}, timeout=REQUEST_TIMEOUT_SECONDS,
+        res = _get_with_retries(
+            self.base_url + "/fees", {k: v for k, v in params.items() if v is not None}, {"x-api-key": self.api_key},
         )
         res.raise_for_status()
         return {item["listingId"]: item["timeline"] for item in res.json()}
@@ -331,9 +349,8 @@ class RegistryClient:
     ) -> dict[int, list[dict]]:
         """Each listing's venue incentive programs, as their versions over time; times are ISO-8601."""
         params = {"listingIds": ",".join(str(i) for i in listing_ids), "from": start, "to": end, "knownAsOf": known_as_of}
-        res = requests.get(
-            self.base_url + "/incentive-programs", params={k: v for k, v in params.items() if v is not None},
-            headers={"x-api-key": self.api_key}, timeout=REQUEST_TIMEOUT_SECONDS,
+        res = _get_with_retries(
+            self.base_url + "/incentive-programs", {k: v for k, v in params.items() if v is not None}, {"x-api-key": self.api_key},
         )
         res.raise_for_status()
         return {item["listingId"]: item["programs"] for item in res.json()}
@@ -344,9 +361,8 @@ class RegistryClient:
         """Each exchange's simulation parameters in force at ``known_as_of`` (default now), as stored rows; with
         ``history``, every recorded version, newest first."""
         params = {"exchangeId": exchange_id, "knownAsOf": known_as_of, "history": "true" if history else None}
-        res = requests.get(
-            self.base_url + "/simulation-parameters", params={k: v for k, v in params.items() if v is not None},
-            headers={"x-api-key": self.api_key}, timeout=REQUEST_TIMEOUT_SECONDS,
+        res = _get_with_retries(
+            self.base_url + "/simulation-parameters", {k: v for k, v in params.items() if v is not None}, {"x-api-key": self.api_key},
         )
         res.raise_for_status()
         return res.json()
@@ -460,10 +476,7 @@ class RegistryClient:
         logger.debug("GET %s params=%s page_size=%d", path, params, self._page_size)
         while True:
             page_params = {**params, "limit": self._page_size, "offset": offset}
-            res = requests.get(
-                self.base_url + path, params=page_params, headers={"x-api-key": self.api_key},
-                timeout=REQUEST_TIMEOUT_SECONDS,
-            )
+            res = _get_with_retries(self.base_url + path, page_params, {"x-api-key": self.api_key})
             res.raise_for_status()
             page = res.json()
             logger.debug("GET %s page=%d offset=%d got=%d total=%d", path, page_num, offset, len(page), len(all_items) + len(page))
