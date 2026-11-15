@@ -149,3 +149,107 @@ def test_a_fill_of_the_resting_order_does_not_answer_its_modify(tmp_path):
 
     assert frame.loc[3, "action"] == "MODIFY"
     assert frame.loc[3, "order_to_ack"] == 4_000
+
+
+_TIMING_SOURCE, _TIMING_TEMPLATE = 10, 212
+_NEW_CLASS, _CANCEL_CLASS = 3, 0
+_ANSWERED, _NOT_SENT = 0, 4
+
+
+def _timing(
+    counter: int,
+    request_class: int,
+    stamps: tuple[int, int, int, int, int],
+    outcome: int = _ANSWERED,
+    code: int = 201,
+    venue_time: int = 0,
+    processing_micros: int = -1,
+    slack: int = 0,
+) -> bytes:
+    ingress, taken, decided, wired, answered = stamps
+    block = struct.pack(
+        "<iqqBBqqqqqqiqi", 5, 42, counter, request_class, outcome, ingress, taken, decided, wired, answered, slack,
+        code, venue_time, processing_micros,
+    )
+    return struct.pack("<HHHH", len(block), _TIMING_TEMPLATE, 3, 0) + block
+
+
+def test_an_orders_gateway_timing_splits_its_path_past_the_session(tmp_path):
+    journal = _write(tmp_path, [
+        (1_800, 3, _ORDER, _order(9, 0, 1, _MD_KIND, _T0 + 1_000, _T0 + 200)),
+        (60_000, 4, _REPORT, _report(9, _EXEC_NEW)),
+        (61_000, _TIMING_SOURCE, _TIMING_TEMPLATE, _timing(
+            9, _NEW_CLASS, (_T0 + 2_300, _T0 + 2_400, _T0 + 2_600, _T0 + 3_000, _T0 + 50_000),
+            processing_micros=30, slack=40,
+        )),
+    ])
+
+    row = read_journal_latency(journal).loc[1]
+
+    assert row["gw_outcome"] == "ANSWERED"
+    assert row["gw_attempts"] == 1
+    assert row["venue_code"] == 201
+    assert row["gw_transit"] == 500
+    assert row["gw_queue"] == 100
+    assert row["gw_budget_wait"] == 200
+    assert row["gw_sign_send"] == 400
+    assert row["venue_answer"] == 47_000
+    assert row["venue_processing"] == 30_000
+    assert row["venue_network"] == 17_000
+    assert row["answer_slack"] == 40
+    assert row["tick_to_trade"] == 2_800, "from the platform's receipt of the trigger to the wire"
+    assert pd.isna(row["venue_time"])
+
+
+def test_a_cancel_sent_again_counts_each_attempt_and_keeps_the_firsts_stamps(tmp_path):
+    first = (_T0 + 2_100, _T0 + 2_200, _T0 + 2_300, _T0 + 2_400, 0)
+    second = (_T0 + 2_100, _T0 + 2_200, _T0 + 9_000, _T0 + 9_100, _T0 + 12_000)
+    journal = _write(tmp_path, [
+        (1_000, 3, _ORDER, _order(9, 0, 0, _RISK_KIND, 0, 0)),
+        (2_000, 3, _CANCEL, _cancel(9, 0, _RISK_KIND, 0)),
+        (5_000, _TIMING_SOURCE, _TIMING_TEMPLATE, _timing(9, _CANCEL_CLASS, first, outcome=3, code=0)),
+        (13_000, _TIMING_SOURCE, _TIMING_TEMPLATE, _timing(9, _CANCEL_CLASS, second)),
+    ])
+
+    frame = read_journal_latency(journal)
+
+    assert pd.isna(frame.loc[1, "gw_outcome"]), "the order itself was never timed"
+    assert frame.loc[1, "gw_attempts"] == 0
+    cancel = frame.loc[2]
+    assert cancel["gw_attempts"] == 2
+    assert cancel["gw_outcome"] == "NO_ANSWER"
+    assert pd.isna(cancel["venue_answered"])
+    assert pd.isna(cancel["venue_code"])
+    assert cancel["wire_sent"] == _T0 + 2_400
+
+
+def test_a_refused_order_is_timed_not_sent_and_a_timing_for_no_order_is_ignored(tmp_path):
+    journal = _write(tmp_path, [
+        (1_000, 3, _ORDER, _order(9, 0, 0, _RISK_KIND, 0, 0)),
+        (2_000, _TIMING_SOURCE, _TIMING_TEMPLATE, _timing(
+            9, _NEW_CLASS, (_T0 + 1_100, _T0 + 1_200, _T0 + 1_700, 0, 0), outcome=_NOT_SENT, code=0,
+        )),
+        (3_000, _TIMING_SOURCE, _TIMING_TEMPLATE, _timing(77, _NEW_CLASS, (1, 2, 3, 4, 5))),
+    ])
+
+    frame = read_journal_latency(journal)
+
+    assert len(frame) == 1
+    assert frame.loc[1, "gw_outcome"] == "NOT_SENT"
+    assert frame.loc[1, "gw_budget_wait"] == 500
+    assert pd.isna(frame.loc[1, "wire_sent"])
+    assert pd.isna(frame.loc[1, "venue_answer"])
+
+
+def test_stamps_keep_every_nanosecond_when_other_orders_lack_them(tmp_path):
+    journal = _write(tmp_path, [
+        (1_000, 3, _ORDER, _order(8, 0, 0, _RISK_KIND, 0, 0)),
+        (1_800, 3, _ORDER, _order(9, 0, 1, _MD_KIND, _T0 + 1_001, _T0 + 203)),
+    ])
+
+    frame = read_journal_latency(journal)
+
+    assert pd.isna(frame.loc[1, "trigger_origin"])
+    assert frame.loc[2, "trigger_origin"] == _T0 + 203
+    assert frame.loc[2, "trigger_transit"] == 798
+    assert frame["exchange_id"].dtype == "int64"

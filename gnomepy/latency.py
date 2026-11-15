@@ -25,6 +25,7 @@ from gnomepy.journal import iter_records, read_segments, session_journal_uri
 STRATEGY_INTENT_SOURCE = 1
 OMS_ORDER_SOURCE = 3
 OMS_EXEC_REPORT_SOURCE = 4
+GATEWAY_TIMING_SOURCE = 10
 
 # Template ids in gnome-schemas' core.xml.
 _EXEC_REPORT_TEMPLATE = 10
@@ -57,11 +58,22 @@ _ACTIONS = {_ORDER_TEMPLATE: "NEW", _MODIFY_TEMPLATE: "MODIFY", _CANCEL_TEMPLATE
 _REPORT_CLIENT_OID = struct.Struct("<16sB")  # clientOid at 72, then execType
 _REPORT_CLIENT_OID_OFFSET = 72
 
+# A gateway's OrderTiming (gateway schema 212): venueAccountId, sessionSeq, clientOidCounter, requestClass, outcome,
+# ingress, taken, decided, wireSent, answered, answerSlack, venueCode, venueTs, venueProcessingMicros.
+_ORDER_TIMING_TEMPLATE = 212
+_TIMING = struct.Struct("<iqqBBqqqqqqiqi")
+_TIMING_ACTIONS = {0: "CANCEL", 2: "MODIFY", 3: "NEW"}
+_TIMING_OUTCOMES = {0: "ANSWERED", 1: "REJECTED", 2: "TRANSPORT_ERROR", 3: "NO_ANSWER", 4: "NOT_SENT"}
+_TIMING_STAMPS = ("gw_ingress", "gw_taken", "gw_decided", "wire_sent", "venue_answered")
+
 _COLUMNS = [
     "action", "exchange_id", "security_id", "client_oid", "trigger_kind", "trigger_sequence", "intent_sequence",
     "trigger_origin", "trigger_arrival", "dispatch", "intent_arrival", "order_arrival", "ack_arrival",
+    "gw_outcome", "gw_attempts", "venue_code", *_TIMING_STAMPS, "answer_slack", "venue_time", "venue_processing",
     "trigger_transit", "strat_queue", "strat_decision", "oms_process", "tick_to_order", "order_to_ack",
+    "gw_transit", "gw_queue", "gw_budget_wait", "gw_sign_send", "venue_answer", "venue_network", "tick_to_trade",
 ]
+_STAMPED = 24  # the columns read from the journal, before the derived ones
 
 
 def load_session_latency(session_id: str, stage: str = "prod") -> pd.DataFrame:
@@ -91,15 +103,35 @@ def read_journal_latency(journal: str | Path) -> pd.DataFrame:
       order.
 
     An order the OMS sent on its own (``RISK``: a kill or halt sweep, shutdown) has no trigger.
+
+    From the order's gateway (its ``OrderTiming``, journaled as source 10 by sessions on an orchestrator that has it;
+    absent for older sessions, and for a request its gateway refused before its lane): times on the gateway host's
+    clock, epoch nanoseconds.
+
+    - ``gw_outcome`` (ANSWERED, REJECTED, TRANSPORT_ERROR, NO_ANSWER, NOT_SENT), ``venue_code`` (its HTTP status),
+      ``gw_attempts`` (requests the gateway sent for it: a resent submit or a cancel sent again counts each; the stamps
+      are the first's).
+    - ``gw_ingress`` (read off the session's image), ``gw_taken`` (off the lane's ring), ``gw_decided`` (the budget let
+      it go, or refused it), ``wire_sent`` (written to the venue's socket), ``venue_answered`` (its answer found);
+      ``answer_slack``: how long before ``venue_answered`` the lane last looked, the most that stamp can be late.
+    - ``venue_time``: the venue's own time for it (Kalshi's ``ts_ms``, ms); ``venue_processing``: how long the venue
+      says it took, nanoseconds (Polymarket US's ``x-pm-server-latency``, Polymarket Intl's Cloudflare edge + worker).
+    - ``gw_transit`` = gateway ingress - order (crosses hosts), ``gw_queue`` = taken - ingress, ``gw_budget_wait`` =
+      decided - taken, ``gw_sign_send`` = wire - decided, ``venue_answer`` = answered - wire, ``venue_network`` =
+      venue_answer - venue_processing, ``tick_to_trade`` = wire - trigger origin (crosses hosts).
     """
     intents: dict[int, tuple[int | None, int, int]] = {}
     rows: list[dict] = []
     sequences: list[int] = []
     waiting: dict[bytes, list[int]] = {}
+    requests: dict[tuple[int, str], list[int]] = {}
     previous = 0
     for segment in read_segments(journal):
         for sequence, arrival, source_id, template_id, payload in iter_records(segment, previous):
             previous = sequence
+            if source_id == GATEWAY_TIMING_SOURCE and template_id == _ORDER_TIMING_TEMPLATE:
+                _timing(payload, rows, requests)
+                continue
             if not _is_v3(payload):
                 continue
             if source_id == STRATEGY_INTENT_SOURCE and template_id == _INTENT_TEMPLATE:
@@ -107,12 +139,16 @@ def read_journal_latency(journal: str | Path) -> pd.DataFrame:
             elif source_id == OMS_ORDER_SOURCE and template_id in _CAUSE_OFFSET:
                 row = _order(payload, template_id, arrival, intents)
                 waiting.setdefault(row["client_oid"], []).append(len(rows))
+                counter = int.from_bytes(row["client_oid"][:8], "little")
+                requests.setdefault((counter, row["action"]), []).append(len(rows))
                 rows.append(row)
                 sequences.append(sequence)
             elif source_id == OMS_EXEC_REPORT_SOURCE and template_id == _EXEC_REPORT_TEMPLATE:
                 _answer(payload, arrival, rows, waiting)
-    frame = pd.DataFrame(rows, columns=_COLUMNS[:13]) if rows else pd.DataFrame(columns=_COLUMNS[:13])
+    # As objects: pandas would read a stamp column with any missing value as float64, losing epoch nanoseconds.
+    frame = pd.DataFrame(rows, columns=_COLUMNS[:_STAMPED], dtype=object)
     _derive(frame)
+    frame = frame.infer_objects()
     frame.index = pd.Index(np.array(sequences, dtype=np.int64), name="sequence")
     frame["client_oid"] = frame["client_oid"].map(lambda oid: oid.hex() if isinstance(oid, bytes) else oid)
     return frame[_COLUMNS]
@@ -148,7 +184,37 @@ def _order(payload: memoryview, template_id: int, arrival: int | None, intents: 
         "intent_arrival": intent[0] if intent else None,
         "order_arrival": arrival,
         "ack_arrival": None,
+        "gw_attempts": 0,
     }
+
+
+def _timing(payload: memoryview, rows: list[dict], requests: dict[tuple[int, str], list[int]]) -> None:
+    """Joins a gateway's timing to the earliest of its order's requests of that action not yet timed."""
+    (
+        _account, _session, counter, request_class, outcome, ingress, taken, decided, wired, answered, slack, code,
+        venue_time, processing_micros,
+    ) = _TIMING.unpack_from(payload, _HEADER.size)
+    action = _TIMING_ACTIONS.get(request_class)
+    indexes = requests.get((counter, action)) if action else None
+    if not indexes:
+        return
+    untimed = [index for index in indexes if rows[index]["gw_attempts"] == 0]
+    row = rows[untimed[0] if untimed else indexes[-1]]
+    row["gw_attempts"] += 1
+    if row["gw_attempts"] > 1:
+        return
+    row.update({
+        "gw_outcome": _TIMING_OUTCOMES.get(outcome, str(outcome)),
+        "venue_code": code or None,
+        "gw_ingress": ingress or None,
+        "gw_taken": taken or None,
+        "gw_decided": decided or None,
+        "wire_sent": wired or None,
+        "venue_answered": answered or None,
+        "answer_slack": slack if answered else None,
+        "venue_time": venue_time or None,
+        "venue_processing": processing_micros * 1_000 if processing_micros >= 0 else None,
+    })
 
 
 def _answer(payload: memoryview, arrival: int | None, rows: list[dict], waiting: dict[bytes, list[int]]) -> None:
@@ -166,7 +232,10 @@ def _answer(payload: memoryview, arrival: int | None, rows: list[dict], waiting:
 
 def _derive(frame: pd.DataFrame) -> None:
     # Epoch nanoseconds are past float64's exact integers, so stamps stay nullable int64.
-    for column in ("trigger_sequence", "intent_sequence", *_COLUMNS[7:13]):
+    for column in (
+        "trigger_sequence", "intent_sequence", *_COLUMNS[7:13], "venue_code", *_TIMING_STAMPS, "answer_slack",
+        "venue_time", "venue_processing",
+    ):
         frame[column] = pd.array(
             [None if value is None or pd.isna(value) else int(value) for value in frame[column]], dtype="Int64"
         )
@@ -177,3 +246,11 @@ def _derive(frame: pd.DataFrame) -> None:
     frame["oms_process"] = frame["order_arrival"] - handled_from
     frame["tick_to_order"] = frame["order_arrival"] - frame["trigger_arrival"]
     frame["order_to_ack"] = frame["ack_arrival"] - frame["order_arrival"]
+    frame["gw_attempts"] = frame["gw_attempts"].astype("int64")
+    frame["gw_transit"] = frame["gw_ingress"] - frame["order_arrival"]
+    frame["gw_queue"] = frame["gw_taken"] - frame["gw_ingress"]
+    frame["gw_budget_wait"] = frame["gw_decided"] - frame["gw_taken"]
+    frame["gw_sign_send"] = frame["wire_sent"] - frame["gw_decided"]
+    frame["venue_answer"] = frame["venue_answered"] - frame["wire_sent"]
+    frame["venue_network"] = frame["venue_answer"] - frame["venue_processing"]
+    frame["tick_to_trade"] = frame["wire_sent"] - frame["trigger_origin"]
