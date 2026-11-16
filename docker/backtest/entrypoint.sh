@@ -23,7 +23,7 @@ if [ -z "${RESEARCH_COMMIT:-}" ] && [ -z "${STRATEGY_COMMIT:-}" ]; then
   exit 1
 fi
 
-ARRAY_INDEX="${JOB_INDEX:-0}"
+ARRAY_INDEX="${AWS_BATCH_JOB_ARRAY_INDEX:-${JOB_INDEX:-0}}"
 CONFIG_S3_KEY="backtests/${RUN_ID}/jobs/${ARRAY_INDEX}/config.yaml"
 OUTPUT_PREFIX="s3://${S3_BUCKET}/backtests/${RUN_ID}/jobs/${ARRAY_INDEX}"
 LOCAL_CONFIG=/work/config.yaml
