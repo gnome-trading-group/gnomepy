@@ -329,6 +329,15 @@ def plot_pnl(
                      line=dict(width=1.2)),
         row=1, col=1,
     )
+    # The curve marks every position to the book; positions held to settlement pay their settlement price, so the run
+    # ends at a different value than the curve's last point.
+    if report._settled_pnl["status"] in ("settled", "partial") and not pnl.empty:
+        fig.add_trace(
+            go.Scatter(x=[pnl.index[-1]], y=[report.final_pnl], mode="markers", name="At settlement",
+                       marker=dict(size=10, symbol="diamond", color="#0f766e"),
+                       hovertemplate="%{y:,.2f}<extra>at settlement</extra>"),
+            row=1, col=1,
+        )
     rewards = report.rewards_curve
     if not rewards.empty:
         rewards = _downsample(rewards, max_points)
@@ -550,7 +559,10 @@ _REWARD_KPI_KEYS = [
 def _kpi_cards_html(summary: dict) -> str:
     """Render key metrics as styled cards."""
     cards = []
-    keys = _KPI_KEYS + (_REWARD_KPI_KEYS if summary.get("rewards_estimated_total") else [])
+    keys = list(_KPI_KEYS)
+    if (summary.get("settlement") or {}).get("status") in ("settled", "partial"):
+        keys.insert(1, ("final_pnl_marked", "PnL at last mark", True))
+    keys += _REWARD_KPI_KEYS if summary.get("rewards_estimated_total") else []
     for key, label, colored in keys:
         value = summary.get(key, 0)
         formatted = _fmt(key, value)
@@ -785,6 +797,7 @@ _METRIC_FORMAT: dict[str, str] = {
     "final_position": ",.4f",
     "total_fees": ",.2f",
     "final_pnl": ",.2f",
+    "final_pnl_marked": ",.2f",
     "rewards_estimated_total": ",.2f",
     "final_pnl_with_rewards_estimated": ",.2f",
     "sharpe": ",.3f",

@@ -7,9 +7,12 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 
 from gnomepy._fs import resolve_fs
+from gnomepy.fees import PRICE_SCALE
+from gnomepy.registry.api import RegistryClient
 
 logger = logging.getLogger(__name__)
 from gnomepy.reporting.metrics import Curves, build_curves, compute_max_drawdown, compute_sharpe, mid_price
@@ -138,8 +141,10 @@ class BacktestReport:
         end_date: pd.Timestamp | str | None = None,
         config: dict | None = None,
         backtest: "Backtest | None" = None,
+        registry: RegistryClient | None = None,
     ):
         self._results = results
+        self._registry = registry
         if config is not None:
             self._config = config
         elif backtest is not None and hasattr(backtest, "_preset_config"):
@@ -187,6 +192,7 @@ class BacktestReport:
         obj._full_exec_df = exec_df
         obj._intent_df = intent_df if intent_df is not None else pd.DataFrame()
         obj._window = None
+        obj._registry = None
         return obj
 
     @cached_property
@@ -256,6 +262,62 @@ class BacktestReport:
         except Exception as e:  # noqa: BLE001 - the report still renders without them; summary says None
             logger.warning("Couldn't estimate maker rebates from the registry's fee schedules: %s", e)
             return None
+
+    @cached_property
+    def settlements(self) -> pd.DataFrame | None:
+        """How each listing still held when the run ended settled, as the registry records it now: ``settlement_price``
+        in dollars (NaN while unsettled) and ``settled_at``, indexed by ``listing_id``. Empty when nothing is held or
+        the report is windowed; None when the registry couldn't be read."""
+        held = self._held_at_end()
+        if self._window is not None or held.empty:
+            return _empty_settlements()
+        try:
+            return load_settlements(self._registry or RegistryClient(), held.index)
+        except Exception as e:  # noqa: BLE001 - the report still renders, valued at the last marks
+            logger.warning("Couldn't read settlements from the registry; valuing held positions at the last mark: %s", e)
+            return None
+
+    def _held_at_end(self) -> pd.DataFrame:
+        """Each listing's ``position`` and ``cash`` (after fees) after its last fill, for listings still held."""
+        fills = self._curves.fills
+        if fills.empty:
+            return pd.DataFrame(columns=["position", "cash"])
+        last = fills.groupby("listing_id", sort=False)[["position", "cash"]].last()
+        last.index = last.index.astype(int)
+        return last[last["position"] != 0]
+
+    @cached_property
+    def _settled_pnl(self) -> dict:
+        """Final PnL per listing with every held listing that has settled valued at its settlement price instead of
+        its last mark, and which listings were and weren't."""
+        c = self._curves
+        by_symbol = {int(col): float(c.pnl_by_symbol[col].iloc[-1]) for col in c.pnl_by_symbol.columns} \
+            if not c.pnl_by_symbol.empty else {}
+        settlements = self.settlements
+        held = self._held_at_end()
+        if self._window is not None:
+            return {"by_symbol": by_symbol, "status": "windowed", "settled": {}, "unsettled": []}
+        if held.empty:
+            return {"by_symbol": by_symbol, "status": "flat", "settled": {}, "unsettled": []}
+        if settlements is None:
+            return {"by_symbol": by_symbol, "status": "unavailable", "settled": {},
+                    "unsettled": sorted(int(i) for i in held.index)}
+        settled, unsettled = {}, []
+        for listing_id, row in held.iterrows():
+            price = settlements["settlement_price"].get(listing_id, np.nan)
+            if pd.isna(price):
+                unsettled.append(int(listing_id))
+                continue
+            settled[int(listing_id)] = float(price)
+            by_symbol[int(listing_id)] = float(row["cash"] + row["position"] * price)
+        status = "unsettled" if not settled else "partial" if unsettled else "settled"
+        return {"by_symbol": by_symbol, "status": status, "settled": settled, "unsettled": sorted(unsettled)}
+
+    @property
+    def final_pnl(self) -> float:
+        """The run's PnL after fees, with held listings that have settled at their settlement price and the rest at
+        their last mark."""
+        return float(sum(self._settled_pnl["by_symbol"].values()))
 
     @property
     def metadata(self):
@@ -344,7 +406,8 @@ class BacktestReport:
                 (self._market_df.index.max() - self._market_df.index.min()).total_seconds()
             )
 
-        final_pnl = float(c.pnl.iloc[-1]) if not c.pnl.empty else 0.0
+        final_pnl_marked = float(c.pnl.iloc[-1]) if not c.pnl.empty else 0.0
+        settled = self._settled_pnl
         total_fees = float(c.fees.iloc[-1]) if not c.fees.empty else 0.0
         total_volume = float(c.volume.iloc[-1]) if not c.volume.empty else 0.0
         total_notional = float(c.notional.iloc[-1]) if not c.notional.empty else 0.0
@@ -356,10 +419,7 @@ class BacktestReport:
         else:
             final_position = float(c.position.iloc[-1]) if not c.position.empty else 0.0
 
-        if not c.pnl_by_symbol.empty:
-            final_pnl_by_symbol = {str(col): float(c.pnl_by_symbol[col].iloc[-1]) for col in c.pnl_by_symbol.columns}
-        else:
-            final_pnl_by_symbol = {}
+        final_pnl_by_symbol = {str(lid): pnl for lid, pnl in settled["by_symbol"].items()}
 
         if not c.position_by_symbol.empty:
             final_positions = {str(col): float(c.position_by_symbol[col].iloc[-1]) for col in c.position_by_symbol.columns}
@@ -385,8 +445,16 @@ class BacktestReport:
             "final_position": final_position,
             "final_positions": final_positions,
             "total_fees": total_fees,
-            "final_pnl": final_pnl,
+            "final_pnl": self.final_pnl,
             "final_pnl_by_symbol": final_pnl_by_symbol,
+            # Every position at the last mark, as the PnL curve ends.
+            "final_pnl_marked": final_pnl_marked,
+            # Which held listings final_pnl values at their settlement price (settled: listing -> price) and which at
+            # their last mark; status is settled, partial, unsettled, flat (nothing held), windowed or unavailable
+            # (the registry couldn't be read).
+            "settlement": {"status": settled["status"],
+                           "settled": {str(lid): price for lid, price in settled["settled"].items()},
+                           "unsettled": settled["unsettled"]},
             "max_drawdown": compute_max_drawdown(c.pnl),
             "sharpe": sharpe["sharpe"],
             "sortino": sharpe["sortino"],
@@ -409,16 +477,13 @@ class BacktestReport:
         rebates = self.maker_rebates_df
         gross = float(rewards["gross"].sum()) if not rewards.empty else 0.0
         rebate_total = None if rebates is None else float(rebates["rebate"].sum()) if not rebates.empty else 0.0
-        pnl = self.pnl_curve
         return {
             "rewards_estimated_gross": gross,
             "rewards_estimated_paid": float(rewards["paid"].sum()) if not rewards.empty else 0.0,
             "maker_rebates_estimated": rebate_total,
             # Liquidity rewards gross plus maker rebates, and the fill PnL with them: the curve the report draws.
             "rewards_estimated_total": gross + (rebate_total or 0.0),
-            "final_pnl_with_rewards_estimated": (
-                (float(pnl.iloc[-1]) if not pnl.empty else 0.0) + gross + (rebate_total or 0.0)
-            ),
+            "final_pnl_with_rewards_estimated": self.final_pnl + gross + (rebate_total or 0.0),
         }
 
     def summary_df(self) -> pd.Series:
@@ -522,8 +587,32 @@ class BacktestReport:
             f"  total volume:    {s['total_volume']:.4f}",
             f"  final position:  {s['final_position']:.4f}",
             f"  total fees:      {s['total_fees']:.4f}",
-            f"  final PnL:       {s['final_pnl']:.4f}",
+            f"  final PnL:       {s['final_pnl']:.4f} ({s['settlement']['status']}; marked {s['final_pnl_marked']:.4f})",
         ]
         for sym, pnl in s.get("final_pnl_by_symbol", {}).items():
             lines.append(f"    {sym}: {pnl:.4f}")
         return "\n".join(lines)
+
+
+def _empty_settlements() -> pd.DataFrame:
+    return pd.DataFrame({"settlement_price": pd.Series(dtype=float), "settled_at": pd.Series(dtype=object)},
+                        index=pd.Index([], name="listing_id", dtype=int))
+
+
+def load_settlements(registry: RegistryClient, listing_ids) -> pd.DataFrame:
+    """Each listing's settlement as the registry records it now, through the listing's security and its event contract:
+    ``settlement_price`` in dollars, NaN while unsettled or when the listing isn't an event contract, and
+    ``settled_at``, indexed by ``listing_id``."""
+    rows = []
+    for listing_id in sorted({int(i) for i in listing_ids}):
+        price, settled_at = np.nan, None
+        listings = registry.get_listing(listing_id=listing_id) or []
+        if listings:
+            for contract in registry.get_event_contracts(security_id=listings[0].security_id) or []:
+                if contract.settlement_price is not None:
+                    price, settled_at = int(contract.settlement_price) / PRICE_SCALE, contract.settled_at
+                    break
+        rows.append({"listing_id": listing_id, "settlement_price": price, "settled_at": settled_at})
+    if not rows:
+        return _empty_settlements()
+    return pd.DataFrame(rows).set_index("listing_id")
