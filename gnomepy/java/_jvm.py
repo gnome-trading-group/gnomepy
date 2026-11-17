@@ -29,6 +29,12 @@ DEFAULT_JVM_ARGS = [
     "--add-exports=jdk.unsupported/sun.misc=ALL-UNNAMED",
 ]
 
+# A backtest's recorder holds every row on the heap until the run ends, and the default heap (a quarter of the
+# machine, or of a Batch container) runs out while most of the memory sits unused. Half leaves the rest for Python,
+# which copies the recorded rows into DataFrames for the results and the report. Backtests only: sessions take
+# their options from the orchestrator jar.
+BACKTEST_JVM_ARGS = ["-XX:MaxRAMPercentage=50"]
+
 # Shipped in the gnome-orchestrator jar, which its EC2 bootstrap reads for a java strategy too, so a session's JVM
 # options come with the release its commit pins and both launch paths take the same ones.
 SESSION_JVM_OPTIONS_ENTRY = "session-jvm-options"

@@ -26,7 +26,7 @@ from gnomepy.config import (
     resolve_market_data_api_key,
     resolve_registry_api_key,
 )
-from gnomepy.java._jvm import ensure_jvm_started, jvm_classpath
+from gnomepy.java._jvm import BACKTEST_JVM_ARGS, ensure_jvm_started, jvm_classpath
 from gnomepy.java.backtest.config import BacktestConfig
 from gnomepy.java.backtest.orders import ExecutionReport
 from gnomepy.java.backtest.sources import BacktestSources, describe_engine
@@ -214,10 +214,10 @@ class Backtest:
                 the default engine, and the strategy must be in it or Python.
         """
         if sources is None:
-            ensure_jvm_started()
+            ensure_jvm_started(jvm_args=BACKTEST_JVM_ARGS)
             sources = describe_engine(jvm_classpath())
         else:
-            ensure_jvm_started(classpath=sources.classpath)
+            ensure_jvm_started(classpath=sources.classpath, jvm_args=BACKTEST_JVM_ARGS)
             started = {str(Path(e).resolve()) for e in jvm_classpath()}
             missing = [e for e in sources.classpath if str(Path(e).resolve()) not in started]
             if missing:
