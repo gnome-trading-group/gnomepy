@@ -298,6 +298,9 @@ class BacktestReport:
         rewards = self.rewards_curve
         if rewards.empty or pnl.empty:
             return pnl
+        # The PnL curve has a row per market tick, and ticks share timestamps; reindexing needs one value per time,
+        # and the last one is the mark at that moment.
+        pnl = pnl[~pnl.index.duplicated(keep="last")]
         index = pnl.index.union(rewards.index)
         combined = pnl.reindex(index).ffill().fillna(0.0) + rewards.reindex(index).ffill().fillna(0.0)
         return combined.rename("pnl_with_rewards")

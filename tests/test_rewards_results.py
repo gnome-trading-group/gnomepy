@@ -148,6 +148,23 @@ def test_the_report_draws_rewards_and_pnl_with_rewards_and_shows_them_in_the_car
     assert "Rewards (est.)" in cards and "PnL + rewards (est.)" in cards
 
 
+def test_pnl_with_rewards_takes_the_last_mark_when_market_ticks_share_a_timestamp():
+    ts = pd.to_datetime([T0 + h * HOUR for h in (1, 13, 13, 29)])
+    market = pd.DataFrame({"listing_id": [9] * 4, "exchange_id": [5] * 4, "security_id": [7] * 4,
+                           "bid_price_0": [0.29, 0.29, 0.39, 0.39], "ask_price_0": [0.31, 0.31, 0.41, 0.41],
+                           "bid_size_0": [10.0] * 4, "ask_size_0": [10.0] * 4},
+                          index=pd.DatetimeIndex(ts, name="timestamp"))
+    report = BacktestReport(BacktestResults.from_dataframes(market_df=market, fills_df=_fills(["maker"]),
+                                                            rewards_df=_rewards()))
+
+    with_rewards = report.pnl_with_rewards_curve
+
+    assert with_rewards.index.is_unique
+    # 100 bought at 0.50; the second tick at 13 h marks them at 0.40 and rewards are 4.0 by then.
+    assert np.isclose(with_rewards.loc[pd.Timestamp(T0 + 13 * HOUR)], 100 * (0.40 - 0.50) + 4.0)
+    assert np.isclose(with_rewards.iloc[-1], report.pnl_curve.iloc[-1] + 8.5)
+
+
 def test_a_run_without_rewards_draws_and_shows_none_of_it():
     report = BacktestReport(BacktestResults.from_dataframes(market_df=_market()))
 
