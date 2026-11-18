@@ -277,9 +277,8 @@ class Backtest:
         registry_host = self._registry_url or os.environ.get("REGISTRY_URL", gnome_config.REGISTRY_API_HOST)
         registry_api_key = self._registry_api_key or os.environ.get("REGISTRY_API_KEY") or resolve_registry_api_key()
         RegistryConnection = jpype.JClass("group.gnometrading.RegistryConnection")
-        SecurityMaster = jpype.JClass("group.gnometrading.SecurityMaster")
         registry = RegistryConnection(registry_host, registry_api_key)
-        security_master = SecurityMaster(registry)
+        security_master = BacktestDriverFactory.buildSecurityMaster(java_config, registry)
 
         context = BacktestDriverFactory.buildContext(java_config)
         self._clock = context.clock()

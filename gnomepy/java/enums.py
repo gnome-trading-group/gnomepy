@@ -70,6 +70,23 @@ class TimeInForce(Enum):
         return cls(str(java_enum.name()))
 
 
+class OrderRole(Enum):
+    """What an order is for in its strategy, recorded on its ledger row so fills can be attributed."""
+
+    NONE = "NONE"
+    QUOTE = "QUOTE"
+    HEDGE = "HEDGE"
+    ARB_LEG = "ARB_LEG"
+    EXIT = "EXIT"
+
+    def to_java(self):
+        return _java_enum("group.gnometrading.schemas.OrderRole", self.value)
+
+    @classmethod
+    def from_java(cls, java_enum) -> OrderRole:
+        return cls(str(java_enum.name()))
+
+
 class ExecType(Enum):
     NEW = "NEW"
     CANCEL = "CANCEL"

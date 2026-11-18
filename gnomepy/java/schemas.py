@@ -68,8 +68,34 @@ class StreamRecord:
     - Subclasses add create mode via keyword arguments
     """
 
+    # The record's decoder, fetched once: reading a Java field through JPype costs about as much as the call it serves.
+    _decoder = None
+
     def __init__(self, java_schema):
         self._java = java_schema
+
+    @property
+    def _dec(self):
+        decoder = self._decoder
+        if decoder is None:
+            decoder = self._decoder = self._java.decoder
+        return decoder
+
+    def _side(self) -> Side:
+        decoder = self._dec
+        key = (type(decoder), int(decoder.sideRaw()))
+        side = _SIDES.get(key)
+        if side is None:
+            side = _SIDES[key] = Side.from_java(decoder.side())
+        return side
+
+    def _action(self) -> str:
+        decoder = self._dec
+        key = (type(decoder), int(decoder.actionRaw()))
+        action = _ACTIONS.get(key)
+        if action is None:
+            action = _ACTIONS[key] = str(decoder.action().name())
+        return action
 
     @property
     def record_type(self) -> RecordType:
@@ -161,39 +187,39 @@ class MboSchema(StreamRecord):
 
     @property
     def timestamp_event(self) -> int:
-        return int(self._java.decoder.timestampEvent())
+        return int(self._dec.timestampEvent())
 
     @property
     def timestamp_sent(self) -> int:
-        return int(self._java.decoder.timestampSent())
+        return int(self._dec.timestampSent())
 
     @property
     def timestamp_recv(self) -> int:
-        return int(self._java.decoder.timestampRecv())
+        return int(self._dec.timestampRecv())
 
     @property
     def order_id(self) -> int:
-        return int(self._java.decoder.orderId())
+        return int(self._dec.orderId())
 
     @property
     def price(self) -> int:
-        return int(self._java.decoder.price())
+        return int(self._dec.price())
 
     @property
     def size(self) -> int:
-        return int(self._java.decoder.size())
+        return int(self._dec.size())
 
     @property
     def side(self) -> Side:
-        return Side.from_java(self._java.decoder.side())
+        return self._side()
 
     @property
     def action(self) -> str:
-        return str(self._java.decoder.action().name())
+        return self._action()
 
     @property
     def sequence(self) -> int:
-        return int(self._java.decoder.sequence())
+        return int(self._dec.sequence())
 
     def to_dict(self) -> dict:
         return {
@@ -208,6 +234,16 @@ class MboSchema(StreamRecord):
             "action": self.action,
             "sequence": self.sequence,
         }
+
+
+# A book side and action by decoder class and the raw value it stores: fetching the Java enum costs more than looking
+# it up.
+_SIDES: dict[tuple[type, int], Side] = {}
+_ACTIONS: dict[tuple[type, int], str] = {}
+
+# Each decoder class's per-level accessors, looked up once: resolving a Java method by name costs more than calling it,
+# and a strategy reads every level of every book update.
+_LEVEL_ACCESSORS: dict[type, dict[str, tuple]] = {}
 
 
 class Mbp10Schema(StreamRecord):
@@ -263,57 +299,66 @@ class Mbp10Schema(StreamRecord):
 
     @property
     def timestamp_event(self) -> int:
-        return int(self._java.decoder.timestampEvent())
+        return int(self._dec.timestampEvent())
 
     @property
     def timestamp_sent(self) -> int:
-        return int(self._java.decoder.timestampSent())
+        return int(self._dec.timestampSent())
 
     @property
     def timestamp_recv(self) -> int:
-        return int(self._java.decoder.timestampRecv())
+        return int(self._dec.timestampRecv())
 
     @property
     def price(self) -> int:
-        return int(self._java.decoder.price())
+        return int(self._dec.price())
 
     @property
     def size(self) -> int:
-        return int(self._java.decoder.size())
+        return int(self._dec.size())
 
     @property
     def side(self) -> Side:
-        return Side.from_java(self._java.decoder.side())
+        return self._side()
 
     @property
     def action(self) -> str:
-        return str(self._java.decoder.action().name())
+        return self._action()
 
     @property
     def depth(self) -> int:
-        return int(self._java.decoder.depth())
+        return int(self._dec.depth())
 
     @property
     def sequence(self) -> int:
-        return int(self._java.decoder.sequence())
+        return int(self._dec.sequence())
+
+    def _level(self, field: str, level: int) -> int:
+        decoder = self._dec
+        accessors = _LEVEL_ACCESSORS.get(type(decoder))
+        if accessors is None:
+            accessors = _LEVEL_ACCESSORS[type(decoder)] = {
+                name: tuple(getattr(type(decoder), f"{name}{i}") for i in range(self.NUM_LEVELS))
+                for _, name in _LEVEL_FIELDS}
+        return int(accessors[field][level](decoder))
 
     def bid_price(self, level: int) -> int:
-        return int(getattr(self._java.decoder, f"bidPrice{level}")())
+        return self._level("bidPrice", level)
 
     def ask_price(self, level: int) -> int:
-        return int(getattr(self._java.decoder, f"askPrice{level}")())
+        return self._level("askPrice", level)
 
     def bid_size(self, level: int) -> int:
-        return int(getattr(self._java.decoder, f"bidSize{level}")())
+        return self._level("bidSize", level)
 
     def ask_size(self, level: int) -> int:
-        return int(getattr(self._java.decoder, f"askSize{level}")())
+        return self._level("askSize", level)
 
     def bid_count(self, level: int) -> int:
-        return int(getattr(self._java.decoder, f"bidCount{level}")())
+        return self._level("bidCount", level)
 
     def ask_count(self, level: int) -> int:
-        return int(getattr(self._java.decoder, f"askCount{level}")())
+        return self._level("askCount", level)
 
     def to_dict(self) -> dict:
         d = {
@@ -439,51 +484,51 @@ class BboSchema(StreamRecord):
 
     @property
     def timestamp_event(self) -> int:
-        return int(self._java.decoder.timestampEvent())
+        return int(self._dec.timestampEvent())
 
     @property
     def timestamp_recv(self) -> int:
-        return int(self._java.decoder.timestampRecv())
+        return int(self._dec.timestampRecv())
 
     @property
     def price(self) -> int:
-        return int(self._java.decoder.price())
+        return int(self._dec.price())
 
     @property
     def size(self) -> int:
-        return int(self._java.decoder.size())
+        return int(self._dec.size())
 
     @property
     def side(self) -> Side:
-        return Side.from_java(self._java.decoder.side())
+        return self._side()
 
     @property
     def sequence(self) -> int:
-        return int(self._java.decoder.sequence())
+        return int(self._dec.sequence())
 
     @property
     def bid_price(self) -> int:
-        return int(self._java.decoder.bidPrice0())
+        return int(self._dec.bidPrice0())
 
     @property
     def ask_price(self) -> int:
-        return int(self._java.decoder.askPrice0())
+        return int(self._dec.askPrice0())
 
     @property
     def bid_size(self) -> int:
-        return int(self._java.decoder.bidSize0())
+        return int(self._dec.bidSize0())
 
     @property
     def ask_size(self) -> int:
-        return int(self._java.decoder.askSize0())
+        return int(self._dec.askSize0())
 
     @property
     def bid_count(self) -> int:
-        return int(self._java.decoder.bidCount0())
+        return int(self._dec.bidCount0())
 
     @property
     def ask_count(self) -> int:
-        return int(self._java.decoder.askCount0())
+        return int(self._dec.askCount0())
 
     def to_dict(self) -> dict:
         return {
@@ -558,39 +603,39 @@ class TradesSchema(StreamRecord):
 
     @property
     def timestamp_event(self) -> int:
-        return int(self._java.decoder.timestampEvent())
+        return int(self._dec.timestampEvent())
 
     @property
     def timestamp_sent(self) -> int:
-        return int(self._java.decoder.timestampSent())
+        return int(self._dec.timestampSent())
 
     @property
     def timestamp_recv(self) -> int:
-        return int(self._java.decoder.timestampRecv())
+        return int(self._dec.timestampRecv())
 
     @property
     def price(self) -> int:
-        return int(self._java.decoder.price())
+        return int(self._dec.price())
 
     @property
     def size(self) -> int:
-        return int(self._java.decoder.size())
+        return int(self._dec.size())
 
     @property
     def side(self) -> Side:
-        return Side.from_java(self._java.decoder.side())
+        return self._side()
 
     @property
     def action(self) -> str:
-        return str(self._java.decoder.action().name())
+        return self._action()
 
     @property
     def sequence(self) -> int:
-        return int(self._java.decoder.sequence())
+        return int(self._dec.sequence())
 
     @property
     def depth(self) -> int:
-        return int(self._java.decoder.depth())
+        return int(self._dec.depth())
 
     def to_dict(self) -> dict:
         return {
@@ -642,27 +687,27 @@ class OhlcvSchema(StreamRecord):
 
     @property
     def timestamp_event(self) -> int:
-        return int(self._java.decoder.timestampEvent())
+        return int(self._dec.timestampEvent())
 
     @property
     def open(self) -> int:
-        return int(self._java.decoder.open())
+        return int(self._dec.open())
 
     @property
     def high(self) -> int:
-        return int(self._java.decoder.high())
+        return int(self._dec.high())
 
     @property
     def low(self) -> int:
-        return int(self._java.decoder.low())
+        return int(self._dec.low())
 
     @property
     def close(self) -> int:
-        return int(self._java.decoder.close())
+        return int(self._dec.close())
 
     @property
     def volume(self) -> int:
-        return int(self._java.decoder.volume())
+        return int(self._dec.volume())
 
     def to_dict(self) -> dict:
         return {
@@ -702,6 +747,9 @@ _RECORD_WRAPPERS: dict[str, type[StreamRecord]] = {
 }
 
 
+_WRAPPER_BY_CLASS: dict[type, type[StreamRecord]] = {}
+
+
 def get_record_class(record_type: RecordType) -> type[StreamRecord]:
     """Return the Python wrapper class for a given RecordType."""
     return _RECORD_WRAPPERS[record_type.name]
@@ -716,6 +764,10 @@ def wrap_record(java_record) -> StreamRecord:
     Returns:
         A typed StreamRecord subclass with Python-friendly property accessors.
     """
-    record_type_name = str(java_record.recordType.name())
-    wrapper_cls = _RECORD_WRAPPERS.get(record_type_name, StreamRecord)
+    record_class = type(java_record)
+    wrapper_cls = _WRAPPER_BY_CLASS.get(record_class)
+    if wrapper_cls is None:
+        # Each Java record class carries one record type, so its name is read once per class.
+        record_type_name = str(java_record.recordType.name())
+        wrapper_cls = _WRAPPER_BY_CLASS[record_class] = _RECORD_WRAPPERS.get(record_type_name, StreamRecord)
     return wrapper_cls(java_record)

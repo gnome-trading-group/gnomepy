@@ -21,6 +21,7 @@ gnomepy backtest run --config c.yaml --strategy-commit strategy/my-change   # a 
 gnomepy backtest run --config c.yaml --strategy-source ../gnome-strategies  # ... from a local checkout, edits included
 gnomepy backtest run --config c.yaml --engine-version 1.5.1                 # on a released gnome-backtest
 gnomepy backtest submit --config config.yaml    # submit to AWS Batch
+gnomepy backtest submit --config c.yaml --cpu 2 --memory-gib 16 --no-report   # size each job; skip report.html
 gnomepy backtest status <run_id>               # check remote run
 gnomepy login                                   # OAuth2 PKCE auth flow
 ```
@@ -125,6 +126,6 @@ Release a fix with `scripts/release.sh`, then bump each affected consumer. Major
   - `gnomepy-backtest` (`docker/backtest/`, workflow `build-backtest-image.yml`): gnomepy from this tree plus the gnome-backtest uber jar built from gnome-backtest `main`. Also rebuilt when gnome-backtest's release workflow sends the `gnome-backtest-updated` dispatch. Runs `gnomepy backtest run` on AWS Batch for `gnomepy backtest submit` (gnome-controller `backtest-stack.ts`).
   - `gnomepy-research-job` (`docker/research-job/`, workflow `build-research-job-image.yml`, also `workflow_dispatch`): gnomepy from this tree plus gnomepy-research's locked dependencies, no JVM. Runs research job tasks on AWS Batch (gnome-controller `research-jobs-stack.ts`).
   - Local builds: `docker/backtest/build.sh` (needs `GITHUB_ACTOR` and `GITHUB_TOKEN` with `read:packages`) and `docker/research-job/build.sh`; both expect sibling checkouts next to `gnomepy`.
-- The backtest image carries a JDK (`openjdk-21-jdk-headless`) to compile strategy commits; its entrypoint passes `STRATEGY_COMMIT` and `ENGINE_VERSION` (set by the controller from `gnomepy backtest submit --strategy-commit/--engine-version`) to `gnomepy backtest run`, and `RESEARCH_COMMIT` is optional when `STRATEGY_COMMIT` is set. `submit` sends the SHA a ref names at submit time; it can't take a local checkout or engine jar.
+- The backtest image carries a JDK (`openjdk-21-jdk-headless`) to compile strategy commits; its entrypoint passes `STRATEGY_COMMIT` and `ENGINE_VERSION` (set by the controller from `gnomepy backtest submit --strategy-commit/--engine-version`) to `gnomepy backtest run`, adds `--no-report` when `NO_REPORT=1` (`submit --no-report`) and always `--no-cache` (a fresh container never hits the market data cache), and `RESEARCH_COMMIT` is optional when `STRATEGY_COMMIT` is set. `submit` sends the SHA a ref names at submit time; it can't take a local checkout or engine jar.
 - The Batch job definitions run the `latest` tag, so a push to `main` changes what every new backtest and research job runs in dev and prod immediately, before any PyPI release. A broken `main` breaks remote backtests and research jobs right away.
 - **CI:** only the three workflows above. Tests do not run in CI; run `poetry run pytest` before pushing.

@@ -5,7 +5,7 @@ import pytest
 
 from gnomepy.java._classpath import discover_classpath
 from gnomepy.java._jvm import ensure_jvm_started
-from gnomepy.java.enums import OrderType, Side
+from gnomepy.java.enums import OrderRole, OrderType, Side
 from gnomepy.java.oms import Intent
 
 
@@ -37,3 +37,14 @@ def test_take_without_a_side_is_a_clear_error():
 def test_complete_take_and_no_take_still_build():
     Intent(1, 100, take_side=Side.ASK, take_size=5, take_order_type=OrderType.MARKET)
     Intent(1, 100, bid_price=10, bid_size=1)
+
+
+def test_a_take_carries_its_role_and_episode():
+    intent = Intent(1, 100, take_side=Side.ASK, take_size=5, take_order_type=OrderType.LIMIT, take_limit_price=48,
+                    take_role=OrderRole.HEDGE, episode_id=812)
+    assert (intent.take_role, intent.episode_id) == (OrderRole.HEDGE, 812)
+
+
+def test_an_intent_that_says_nothing_has_no_role_or_episode():
+    intent = Intent(1, 100, bid_price=10, bid_size=1)
+    assert (intent.take_role, intent.episode_id) == (OrderRole.NONE, 0)

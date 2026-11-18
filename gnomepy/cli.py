@@ -226,6 +226,7 @@ def backtest() -> None:
 @click.option("--job-id", "job_id", help="Job ID (default: generated UUIDv7)")
 @click.option("--no-progress", is_flag=True, help="Disable progress output")
 @click.option("--no-cache", is_flag=True, help="Disable local market data caching")
+@click.option("--no-report", is_flag=True, help="Skip report.html (summary.json is still written)")
 def backtest_run(
     config: str,
     strategy_path: str | None,
@@ -237,6 +238,7 @@ def backtest_run(
     job_id: str | None,
     no_progress: bool,
     no_cache: bool,
+    no_report: bool,
 ) -> None:
     """Run a backtest locally and generate a report."""
     if strategy_path and java_strategy:
@@ -256,9 +258,10 @@ def backtest_run(
     use_cache = not no_cache
 
     if not params and not scenarios:
-        _run_single(config, strategy, output, job_id or uuid7(), no_progress, use_cache, sources)
+        _run_single(config, strategy, output, job_id or uuid7(), no_progress, use_cache, sources, not no_report)
     else:
-        _run_sweep(config, parsed, params, scenarios, strategy, output, job_id, no_progress, use_cache, sources)
+        _run_sweep(config, parsed, params, scenarios, strategy, output, job_id, no_progress, use_cache, sources,
+                   not no_report)
 
 
 def _echo_sources(sources: BacktestSources) -> None:
@@ -280,6 +283,7 @@ def _run_single(
     no_progress: bool,
     cache: bool = True,
     sources: BacktestSources | None = None,
+    html: bool = True,
 ) -> None:
     click.echo(f"job_id: {job_id}")
     results = run_backtest(
@@ -295,7 +299,7 @@ def _run_single(
     if output is not None and output.startswith("s3://"):
         results.save(output)
         click.echo(f"results saved to {output}")
-        _generate_report(results, output)
+        _generate_report(results, output, html)
     else:
         out_dir = Path(output) if output else Path.cwd() / job_id
         results.save(out_dir)
@@ -303,7 +307,7 @@ def _run_single(
         manifest = {"config": "config.yaml"}
         (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         click.echo(f"results saved to {out_dir}")
-        _generate_report(results, str(out_dir))
+        _generate_report(results, str(out_dir), html)
 
 
 def _run_sweep(
@@ -317,6 +321,7 @@ def _run_sweep(
     no_progress: bool,
     cache: bool = True,
     sources: BacktestSources | None = None,
+    html: bool = True,
 ) -> None:
     jobs = expand_scenarios_and_sweeps(parsed)
     sweep_id = sweep_id or uuid7()
@@ -366,7 +371,7 @@ def _run_sweep(
                 if is_s3:
                     job_out_str = f"{out_base}/jobs/{i:04d}"
                     results.save(job_out_str)
-                    _generate_report(results, job_out_str)
+                    _generate_report(results, job_out_str, html)
                 else:
                     job_out = out_base / "jobs" / f"{i:04d}"
                     results.save(job_out)
@@ -379,7 +384,7 @@ def _run_sweep(
                         "config_params": job_entry["config_params"],
                     }
                     (job_out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-                    _generate_report(results, str(job_out))
+                    _generate_report(results, str(job_out), html)
                     job_entry["output"] = str(job_out)
 
             jobs_summary.append(job_entry)
@@ -415,21 +420,21 @@ def _run_sweep(
     click.echo(f"sweep complete: {completed}/{len(jobs)} completed, results saved to {out_base}")
 
 
-def _generate_report(results, base_path: str) -> None:
-    """Generate report.html and summary.json alongside the backtest results."""
+def _generate_report(results, base_path: str, html: bool = True) -> None:
+    """Write summary.json, then report.html unless ``html`` is off, alongside the backtest results."""
+    is_s3 = base_path.startswith("s3://")
+    summary_path = f"{base_path}/summary.json" if is_s3 else Path(base_path) / "summary.json"
+    html_path = f"{base_path}/report.html" if is_s3 else Path(base_path) / "report.html"
     try:
         from gnomepy.reporting import BacktestReport
         report = BacktestReport(results)
-
-        if base_path.startswith("s3://"):
-            report.save_html(f"{base_path}/report.html")
-            report.save_summary(f"{base_path}/summary.json")
-            click.echo(f"report saved to {base_path}/report.html")
+        # First: building the HTML can take the process's memory, and the summary is what run listings read.
+        report.save_summary(summary_path)
+        if html:
+            report.save_html(html_path)
+            click.echo(f"report saved to {html_path}")
         else:
-            out = Path(base_path)
-            report.save_html(out / "report.html")
-            report.save_summary(out / "summary.json")
-            click.echo(f"report saved to {out / 'report.html'}")
+            click.echo(f"summary saved to {summary_path}")
     except Exception as e:
         click.echo(f"warning: report generation failed: {e}", err=True)
 
@@ -454,12 +459,18 @@ def _generate_report(results, base_path: str) -> None:
     help="gnome-strategies git ref a Java strategy is compiled from; submitted as the SHA it names now",
 )
 @click.option("--engine-version", help="gnome-backtest release to run on (default: the image's)")
+@click.option("--cpu", type=int, help="vCPUs for each job (default: the job definition's)")
+@click.option("--memory-gib", type=int, help="Memory in GiB for each job (default: the job definition's)")
+@click.option("--no-report", is_flag=True, help="Skip each job's report.html (summary.json is still written)")
 @click.option("--dry-run", is_flag=True, help="Preview sweep expansion without submitting")
 def backtest_submit(
     config: str,
     research_commit: str | None,
     strategy_commit: str | None,
     engine_version: str | None,
+    cpu: int | None,
+    memory_gib: int | None,
+    no_report: bool,
     dry_run: bool,
 ) -> None:
     """Submit a backtest (or parameter sweep) to AWS Batch."""
@@ -497,6 +508,9 @@ def backtest_submit(
         research_commit=research_commit,
         strategy_commit=strategy_commit,
         engine_version=engine_version,
+        cpu=cpu,
+        memory_gib=memory_gib,
+        report=not no_report,
     )
     click.echo(f"run_id:    {result['run_id']}")
     click.echo(f"job_count: {result['job_count']}")

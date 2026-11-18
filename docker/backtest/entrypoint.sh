@@ -70,13 +70,17 @@ PY
   unset GH_TOKEN
 fi
 
-# gnomepy reads the gh-token itself to fetch a strategy commit or engine release.
-RUN_ARGS=(--config "${LOCAL_CONFIG}" --output "${OUTPUT_PREFIX}")
+# gnomepy reads the gh-token itself to fetch a strategy commit or engine release. A fresh container never hits the
+# local market data cache, and filling it would route every download through Python, beside the strategy.
+RUN_ARGS=(--config "${LOCAL_CONFIG}" --output "${OUTPUT_PREFIX}" --no-cache)
 if [ -n "${STRATEGY_COMMIT:-}" ]; then
   RUN_ARGS+=(--strategy-commit "${STRATEGY_COMMIT}")
 fi
 if [ -n "${ENGINE_VERSION:-}" ]; then
   RUN_ARGS+=(--engine-version "${ENGINE_VERSION}")
+fi
+if [ "${NO_REPORT:-}" = "1" ]; then
+  RUN_ARGS+=(--no-report)
 fi
 
 echo "entrypoint: running backtest (output -> ${OUTPUT_PREFIX})"

@@ -41,16 +41,25 @@ def submit_backtest(
     research_commit: str | None = "main",
     strategy_commit: str | None = None,
     engine_version: str | None = None,
+    cpu: int | None = None,
+    memory_gib: int | None = None,
+    report: bool = True,
 ) -> dict:
-    """Submit a run. ``strategy_commit`` is a full gnome-strategies SHA; ``engine_version`` a gnome-backtest release."""
-    body = {"config": config_yaml}
+    """Submit a run. ``strategy_commit`` is a full gnome-strategies SHA; ``engine_version`` a gnome-backtest release.
+    ``cpu`` and ``memory_gib`` size every job of the run (default: the job definition's); without ``report`` each job
+    writes summary.json but no report.html."""
+    body: dict = {"config": config_yaml}
     for key, value in (
         ("research_commit", research_commit),
         ("strategy_commit", strategy_commit),
         ("engine_version", engine_version),
+        ("cpu", cpu),
+        ("memory_gib", memory_gib),
     ):
         if value:
             body[key] = value
+    if not report:
+        body["report"] = False
     return _request("POST", "/backtests", json=body)
 
 

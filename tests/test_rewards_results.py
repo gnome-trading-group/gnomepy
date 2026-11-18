@@ -19,7 +19,9 @@ def _snapshot(at: int, listing_id: int, program: str, start: int, end: int | Non
         "timestamp": pd.Timestamp(at), "listing_id": listing_id, "venue_program_id": program, "market": "KXRT-VIO-60",
         "period_start": pd.Timestamp(start), "period_end": pd.Timestamp(end) if end is not None else pd.NaT,
         "program_reward": 100.0, "gross": gross, "share_nanos": 0.0, "market_gross": market_gross,
-        "market_paid": market_paid, "counting_nanos": int(counting_hours * HOUR), "one_sided_nanos": 0,
+        "market_paid": market_paid, "gross_queue": gross / 2, "market_gross_queue": market_gross / 2,
+        "market_paid_queue": market_paid / 2,
+        "counting_nanos": int(counting_hours * HOUR), "one_sided_nanos": 0,
         "depth_unknown_nanos": 0, "no_data_nanos": 0,
     }
 
@@ -67,12 +69,16 @@ def test_rewards_df_takes_each_programs_last_snapshot_and_pays_only_periods_that
     df = BacktestResults.from_dataframes(rewards_df=_rewards()).rewards_df().set_index(["listing_id", "venue_program_id"])
 
     assert df.loc[(1, "k1"), "gross"] == 6.009
+    assert df.loc[(1, "k1"), "gross_queue"] == 6.009 / 2
     assert df.loc[(1, "k1"), "closed"] and df.loc[(2, "k1"), "closed"]
     # The market's $8.00 split by gross, 6.009 : 1.991.
     assert np.isclose(df.loc[(1, "k1"), "paid"], 8.0 * 6.009 / 8.0)
     assert np.isclose(df.loc[(2, "k1"), "paid"], 8.0 * 1.991 / 8.0)
+    # The queue reading's $4.00, split by its own gross.
+    assert np.isclose(df.loc[(1, "k1"), "paid_queue"], 4.0 * 6.009 / 8.0)
     assert not df.loc[(1, "k2"), "closed"]
     assert np.isnan(df.loc[(1, "k2"), "paid"])
+    assert np.isnan(df.loc[(1, "k2"), "paid_queue"])
     assert np.isclose(df.loc[(1, "k1"), "counting_fraction"], 18 / 24)
     # An open period runs to the end of the run: 6 h of the 6 h since it started.
     assert np.isclose(df.loc[(1, "k2"), "counting_fraction"], 1.0)
@@ -112,6 +118,7 @@ def test_the_report_lists_the_rewards_and_sums_them_in_the_summary():
     summary = report.summary()
     assert np.isclose(summary["rewards_estimated_gross"], 6.009 + 1.991 + 0.5)
     assert np.isclose(summary["rewards_estimated_paid"], 8.0)
+    assert np.isclose(summary["rewards_estimated_paid_queue"], 4.0)
     assert summary["maker_rebates_estimated"] == 0.0
     html = plots._render_rewards(report)
     assert "Liquidity rewards: $8.50 gross, $8.00 paid" in html

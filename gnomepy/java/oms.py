@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import jpype
 
 from gnomepy.fees import FeeSchedule
-from gnomepy.java.enums import Side, OrderType
+from gnomepy.java.enums import OrderRole, OrderType, Side
 from gnomepy.java.statics import Scales
 
 
@@ -25,6 +25,11 @@ class Intent:
             OMS sends MARKET as an IOC limit at the best opposite price plus the MARKET_ORDER_SLIPPAGE risk
             policy's allowance (0 when none applies), and refuses it while that side of the book is empty.
         take_limit_price: price for IOC limit takes; send LIMIT to choose the worst price yourself.
+        take_role: what the take is for (HEDGE, ARB_LEG, EXIT); its order and fills are recorded with it. Quotes are
+            always QUOTE.
+
+    episode_id: the strategy's own id for orders that belong together (a quote fill and the hedges it set off, say),
+        on every order this intent makes; 0 is none.
 
     Usage:
         # Two-sided quote
@@ -59,6 +64,8 @@ class Intent:
         take_size: int = 0,
         take_order_type: OrderType | None = None,
         take_limit_price: int = 0,
+        take_role: OrderRole | None = None,
+        episode_id: int = 0,
         post_only: bool = False,
     ):
         self._ensure_class()
@@ -82,6 +89,13 @@ class Intent:
             enc.takeSize(jpype.JLong(take_size))
             enc.takeOrderType(take_order_type.to_java())
             enc.takeLimitPrice(jpype.JLong(take_limit_price))
+        # Set only when given, so an intent that uses neither still builds on a schema from before them.
+        if take_role is not None:
+            enc.takeRole(take_role.to_java())
+        if episode_id:
+            if episode_id < 0:
+                raise ValueError(f"episode_id must be positive (0 is none), got {episode_id}")
+            enc.episodeId(jpype.JLong(episode_id))
         if post_only:
             enc.flags().postOnly(True)
 
@@ -143,6 +157,14 @@ class Intent:
     @property
     def post_only(self) -> bool:
         return bool(self._java.decoder.flags().postOnly())
+
+    @property
+    def take_role(self) -> OrderRole:
+        return OrderRole.from_java(self._java.decoder.takeRole())
+
+    @property
+    def episode_id(self) -> int:
+        return int(self._java.decoder.episodeId())
 
 
 @dataclass
