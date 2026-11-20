@@ -25,6 +25,7 @@ _SIDE_MAP = {0: "None", 1: "Bid", 2: "Ask"}
 _OTYPE_MAP = {0: "Limit", 1: "Market"}
 _STATUS_MAP = {0: "Filled", 1: "PartialFill", 2: "Cancelled", 3: "Rejected", 4: "Expired", 5: "Open"}
 _LIQUIDITY_MAP = {0: "Unknown", 1: "Maker", 2: "Taker"}
+_ROLE_MAP = {0: "None", 1: "Quote", 2: "Hedge", 3: "ArbLeg", 4: "Exit"}
 # A program period with no end, as the recorder writes it (Java's Long.MAX_VALUE).
 _OPEN_ENDED = np.iinfo(np.int64).max
 
@@ -354,7 +355,8 @@ class BacktestResults:
         Columns: submit_timestamp (index), ack_timestamp, terminal_timestamp,
         exchange_id, security_id, strategy_id, client_oid,
         side, order_type, submit_price, submit_size, final_price, final_size,
-        modify_count, filled_qty, leaves_qty, avg_fill_price, total_fee, final_status.
+        modify_count, filled_qty, leaves_qty, avg_fill_price, total_fee, final_status,
+        order_role, episode_id.
 
         ``final_price`` / ``final_size`` are the order's price and size after its last
         acknowledged modify (the submitted ones if it was never modified).
@@ -366,6 +368,9 @@ class BacktestResults:
         ``order_type`` values: "Limit", "Market".
         ``final_status`` values: "Filled", "PartialFill", "Cancelled", "Rejected", "Expired", and
         "Open" for orders still working when the run ended.
+        ``order_role`` values: "None", "Quote", "Hedge", "ArbLeg", "Exit".
+        ``episode_id`` is the strategy's id for orders that belong together (a hedge carries the client order
+        counter of the quote fill it completes); 0 is none. Results from engines before these columns lack both.
         """
         return self._frame("orders", scale_prices, self._build_orders_df)
 
@@ -379,6 +384,8 @@ class BacktestResults:
         df["side"] = _decode_bytes(df["side"].values, _SIDE_MAP)
         df["order_type"] = _decode_bytes(df["order_type"].values, _OTYPE_MAP)
         df["final_status"] = _decode_bytes(df["final_status"].values, _STATUS_MAP)
+        if "order_role" in df.columns:
+            df["order_role"] = _decode_bytes(df["order_role"].values, _ROLE_MAP)
 
         # total_cost is notional in price units, so rescaling by SIZE_SCALE
         # recovers a per-unit price in price units.
@@ -405,7 +412,9 @@ class BacktestResults:
 
         Columns: timestamp (index), exchange_id, security_id, strategy_id,
         client_oid, side, fill_price, fill_qty, leaves_qty,
-        fee, book_bid_price, book_ask_price.
+        fee, book_bid_price, book_ask_price, liquidity, order_role, episode_id.
+
+        ``order_role`` and ``episode_id`` are those of the order filled; see ``orders_df``.
 
         ``book_*`` columns reflect the BBO at fill time and can be used to
         compute slippage: ``(fill_price - book_mid_price) / book_mid_price × 10000``
@@ -422,6 +431,8 @@ class BacktestResults:
         df["side"] = _decode_bytes(df["side"].values, _SIDE_MAP)
         if "liquidity" in df.columns:
             df["liquidity"] = _decode_bytes(df["liquidity"].values, _LIQUIDITY_MAP)
+        if "order_role" in df.columns:
+            df["order_role"] = _decode_bytes(df["order_role"].values, _ROLE_MAP)
         df["timestamp"] = pd.to_datetime(df["timestamp"])
         df = df.set_index("timestamp")
 
