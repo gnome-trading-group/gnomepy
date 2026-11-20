@@ -472,8 +472,7 @@ class BacktestReport:
 
     def _rewards_summary(self) -> dict:
         """Estimated venue rewards over the whole run (never windowed): Kalshi liquidity rewards gross and as the
-        venue would pay the periods that ended (also under the queue reading), and Polymarket International maker
-        rebates."""
+        venue would pay the periods that ended, and Polymarket International maker rebates."""
         rewards = self.rewards_df()
         rebates = self.maker_rebates_df
         gross = float(rewards["gross"].sum()) if not rewards.empty else 0.0
@@ -481,7 +480,6 @@ class BacktestReport:
         return {
             "rewards_estimated_gross": gross,
             "rewards_estimated_paid": float(rewards["paid"].sum()) if not rewards.empty else 0.0,
-            "rewards_estimated_paid_queue": float(rewards["paid_queue"].sum()) if not rewards.empty else 0.0,
             "maker_rebates_estimated": rebate_total,
             # Liquidity rewards gross plus maker rebates, and the fill PnL with them: the curve the report draws.
             "rewards_estimated_total": gross + (rebate_total or 0.0),

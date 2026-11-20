@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from enum import IntEnum
 
+from gnomepy.price_grid import PriceBand, PriceGrid
+
 
 class SecurityType(IntEnum):
     SPOT = 0
@@ -160,7 +162,6 @@ class Listing:
 class ListingSpec:
     id: int
     listing_id: int
-    tick_size: int
     lot_size: int
     min_notional: int
     contract_multiplier: int
@@ -168,6 +169,15 @@ class ListingSpec:
     min_size: int = 0
     # When the spec held at the venue; recorded_at is when it was written.
     effective_from: str | None = None
+    price_bands: list[PriceBand] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.price_bands = [band if isinstance(band, PriceBand) else PriceBand(**band) for band in self.price_bands]
+
+    @property
+    def grid(self) -> PriceGrid:
+        """The prices the listing may trade at; the OMS refuses an order priced off it."""
+        return PriceGrid.of(self.price_bands)
 
 
 @dataclass

@@ -82,6 +82,21 @@ def test_correction_appends_and_as_of_returns_the_table_as_it_was_known(store):
     assert after[["match_id", "player_id", "rating"]].values.tolist() == [[1, 10, 1.5], [1, 11, 0.9], [2, 10, 1.0]]
 
 
+def test_history_keeps_every_version_in_ingestion_order_and_respects_as_of(store):
+    store.publish(SPEC, frame([(1, 10, 1.0), (1, 11, 0.9)]), ingested_at=T0)
+    store.publish(SPEC, frame([(1, 10, 1.5)]), ingested_at=T1)
+    store.publish(SPEC, frame([(1, 10, 1.5)]), ingested_at=T1 + timedelta(days=1))
+
+    every = store.history("player_stats")
+    then = store.history("player_stats", as_of=T0 + timedelta(days=1))
+    one = store.history("player_stats", row_filter=EqualTo("player_id", 10), include_metadata=True)
+
+    assert every[["player_id", "rating"]].values.tolist() == [[10, 1.0], [11, 0.9], [10, 1.5]]
+    assert then["rating"].tolist() == [1.0, 0.9]
+    assert one["rating"].tolist() == [1.0, 1.5] and one["ingested_at"].is_monotonic_increasing
+    assert [r.row_count for r in store.loaded] == [3, 2, 2]
+
+
 def test_same_values_in_another_dtype_write_nothing(store):
     store.publish(SPEC, frame([(1, 10, 1.0), (1, 11, 2.0)]), ingested_at=T0)
     as_ints = frame([(1, 10, 1), (1, 11, 2)]).astype({"match_id": "float64", "player_id": "Int64", "note": "string"})

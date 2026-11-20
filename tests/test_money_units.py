@@ -10,6 +10,7 @@ from gnomepy.java.enums import Side
 from gnomepy.java.oms import PositionViewWrapper
 from gnomepy.java.recorder import BacktestResults
 from gnomepy.java.statics import Scales
+from gnomepy.price_grid import PriceBand, PriceGrid
 
 PRICE_SCALE = 1_000_000_000
 SIZE_SCALE = 1_000_000
@@ -110,13 +111,34 @@ class TestOrdersAvgFillPrice:
         assert df["avg_fill_price"].iloc[0] == pytest.approx(50_000.5)
 
 
+class _JavaGrid:
+    """Stands in for a Java PriceGrid: the same accessors, answered from the Python grid."""
+
+    def __init__(self, grid: PriceGrid):
+        self._bands = grid.bands
+        self._end = grid.end
+
+    def bands(self):
+        return len(self._bands)
+
+    def start(self, band):
+        return self._bands[band].start
+
+    def step(self, band):
+        return self._bands[band].step
+
+    def end(self):
+        return self._end
+
+
 class _FakeSecurityMaster:
-    def __init__(self, lot_size: int, min_notional: int, min_size: int, tick_size: int = 0):
+    def __init__(self, lot_size: int, min_notional: int, min_size: int, grid: PriceGrid | None = None):
+        java_grid = _JavaGrid(grid or PriceGrid.single(1))
         self._spec = SimpleNamespace(
             lotSize=lambda: lot_size,
             minNotional=lambda: min_notional,
             minSize=lambda: min_size,
-            tickSize=lambda: tick_size,
+            grid=lambda: java_grid,
         )
 
     def getListing(self, exchange_id, security_id):
@@ -167,28 +189,45 @@ class TestCompliantSize:
 
 class TestCompliantPrice:
     CENT = PRICE_SCALE // 100
+    MILLI = PRICE_SCALE // 1000
+    TAPERED = PriceGrid.of([
+        PriceBand(0, 100_000_000, 1_000_000),
+        PriceBand(100_000_000, 900_000_000, 10_000_000),
+        PriceBand(900_000_000, 1_000_000_000, 1_000_000),
+    ])
 
-    def _pv(self, tick_size: int) -> PositionViewWrapper:
-        return PositionViewWrapper(None, _FakeSecurityMaster(0, 0, 0, tick_size=tick_size))
+    def _pv(self, grid: PriceGrid | None) -> PositionViewWrapper:
+        return PositionViewWrapper(None, _FakeSecurityMaster(0, 0, 0, grid=grid))
 
     def test_bids_round_down_and_asks_round_up(self):
-        pv = self._pv(self.CENT)
+        pv = self._pv(PriceGrid.single(self.CENT, PRICE_SCALE))
         off_tick = 41 * self.CENT + self.CENT // 2  # $0.415
         assert pv.compliant_price(1, 1, off_tick, Side.BID) == 41 * self.CENT
         assert pv.compliant_price(1, 1, off_tick, Side.ASK) == 42 * self.CENT
 
-    def test_on_tick_prices_are_unchanged(self):
-        pv = self._pv(self.CENT)
+    def test_on_grid_prices_are_unchanged(self):
+        pv = self._pv(PriceGrid.single(self.CENT, PRICE_SCALE))
         assert pv.compliant_price(1, 1, 37 * self.CENT, Side.BID) == 37 * self.CENT
         assert pv.compliant_price(1, 1, 37 * self.CENT, Side.ASK) == 37 * self.CENT
 
-    def test_sub_cent_tick(self):
-        pv = self._pv(self.CENT // 10)
-        assert pv.compliant_price(1, 1, 412_345_678, Side.BID) == 412_000_000
-        assert pv.compliant_price(1, 1, 412_345_678, Side.ASK) == 413_000_000
+    def test_a_tapered_grid_keeps_tenths_of_a_cent_only_in_its_tails(self):
+        pv = self._pv(self.TAPERED)
+        assert pv.compliant_price(1, 1, 47 * self.MILLI, Side.BID) == 47 * self.MILLI
+        assert pv.compliant_price(1, 1, 475 * self.MILLI, Side.BID) == 47 * self.CENT
+        assert pv.compliant_price(1, 1, 475 * self.MILLI, Side.ASK) == 48 * self.CENT
+        assert pv.compliant_price(1, 1, 995 * self.MILLI, Side.ASK) == 995 * self.MILLI
 
-    def test_no_tick_leaves_the_price(self):
-        assert self._pv(0).compliant_price(1, 1, 412_345_678, Side.ASK) == 412_345_678
+    def test_the_grid_is_its_listing_specs(self):
+        assert self._pv(self.TAPERED).price_grid(1, 1) == self.TAPERED
+
+    def test_no_spec_leaves_the_price(self):
+        class _NoSpecs(_FakeSecurityMaster):
+            def getListingSpec(self, listing_id):
+                return None
+
+        pv = PositionViewWrapper(None, _NoSpecs(0, 0, 0))
+        assert pv.price_grid(1, 1) is None
+        assert pv.compliant_price(1, 1, 412_345_678, Side.ASK) == 412_345_678
 
 
 class TestSpecsAtTheBacktestsTime:
@@ -196,7 +235,8 @@ class TestSpecsAtTheBacktestsTime:
         class _DatedSecurityMaster(_FakeSecurityMaster):
             def getListingSpec(self, listing_id, nanos=None):
                 tick = PRICE_SCALE // 100 if nanos is not None and nanos >= 1_000 else PRICE_SCALE // 10
-                return SimpleNamespace(tickSize=lambda: tick)
+                grid = _JavaGrid(PriceGrid.single(tick, PRICE_SCALE))
+                return SimpleNamespace(grid=lambda: grid)
 
         clock = SimpleNamespace(now=0)
         clock.nanoTime = lambda: clock.now

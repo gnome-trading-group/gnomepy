@@ -188,17 +188,40 @@ class DatasetStore:
         include_metadata: bool = False,
     ) -> pd.DataFrame:
         """The newest row per key, as known at as_of (default now)."""
+        rows, key, as_of, snapshot_id = self._scan(name, as_of, columns, row_filter)
+        rows = rows.sort_values(INGESTED_AT, kind="stable").drop_duplicates(key, keep="last")
+        rows = rows.sort_values(key, kind="stable").reset_index(drop=True)
+        return self._loaded(name, rows, as_of, snapshot_id, include_metadata)
+
+    def history(
+        self,
+        name: str,
+        *,
+        as_of: datetime | None = None,
+        columns: list[str] | None = None,
+        row_filter: BooleanExpression | None = None,
+        include_metadata: bool = False,
+    ) -> pd.DataFrame:
+        """Every version of every key stored by as_of (default now), in the order they were ingested. For a table
+        whose rows are a key's changes over time (a film's Tomatometer), where load() keeps only the newest."""
+        rows, _, as_of, snapshot_id = self._scan(name, as_of, columns, row_filter)
+        rows = rows.sort_values(INGESTED_AT, kind="stable").reset_index(drop=True)
+        return self._loaded(name, rows, as_of, snapshot_id, include_metadata)
+
+    def _scan(
+        self, name: str, as_of: datetime | None, columns: list[str] | None, row_filter: BooleanExpression | None
+    ) -> tuple[pd.DataFrame, list[str], datetime, int | None]:
         table = self._catalog.load_table(self._ident(name))
         key = table.properties[KEY_PROPERTY].split(",")
         as_of = (as_of or datetime.now(timezone.utc)).astimezone(timezone.utc)
-
         condition = And(row_filter or AlwaysTrue(), LessThanOrEqual(INGESTED_AT, as_of.isoformat()))
         fields = ("*",) if columns is None else tuple(dict.fromkeys([*key, *columns, *MANAGED_COLUMNS]))
         snapshot_id = _snapshot_id(table)
         rows = table.scan(row_filter=condition, selected_fields=fields, snapshot_id=snapshot_id).to_pandas()
-        rows = rows.sort_values(INGESTED_AT, kind="stable").drop_duplicates(key, keep="last")
-        rows = rows.sort_values(key, kind="stable").reset_index(drop=True)
+        return rows, key, as_of, snapshot_id
 
+    def _loaded(self, name: str, rows: pd.DataFrame, as_of: datetime, snapshot_id: int | None,
+                include_metadata: bool) -> pd.DataFrame:
         self.loaded.append(InputRecord(name, as_of, snapshot_id, len(rows), _combined_hash(rows[ROW_HASH])))
         if include_metadata:
             return rows

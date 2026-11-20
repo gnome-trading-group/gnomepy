@@ -42,8 +42,7 @@ _UNIT_COLUMNS = {
     ),
     "fills": (("fill_price", "book_bid_price", "book_ask_price"), ("fill_qty", "leaves_qty")),
     "intents": (("bid_price", "ask_price", "take_limit_price"), ("bid_size", "ask_size", "take_size")),
-    "rewards": (("program_reward", "gross", "market_gross", "market_paid", "gross_queue", "market_gross_queue",
-                 "market_paid_queue"), ()),
+    "rewards": (("program_reward", "gross", "market_gross", "market_paid"), ()),
 }
 
 
@@ -459,10 +458,7 @@ class BacktestResults:
         Columns: timestamp (index), listing_id, venue_program_id, market, period_start, period_end (NaT when the
         program has no end), program_reward, gross (ours on this listing), share_nanos, market_gross (ours on the
         whole market), market_paid (what the venue would pay the market at that gross once the period ends),
-        gross_queue, market_gross_queue and market_paid_queue (the same under the queue reading of the venue's rule:
-        at the level that completes a side's required size only the orders that complete it in queue order count, with
-        our place in the queue as the simulated exchange's queue model tracks it), counting_nanos, one_sided_nanos,
-        depth_unknown_nanos, no_data_nanos.
+        counting_nanos, one_sided_nanos, depth_unknown_nanos, no_data_nanos.
         """
         return self._frame("rewards", scale_prices, self._build_rewards_df)
 
@@ -478,11 +474,9 @@ class BacktestResults:
     def rewards_df(self) -> pd.DataFrame:
         """Estimated venue liquidity rewards, one row per listing and program period, as they stood at the run's end.
 
-        ``gross`` is our estimate in dollars on the listing; ``gross_queue`` is the same under the queue reading of the
-        venue's rule (see :meth:`rewards_timeseries_df`), before any closing rule. A period that ended inside the run is
-        ``closed`` and has ``paid``: the venue's closing rule (Kalshi: whole cents, nothing under $1) applied to the whole
-        market, split across its listings by gross; ``paid_queue`` is the same under the queue reading. An open
-        period's ``paid`` and ``paid_queue`` are NaN. The ``*_fraction`` columns divide the period into time that
+        ``gross`` is our estimate in dollars on the listing, before any closing rule. A period that ended inside the run
+        is ``closed`` and has ``paid``: the venue's closing rule (Kalshi: whole cents, nothing under $1) applied to the
+        whole market, split across its listings by gross. An open period's ``paid`` is NaN. The ``*_fraction`` columns divide the period into time that
         counted, a side short of the program's size, a side possibly deeper than the feed shows, and no data.
         """
         series = self.rewards_timeseries_df()
@@ -493,13 +487,11 @@ class BacktestResults:
         last["closed"] = last["period_end"].notna() & (last["period_end"] <= run_end)
         share = (last["gross"] / last["market_gross"]).where(last["market_gross"] > 0, 0.0)
         last["paid"] = (last["market_paid"] * share).where(last["closed"])
-        share_queue = (last["gross_queue"] / last["market_gross_queue"]).where(last["market_gross_queue"] > 0, 0.0)
-        last["paid_queue"] = (last["market_paid_queue"] * share_queue).where(last["closed"])
         period_ns = (last["period_end"].fillna(run_end) - last["period_start"]).dt.total_seconds() * 1e9
         for kind in ("counting", "one_sided", "depth_unknown", "no_data"):
             last[f"{kind}_fraction"] = (last[f"{kind}_nanos"] / period_ns).where(period_ns > 0)
         columns = ["listing_id", "venue_program_id", "market", "period_start", "period_end", "closed",
-                   "program_reward", "gross", "gross_queue", "paid", "paid_queue", "counting_fraction",
+                   "program_reward", "gross", "paid", "counting_fraction",
                    "one_sided_fraction", "depth_unknown_fraction", "no_data_fraction"]
         return last[columns]
 

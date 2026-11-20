@@ -4,6 +4,7 @@ import dataclasses
 import logging
 import os
 import time
+from datetime import datetime
 from typing import Optional
 
 import requests
@@ -115,8 +116,14 @@ class RegistryClient:
     ) -> list[Listing]:
         return self._get("/listings", _parse_kwarg_params(locals()), Listing)
 
-    def get_listing_spec(self, *, listing_id: Optional[int] = None) -> list[ListingSpec]:
-        return self._get("/listing-specs", _parse_kwarg_params(locals()), ListingSpec)
+    def get_listing_spec(
+        self, *, listing_id: Optional[int] = None, at: Optional[str | datetime] = None
+    ) -> list[ListingSpec]:
+        """The spec in force at ``at`` (an ISO time or a datetime; now when None), as a backtest of that time saw it."""
+        params = _parse_kwarg_params({"listing_id": listing_id}.items())
+        if at is not None:
+            params["at"] = at.isoformat() if isinstance(at, datetime) else at
+        return self._get("/listing-specs", params, ListingSpec)
 
     def get_event(
         self,
@@ -317,8 +324,6 @@ class RegistryClient:
     def bulk_create_listings(self, items: list[dict]) -> list[dict]:
         return self._post_bulk("/listings", items)
 
-    def bulk_create_listing_specs(self, items: list[dict]) -> list[dict]:
-        return self._post_bulk("/listing-specs", items)
 
     def bulk_create_fee_schedules(self, items: list[dict]) -> list[dict]:
         return self._post_bulk("/fees", items)

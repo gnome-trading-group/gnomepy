@@ -8,6 +8,7 @@ import jpype
 from gnomepy.fees import FeeSchedule
 from gnomepy.java.enums import OrderRole, OrderType, Side
 from gnomepy.java.statics import Scales
+from gnomepy.price_grid import PriceGrid
 
 
 class Intent:
@@ -210,6 +211,7 @@ class PositionViewWrapper:
         self._sm = security_master
         self._clock = clock
         self._fee_schedules: dict = {}
+        self._grids: dict = {}
 
     def _now_nanos(self) -> int:
         return int(self._clock.nanoTime()) if self._clock is not None else time.time_ns()
@@ -251,19 +253,29 @@ class PositionViewWrapper:
             return 0
         return int(pos.getEffectiveQuantity())
 
-    def compliant_price(self, exchange_id: int, security_id: int, price: int, side: Side) -> int:
-        """Rounds a price onto the listing's tick, never more aggressively: bids down, asks up.
+    def price_grid(self, exchange_id: int, security_id: int) -> PriceGrid | None:
+        """The listing's price grid in force now (the backtest's time in a backtest); None when it has no spec, which
+        the OMS refuses orders for."""
+        spec = self._listing_spec(self._resolve_listing_id(exchange_id, security_id))
+        if spec is None:
+            return None
+        java = spec.grid()
+        grid = self._grids.get(java)
+        if grid is None:
+            grid = PriceGrid.from_java(java)
+            self._grids[java] = grid
+        return grid
 
-        The OMS rejects an order priced off its listing's tick, so strategies round before sending.
+    def compliant_price(self, exchange_id: int, security_id: int, price: int, side: Side) -> int:
+        """Rounds a price onto the listing's price grid, never more aggressively: bids down, asks up.
+
+        The OMS rejects an order priced off its listing's grid, so strategies round before sending. Past the grid's
+        ends this gives 0 or the end, which are no prices either; bound it with the grid's ``min`` and ``max``.
         """
-        listing_id = self._resolve_listing_id(exchange_id, security_id)
-        spec = self._listing_spec(listing_id)
-        tick = int(spec.tickSize()) if spec is not None else 0
-        if tick <= 0:
+        grid = self.price_grid(exchange_id, security_id)
+        if grid is None:
             return price
-        if side == Side.BID:
-            return (price // tick) * tick
-        return -((-price) // tick) * tick
+        return grid.floor(price) if side == Side.BID else grid.ceil(price)
 
     def compliant_size(self, exchange_id: int, security_id: int, desired_size: int, price: int) -> int:
         if desired_size <= 0:
